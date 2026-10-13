@@ -36,6 +36,7 @@
 #include "build.h"
 #include "crypto.h"
 #include "db.h"
+#include "logfile.h"
 #include "pkg.h"
 #include "web.h"
 #include "icon_data.h"
@@ -2310,6 +2311,19 @@ static void pump_events(int ms) {
     }
 }
 
+#define LOG_FILE STATE_DIR "/log.txt"
+#define LOG_MAX (1 << 20)   /* log.txt is cut back to its last LOG_KEEP bytes past this size */
+#define LOG_KEEP (256 << 10)
+
+/* Keeps log.txt bounded; stdout is opened again on the trimmed file. */
+static void log_limit(void) {
+    if (log_trim(LOG_FILE, LOG_MAX, LOG_KEEP) != 1)
+        return;
+    freopen(LOG_FILE, "a", stdout);
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    printf("[main] log trimmed to its last %d KB\n", LOG_KEEP >> 10);
+}
+
 int main(void) {
     int lock = single_instance();
     if (lock < 0) {
@@ -2319,7 +2333,8 @@ int main(void) {
     sceUserServiceInitialize(0);
     sceAppInstUtilInitialize();
     mkdirs(STATE_DIR, 0777);
-    freopen(STATE_DIR "/log.txt", "a", stdout);
+    log_trim(LOG_FILE, LOG_MAX, LOG_KEEP);
+    freopen(LOG_FILE, "a", stdout);
     setvbuf(stdout, NULL, _IOLBF, 0);
     config_load();
     signal(SIGPIPE, SIG_IGN);
@@ -2356,6 +2371,7 @@ int main(void) {
             end_delete_window(); /* the line of the screen change was missed */
         if (time(NULL) >= g_next_scan && !g_deleting) {
             scan_all();
+            log_limit();
             g_next_scan = time(NULL) + SCAN_SECONDS;
         }
         pump_events(1000);
