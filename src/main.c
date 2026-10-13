@@ -207,7 +207,7 @@ typedef struct {
     char name[128], ver[8], marker[PATH_MAX + 160];
     char update_issue[256]; /* why patch.pkg was ignored, empty when used or absent */
     dlc_src_t *dlc;
-    int ndlc;
+    int ndlc, dlc_cap;
     char dlc_tids[MAX_DLC_TIDS][10]; /* add-on title IDs: /user/addcont/<TID> folders */
     int ndlc_tids;
 } title_src_t;
@@ -228,7 +228,7 @@ static void src_close(title_src_t *t) {
         pkg_close(&t->dlc[i].pkg);
     free(t->dlc);
     t->dlc = NULL;
-    t->ndlc = 0;
+    t->ndlc = t->dlc_cap = 0;
 }
 
 static int dlc_cmp(const void *a, const void *b) {
@@ -255,10 +255,18 @@ static void dlc_open(title_src_t *t) {
         while ((f = readdir(l))) {
             if (f->d_name[0] == '.' || strlen(f->d_name) != 16)
                 continue;
-            if (!t->dlc && !(t->dlc = calloc(MAX_DLC, sizeof(*t->dlc))))
-                break;
             if (t->ndlc == MAX_DLC)
                 break;
+            if (t->ndlc == t->dlc_cap) { /* about 100 KB per add-on: grown as they are found */
+                int cap = t->dlc_cap ? t->dlc_cap * 2 : 4;
+                if (cap > MAX_DLC)
+                    cap = MAX_DLC;
+                dlc_src_t *grown = realloc(t->dlc, sizeof(*grown) * (size_t)cap);
+                if (!grown)
+                    break;
+                t->dlc = grown;
+                t->dlc_cap = cap;
+            }
             dlc_src_t *a = &t->dlc[t->ndlc];
             snprintf(a->path, sizeof(a->path), "%s/%s/ac.pkg", sub, f->d_name);
             if (!exists(a->path))
@@ -305,7 +313,9 @@ static int src_open(title_src_t *t, const char *root, const char *tid) {
     snprintf(t->app_path, sizeof(t->app_path), "%s/app.pkg", t->dir);
     snprintf(t->patch_path, sizeof(t->patch_path), "%s/patch.pkg", t->dir);
     if (pkg_open(&t->app, t->app_path) || read_sfo(&t->app, &t->app_sfo)) {
-        printf("[scan] %s: unreadable app pkg\n", t->app_path);
+        if (first_time(t->app_path))
+            printf("[scan] %s: unreadable app pkg\n", t->app_path);
+        pkg_close(&t->app);
         return -1;
     }
     if (exists(t->patch_path)) {
@@ -890,9 +900,9 @@ static int marker_matches(const char *tid, const char *expected) {
 /* The title is served from another connected drive: the marker names another
  * folder whose game pkg is still there. The first drive keeps it, so the same game
  * on two drives is not switched (and registered again) on every scan. */
-static int served_elsewhere(const title_src_t *t) {
+static int served_elsewhere(const char *tid, const char *dir) {
     char path[64], buf[PATH_MAX + 256] = {0}, pkg[PATH_MAX + 16];
-    snprintf(path, sizeof(path), STATE_DIR "/%s.src", t->app.title_id);
+    snprintf(path, sizeof(path), STATE_DIR "/%s.src", tid);
     int fd = open(path, O_RDONLY);
     if (fd < 0)
         return 0;
@@ -901,7 +911,7 @@ static int served_elsewhere(const title_src_t *t) {
     if (n <= 0)
         return 0;
     buf[strcspn(buf, "\n")] = 0;
-    if (!strcmp(buf, t->dir))
+    if (!strcmp(buf, dir))
         return 0;
     snprintf(pkg, sizeof(pkg), "%s/app.pkg", buf);
     return exists(pkg);
@@ -911,7 +921,7 @@ static int title_state(title_src_t *t) {
     const char *tid = t->app.title_id;
     if (installed_internally(tid) || removed(tid))
         return -1;
-    if (served_elsewhere(t)) {
+    if (served_elsewhere(tid, t->dir)) {
         if (first_time(t->app_path))
             printf("[scan] %s: %s is already served from another drive, this copy is not used\n", t->dir, tid);
         return -1;
@@ -1462,6 +1472,57 @@ static void clear_removed_dlc(void) {
     closedir(d);
 }
 
+/* A game already in the library: keeps it mounted and follows whether it runs. */
+static void keep_mounted(title_src_t *src) {
+    const char *tid = src->app.title_id;
+    enforce_patch_sfo(src);
+    manage(src);
+    managed_t *m = managed_by(tid, NULL);
+    int running = title_running(tid);
+    if (m && running && !m->running) {
+        m->running = 1; /* open before this daemon started (restart or crash) */
+    } else if (m && !running && m->running && time(NULL) - m->running_since > 60) {
+        m->running = 0; /* closed without a klog end event */
+    }
+    if (mount_title(src))
+        notify("Failed to mount %s (%s)", src->name, tid);
+}
+
+/* What the panel shows of each game folder, from the last scan that opened its pkgs:
+ * the panel asks every 5 seconds and must not read every pkg on the drives each time. */
+typedef struct {
+    char dir[PATH_MAX], name[128], ver[8], update_issue[256];
+    int has_patch, ndlc;
+    unsigned long long size;
+} info_t;
+
+static info_t g_info[MAX_TITLES];
+static int g_info_next;
+
+static info_t *info_find(const char *dir) {
+    for (int i = 0; i < MAX_TITLES; i++)
+        if (g_info[i].dir[0] && !strcmp(g_info[i].dir, dir))
+            return &g_info[i];
+    return NULL;
+}
+
+static info_t *info_store(const title_src_t *t) {
+    info_t *in = info_find(t->dir);
+    for (int i = 0; !in && i < MAX_TITLES; i++)
+        if (!g_info[i].dir[0])
+            in = &g_info[i];
+    if (!in) /* full: replace the oldest entries in turn */
+        in = &g_info[g_info_next++ % MAX_TITLES];
+    snprintf(in->dir, sizeof(in->dir), "%s", t->dir);
+    snprintf(in->name, sizeof(in->name), "%s", t->name);
+    snprintf(in->ver, sizeof(in->ver), "%s", t->ver);
+    snprintf(in->update_issue, sizeof(in->update_issue), "%s", t->update_issue);
+    in->has_patch = t->has_patch;
+    in->ndlc = t->ndlc;
+    in->size = t->app.pkg_size + (t->has_patch ? t->patch.pkg_size : 0);
+    return in;
+}
+
 static void scan_root(const char *root, int fresh, int reconnected) {
     const char *label = root + 5; /* "usb0" / "ext0" */
     if (!has_candidates(root)) {
@@ -1511,6 +1572,9 @@ static void scan_root(const char *root, int fresh, int reconnected) {
         if (t->state == 1 && retry_waiting(t->tid))
             t->state = -1; /* failed recently: tried again later */
         pending += t->state == 1;
+        if (t->state == 0)
+            keep_mounted(&src); /* while its pkgs are open: they are not read again */
+        info_store(&src);
         src_close(&src);
     }
     closedir(d);
@@ -1520,25 +1584,6 @@ static void scan_root(const char *root, int fresh, int reconnected) {
         notify("%s: %d PS4 game(s) found, %d new or updated", label, count, pending);
     else if (pending)
         notify("%s: %d new or updated PS4 game(s)", label, pending);
-    /* games already in the library: keep them mounted */
-    for (int i = 0; i < count; i++) {
-        title_t *t = &titles[i];
-        title_src_t src;
-        if (t->state != 0 || src_open(&src, root, t->tid))
-            continue;
-        enforce_patch_sfo(&src);
-        manage(&src);
-        managed_t *m = managed_by(t->tid, NULL);
-        int running = title_running(t->tid);
-        if (m && running && !m->running) {
-            m->running = 1; /* open before this daemon started (restart or crash) */
-        } else if (m && !running && m->running && time(NULL) - m->running_since > 60) {
-            m->running = 0; /* closed without a klog end event */
-        }
-        if (mount_title(&src))
-            notify("Failed to mount %s (%s)", src.name, t->tid);
-        src_close(&src);
-    }
     if (!pending)
         return;
 
@@ -1874,6 +1919,20 @@ static int find_root(const char *tid, char *root, size_t n) {
     return -1;
 }
 
+/* Panel details of a folder no scan has opened yet (the scan is paused while a
+ * delete screen is open). */
+static const info_t *info_load(const char *root, const char *tid) {
+    title_src_t *t = malloc(sizeof(*t));
+    if (!t || src_open(t, root, tid)) {
+        free(t);
+        return NULL;
+    }
+    const info_t *in = info_store(t);
+    src_close(t);
+    free(t);
+    return in;
+}
+
 void app_games_json(buf_t *out) {
     buf_printf(out, "{\"version\":");
     json_str(out, VERSION);
@@ -1895,10 +1954,13 @@ void app_games_json(buf_t *out) {
         while ((e = readdir(d))) {
             if (strlen(e->d_name) != 9 || strncmp(e->d_name, "CUSA", 4))
                 continue;
-            title_src_t t;
-            char pkg_path[PATH_MAX];
+            char pkg_path[PATH_MAX], dir[PATH_MAX];
             snprintf(pkg_path, sizeof(pkg_path), "%s/%s/app.pkg", lib, e->d_name);
-            if (!exists(pkg_path) || src_open(&t, root, e->d_name))
+            snprintf(dir, sizeof(dir), "%s/%s", lib, e->d_name);
+            if (!exists(pkg_path))
+                continue;
+            const info_t *in = info_find(dir);
+            if (!in && !(in = info_load(root, e->d_name)))
                 continue;
             const char *tid = e->d_name, *state, *mount = "";
             char target[64], from[PATH_MAX];
@@ -1912,7 +1974,7 @@ void app_games_json(buf_t *out) {
             managed_t *m = managed_by(tid, NULL);
             if (installed_internally(tid))
                 state = "internal";
-            else if (served_elsewhere(&t))
+            else if (served_elsewhere(tid, dir))
                 state = "duplicate";
             else if (removed(tid))
                 state = "removed";
@@ -1923,18 +1985,16 @@ void app_games_json(buf_t *out) {
             else
                 state = "pending";
             buf_printf(out, "%s{\"title_id\":\"%s\",\"name\":", first ? "" : ",", tid);
-            json_str(out, t.name);
+            json_str(out, in->name);
             buf_printf(out, ",\"version\":");
-            json_str(out, t.ver);
+            json_str(out, in->ver);
             buf_printf(out, ",\"has_patch\":%s,\"size\":%llu,\"state\":\"%s\",\"mount\":\"%s\",\"source\":",
-                       t.has_patch ? "true" : "false",
-                       (unsigned long long)(t.app.pkg_size + (t.has_patch ? t.patch.pkg_size : 0)), state, mount);
-            json_str(out, t.dir);
-            buf_printf(out, ",\"dlc\":%d,\"update_issue\":", t.ndlc);
-            json_str(out, t.update_issue);
+                       in->has_patch ? "true" : "false", in->size, state, mount);
+            json_str(out, in->dir);
+            buf_printf(out, ",\"dlc\":%d,\"update_issue\":", in->ndlc);
+            json_str(out, in->update_issue);
             buf_printf(out, "}");
             first = 0;
-            src_close(&t);
         }
         closedir(d);
     }
