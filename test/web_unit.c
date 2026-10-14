@@ -37,6 +37,8 @@ int app_add(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, 
 int app_remove(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "%s", tid) < 0; }
 void app_rescan(void) {}
 void app_stop(void) {}
+int app_restore(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "%s", tid ? tid : "all") < 0; }
+int app_restored_forget(char *msg, size_t cap) { return snprintf(msg, cap, "forgotten") < 0; }
 void app_config_json(buf_t *out) { buf_printf(out, "{}"); }
 int app_config_set(const char *body, char *msg, size_t cap) { return snprintf(msg, cap, "%s", body) < 0; }
 int app_icon(const char *tid, buf_t *out) { return tid && out ? -1 : -1; }

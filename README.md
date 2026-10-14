@@ -1,5 +1,15 @@
 # PS4Mount
 
+> [!CAUTION]
+> **PS4Mount is a work in progress. Use it at your own risk.**
+>
+> On some consoles and firmwares it can still make the system report that its **database is
+> corrupted**. When that happens the console rebuilds its database on the next start, games added by
+> PS4Mount can disappear from the library until PS4Mount runs again, and you may have to restart the
+> console to get out of repeated error prompts. A forced restart can lose data that was not saved yet.
+> **Back up your save data** (PS Plus cloud storage or a USB drive) before using PS4Mount, and
+> [report any problem](#reporting-problems) with the log.
+
 Play PS4 fake PKGs on a jailbroken PS5 straight from a USB drive, without installing them.
 
 Put the game (and its update) `.pkg` files on a USB drive, plug it in and load `ps4mount.elf`.
@@ -38,7 +48,11 @@ The web panel, opened from the **Media** tab:
 ## Requirements
 
 - A jailbroken PS5 with fake PKG support (for example etaHEN with kstuff).
-  Tested on firmware **13.20**. Other firmware versions are untested.
+  Any firmware with fake PKG support. From 6.00 the games are registered the usual way (reported
+  working on 6.50, tested on 13.20). Below 6.00 that made the console report a corrupted database
+  (5.50), so there PS4Mount registers each game on its own (confirmed working on 5.50), and does not
+  add games if the firmware lacks that function. The startup notification and the log say which one
+  is used.
 - An ELF loader listening on port **9021** to send the payload.
 - Access to the kernel log: either **klogsrv** running on port 3232, or no other payload reading
   `/dev/klog`. PS4Mount reads the system log to know when a game starts and when a delete is
@@ -94,6 +108,8 @@ the same network. The panel shows every game found on the connected drives, with
 Buttons:
 
 - **Remove from library**: removes the game from the home screen. The `.pkg` stays on the drive.
+- **Move pkgs back**: removes the game from the library and moves its `.pkg` files back to where they
+  came from (see [Moving pkgs back](#moving-pkgs-back)).
 - **Add to library**: adds a removed game back.
 - **Scan for games**: checks the drives now and shows how many games were found on each one.
 - **Settings**: see below.
@@ -111,6 +127,8 @@ Buttons:
 | Games per group | 5 | Size of each group (1 to 50). |
 | Install add-ons (DLC) | On | Moves and installs add-on `.pkg` files. When off, add-ons are left where they are. |
 
+The settings also have **Move all games back** and **Pick up moved-back pkgs again** (see below).
+
 Settings are saved in `/data/ps4mount/config.txt`.
 
 The panel has no password. Anyone on your local network can open it.
@@ -123,6 +141,25 @@ drive. A removed game comes back
 when you reconnect the drive or click **Add to library**.
 
 To delete the game for good, delete its `/ps4/CUSAxxxxx` folder from the drive on a computer.
+
+### Moving pkgs back
+
+PS4Mount records where every `.pkg` came from in `ps4/CUSAxxxxx/origin.txt` on the drive: the folder
+(any of the scan folders) and the original file name. **Move pkgs back** on a game, or **Move all games
+back** in the settings, undoes the move:
+
+- The game leaves the library (several games are handled in groups, like when adding).
+- The game, its update, older updates kept aside and its add-ons go back to their original folder with
+  their original name. A folder that no longer exists is created again, and an existing file is never
+  replaced: ` (1)` is added to the name.
+- `.pkg` files moved by versions before 0.5.0 have no record and go to the drive root as
+  `CUSAxxxxx - <game> - game.pkg`, `... - update.pkg` and `... - <add-on label>.pkg`.
+- The files PS4Mount created for the game are removed. Folders are only removed when empty, and no
+  `.pkg` is ever deleted.
+
+The `.pkg` files moved back stay where they are on the next scans (they are listed in
+`/data/ps4mount/restored.txt`). To add them again, use **Pick up moved-back pkgs again** in the
+settings. A `.pkg` you move, rename or replace yourself is picked up as usual.
 
 ## Good to know
 
@@ -138,7 +175,10 @@ To delete the game for good, delete its `/ps4/CUSAxxxxx` folder from the drive o
   of the game pkg (for example 01.00). The game runs with the update; the web panel shows its version.
 - Games already installed the normal way on the console are never touched, and their add-ons on the
   drive are not installed.
-- Rest mode powers the drive off. The games stay in the library and work again after waking up.
+- **Close PS4Mount games before putting the console in rest mode.** Rest mode powers the drive off, and a
+  game left open cannot read its files from the drive after waking up: it locks up, and closing it can
+  hang on the "Closing" screen, which needs a console restart. Games that were not open stay in the
+  library and work normally after waking up.
 - **Games with more than about 29 add-ons:** while a game runs, the console mounts each of its packages (the game,
   the update and every add-on) with two virtual devices: a PS4 package holds an outer filesystem with the
   real content as a second filesystem inside it. The console has 64 of these devices, so a running game
@@ -151,20 +191,20 @@ To delete the game for good, delete its `/ps4/CUSAxxxxx` folder from the drive o
 
 ## Reporting problems
 
-If something does not work, open an issue at
-[github.com/gasb07/ps4mount/issues](https://github.com/gasb07/ps4mount/issues) with:
+If something does not work, open an issue with the
+[bug report form](https://github.com/gasb07/ps4mount/issues/new?template=bug_report.yml). It asks for
+what is needed to find the cause:
 
 1. **PS4Mount version**: shown at the top of the web panel and in the startup notification.
-2. **PS5 firmware** and the **jailbreak / HEN** you use, with its version (for example etaHEN 2.x
-   with kstuff).
-3. **The game**: name and title ID (`CUSAxxxxx`), and whether it has an update (the version shown
-   in the panel).
-4. **What happened**: what you did, what you expected, and the exact message or error code shown on
+2. **PS5 firmware**, the **jailbreak / HEN** and every **payload** you load, with their versions.
+3. Whether **klogsrv** is running.
+4. **The game**: name and title ID (`CUSAxxxxx`), and whether it has an update and add-ons.
+5. **Your drives**: how many are connected, how they are formatted (exFAT) and whether a drive has
+   more than one partition.
+6. **What happened**: what you did, what you expected, and the exact message or error code shown on
    the console.
-5. **The log**: open the web panel, click **Log** and copy the text, or download
+7. **The log**: open the web panel, click **Log** and copy the text, or download
    `/data/ps4mount/log.txt` over FTP. Include the part from the moment the problem happened.
-6. **Your setup**: whether klogsrv is running, how the drive is formatted (exFAT) and other payloads
-   you load at the same time.
 
 Do not attach `.pkg` files or links to them.
 

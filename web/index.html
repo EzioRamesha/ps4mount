@@ -32,8 +32,12 @@ main{padding:20px;max-width:1400px;margin:0 auto}
 .actions{display:flex;gap:8px;padding:0 14px 14px;flex-wrap:wrap}
 .empty{color:var(--muted);text-align:center;padding:60px 0}
 .warn{color:#f0c060;font-size:13px;background:#3a2e12;border:1px solid #5c4818;border-radius:8px;padding:6px 8px;margin-top:4px}
-dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:12px;max-width:min(900px,95vw);width:900px}
+dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:12px;max-width:95vw;max-width:min(900px,95vw);width:900px}
 dialog::backdrop{background:#000a}
+/* browsers without <dialog> (older firmwares): see dialogFallback() */
+dialog.fallback{display:none;position:fixed;top:50%;left:50%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%);z-index:20;max-height:90vh;overflow:auto;padding:16px;margin:0}
+dialog.fallback[open]{display:block}
+#dlg-backdrop{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.65);z-index:19}
 pre{white-space:pre-wrap;font-size:12px;max-height:60vh;overflow:auto;background:#0b0d11;padding:12px;border-radius:8px}
 form.settings{display:flex;flex-direction:column;gap:14px}
 form.settings label{display:flex;flex-direction:column;gap:6px}
@@ -73,6 +77,11 @@ form.settings .row{display:flex;gap:8px;justify-content:flex-end}
     <span class="hint">Smaller groups are gentler on the system when many games are added at once.</span>
   </label>
   <label class="check"><input type="checkbox" id="s-dlc"> Install add-ons (DLC)</label>
+  <div class="hint">Pkgs moved back</div>
+  <div class="row" style="justify-content:flex-start">
+    <button type="button" class="danger" id="s-restore">Move all games back</button>
+    <button type="button" id="s-forget">Pick up moved-back pkgs again</button>
+  </div>
   <div class="row"><button type="button" id="s-cancel">Cancel</button><button class="primary" type="submit">Save</button></div>
 </form></dialog>
 <dialog id="logdlg"><h3>Log</h3><pre id="log"></pre><form method="dialog"><button>Close</button></form></dialog>
@@ -82,6 +91,26 @@ var games = [], busy = {};
 var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', duplicate: 'On another drive'};
 
 function $(id) { return document.getElementById(id); }
+
+/* The browser of older firmwares has no <dialog>: the dialogs then show inside the page and
+   showModal()/close() do not exist. Give them the same behavior with plain CSS. */
+(function dialogFallback() {
+  var dlgs = document.getElementsByTagName('dialog');
+  if (!dlgs.length || typeof dlgs[0].showModal === 'function') return;
+  var backdrop = document.createElement('div');
+  backdrop.id = 'dlg-backdrop';
+  document.body.appendChild(backdrop);
+  for (var i = 0; i < dlgs.length; i++) (function (d) {
+    d.className += ' fallback';
+    d.removeAttribute('open');
+    d.showModal = function () { d.setAttribute('open', ''); backdrop.style.display = 'block'; };
+    d.close = function () { d.removeAttribute('open'); backdrop.style.display = 'none'; };
+    var forms = d.getElementsByTagName('form');
+    for (var j = 0; j < forms.length; j++)
+      if ((forms[j].getAttribute('method') || '').toLowerCase() === 'dialog')
+        forms[j].addEventListener('submit', function (e) { e.preventDefault(); d.close(); });
+  })(dlgs[i]);
+})();
 function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
 function gb(n) { return (n / 1073741824).toFixed(n >= 10737418240 ? 0 : 1) + ' GB'; }
 function toast(msg) { var t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(function () { t.style.display = 'none'; }, 4000); }
@@ -102,6 +131,8 @@ function render() {
     if (g.state === 'removed') act = '<button class="primary" data-a="mount" data-t="' + g.title_id + '">Add to library</button>';
     else if (g.state === 'ready') act = '<button class="danger" data-a="unmount" data-t="' + g.title_id + '">Remove from library</button>';
     else if (g.state === 'running') act = '<button disabled>Close the game to remove it</button>';
+    if (g.state !== 'running' && g.state !== 'internal')
+      act += '<button data-a="restore" data-t="' + g.title_id + '">Move pkgs back</button>';
     if (busy[g.title_id]) act = '<button disabled>Please wait…</button>';
     html += '<div class="card"><div class="art" style="background-image:url(/icon/' + g.title_id + ')">' +
       '<span class="badge b-' + g.state + '">' + esc(labels[g.state] || g.state) + '</span></div>' +
@@ -129,6 +160,8 @@ $('grid').addEventListener('click', function (e) {
   if (!b) return;
   var tid = b.getAttribute('data-t'), a = b.getAttribute('data-a');
   if (a === 'unmount' && !confirm('Remove ' + tid + ' from the library? The pkg stays on the USB drive.')) return;
+  if (a === 'restore' && !confirm('Move the pkgs of ' + tid + ' back to where they came from, with their original names?\n\n' +
+      'The game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.')) return;
   busy[tid] = 1; render();
   api('/api/' + a + '?title_id=' + tid, 'POST').then(function (j) { toast(j.message); })
     .catch(function (err) { toast('Error: ' + err.message); })
@@ -149,6 +182,17 @@ $('settingsbtn').onclick = function () {
 };
 $('s-batch').onchange = function () { $('s-size').disabled = !this.checked; };
 $('s-cancel').onclick = function () { $('setdlg').close(); };
+$('s-restore').onclick = function () {
+  if (!confirm('Move the pkgs of ALL games back to where they came from, with their original names?\n\n' +
+      'All PS4Mount games leave the library and PS4Mount stops picking these pkgs up. No pkg is deleted.')) return;
+  api('/api/restore', 'POST').then(function (j) { toast(j.message); $('setdlg').close(); })
+    .catch(function (err) { toast('Error: ' + err.message); });
+};
+$('s-forget').onclick = function () {
+  if (!confirm('Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.')) return;
+  api('/api/restored/forget', 'POST').then(function (j) { toast(j.message); })
+    .catch(function (err) { toast('Error: ' + err.message); });
+};
 $('setform').onsubmit = function (e) {
   e.preventDefault();
   var body = 'batch=' + ($('s-batch').checked ? 1 : 0) + '&batch_size=' + encodeURIComponent($('s-size').value) +
