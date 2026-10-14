@@ -39,6 +39,7 @@
 #include "catalog.h"
 #include "crypto.h"
 #include "db.h"
+#include "fm.h"
 #include "logfile.h"
 #include "origin.h"
 #include "pkg.h"
@@ -2933,6 +2934,89 @@ int app_launch(const char *tid, char *msg, size_t cap) {
         return -1;
     }
     snprintf(msg, cap, "Starting %s", tid);
+    return 0;
+}
+
+/* --- file manager: listing a folder with catalog details --- */
+
+/* 1 when path is a pkg of a registered game, or a folder holding one (so it must not be
+ * deleted or moved). name gets the first such game's title ID when non-NULL (the catalog
+ * does not keep the game's TITLE, only an add-on's). */
+static int fm_protected(const char *path, const char **name) {
+    for (int d = 0; d < NUM_DRIVES; d++) {
+        const catalog_t *cat = &g_cat[d];
+        for (int gi = 0; gi < cat->ngames; gi++) {
+            const cat_game_t *g = &cat->games[gi];
+            if (!db_is_registered(g->title_id))
+                continue;
+            int idx[2 + CAT_MAX_DLC], n = 0;
+            idx[n++] = g->app;
+            if (g->patch >= 0)
+                idx[n++] = g->patch;
+            for (int k = 0; k < g->ndlc && n < (int)(sizeof(idx) / sizeof(idx[0])); k++)
+                idx[n++] = g->dlc[k];
+            for (int k = 0; k < n; k++) {
+                if (fm_covers(path, cat->pkgs[idx[k]].path)) {
+                    if (name)
+                        *name = g->title_id;
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+/* Lists one folder of a drive as JSON rows, joined with the catalog so a pkg's title ID,
+ * role, version and title are added when the folder is on a known drive (see app_fm_list,
+ * web.h). path is a caller-checked drive path (web.c calls fm_path_ok first). */
+int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap) {
+    DIR *d = opendir(path);
+    if (!d) {
+        printf("[fm] opendir %s: %s\n", path, strerror(errno));
+        snprintf(msg, cap, "Cannot open %s: %s", path, strerror(errno));
+        return -1;
+    }
+    int di = fm_drive_of(path);
+    const catalog_t *cat = di >= 0 ? &g_cat[di] : NULL;
+    buf_printf(out, "{\"path\":");
+    json_str(out, path);
+    buf_printf(out, ",\"entries\":[");
+    struct dirent *e;
+    int first = 1, count = 0;
+    while (count < 2000 && (e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+            continue;
+        char full[PATH_MAX];
+        if (snprintf(full, sizeof(full), "%s/%s", path, e->d_name) >= (int)sizeof(full))
+            continue; /* name too long to build a safe path, leave it out */
+        struct stat st;
+        if (lstat(full, &st))
+            continue;
+        buf_printf(out, "%s{\"name\":", first ? "" : ",");
+        json_str(out, e->d_name);
+        buf_printf(out, ",\"dir\":%s,\"size\":%llu,\"mtime\":%lld", S_ISDIR(st.st_mode) ? "true" : "false",
+                   (unsigned long long)st.st_size, (long long)st.st_mtime);
+        const cat_pkg_t *pk = NULL;
+        if (cat && !S_ISDIR(st.st_mode))
+            for (int i = 0; i < cat->npkgs; i++)
+                if (!strcmp(cat->pkgs[i].path, full)) {
+                    pk = &cat->pkgs[i];
+                    break;
+                }
+        if (pk) {
+            buf_printf(out, ",\"pkg\":{\"title_id\":\"%s\",\"role\":%d,\"version\":", pk->title_id, pk->role);
+            json_str(out, pk->app_ver);
+            buf_printf(out, ",\"title\":");
+            json_str(out, pk->name);
+            buf_printf(out, ",\"protected\":%s}", fm_protected(full, NULL) ? "true" : "false");
+        }
+        buf_printf(out, "}");
+        first = 0;
+        count++;
+    }
+    closedir(d);
+    buf_printf(out, "]}");
     return 0;
 }
 
