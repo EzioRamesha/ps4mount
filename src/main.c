@@ -4,9 +4,10 @@
 /* ps4mount: run PS4 fpkgs from external storage without installing them.
  *
  * Every scan:
- *   1. A PS4 app pkg found at the root of /mnt/usbN or /mnt/extN is moved to
- *      <root>/ps4/<TITLE_ID>/app.pkg (same disk, rename only).
- *   2. For each <root>/ps4/<TITLE_ID>/app.pkg the files a real install leaves
+ *   1. Every folder of /mnt/usbN and /mnt/extN is searched for PS4 pkgs, which stay
+ *      where they are; each game is grouped with its update and add-ons. (With the
+ *      organize setting on, pkgs are first moved to <root>/ps4/<TITLE_ID>/app.pkg.)
+ *   2. For each game the files a real install leaves
  *      behind are generated from the pkg into an internal folder next to a symlink
  *      to the pkg, that folder is mounted over /user/app/<TITLE_ID> (nullfs) and
  *      the title is added to app.db/appinfo.db.
@@ -22,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/mount.h>
 #include <sys/param.h>
 #include <sys/socket.h>
@@ -34,6 +36,7 @@
 #include <ps5/kernel.h>
 
 #include "build.h"
+#include "catalog.h"
 #include "crypto.h"
 #include "db.h"
 #include "logfile.h"
@@ -65,11 +68,46 @@ typedef struct {
     int batch;      /* new games are added in groups */
     int batch_size; /* games per group */
     int dlc;        /* add-ons are moved and installed */
-    char paths[MAX_SCAN_PATHS][128]; /* folders searched for pkgs, relative to each drive; "" is the root */
+    char paths[MAX_SCAN_PATHS][128]; /* organize: folders whose pkgs are moved, relative to each drive; "" is the root */
     int npaths;
+    int organize; /* pkgs are moved into <root>/ps4/<TID>/; off: they are used where they are */
 } config_t;
 
-static config_t g_cfg = {1, 5, 1, {""}, 1};
+static config_t g_cfg = {1, 5, 1, {""}, 1, 0};
+
+/* --- drives and the pkgs found on them --- */
+
+#define NUM_DRIVES 10 /* /mnt/usb0-7, /mnt/ext0-1 */
+
+static catalog_t g_cat[NUM_DRIVES];
+
+static void drive_root(int i, char *out, size_t n) {
+    if (i < 8)
+        snprintf(out, n, "/mnt/usb%d", i);
+    else
+        snprintf(out, n, "/mnt/ext%d", i - 8);
+}
+
+static catalog_t *drive_catalog(const char *root) {
+    char r[32];
+    for (int i = 0; i < NUM_DRIVES; i++) {
+        drive_root(i, r, sizeof(r));
+        if (!strcmp(r, root))
+            return &g_cat[i];
+    }
+    return NULL;
+}
+
+/* Where a game is, as recorded in its marker: <root>/ps4/<TID> for a game PS4Mount
+ * organized (as earlier versions recorded every game), the game pkg itself otherwise. */
+static void game_location(const char *root, const char *tid, const char *app_path, char *out, size_t n) {
+    char lib[PATH_MAX];
+    snprintf(lib, sizeof(lib), "%s/ps4/%s/app.pkg", root, tid);
+    if (!strcmp(app_path, lib))
+        snprintf(out, n, "%s/ps4/%s", root, tid);
+    else
+        snprintf(out, n, "%s", app_path);
+}
 
 typedef struct { char useless[45]; char message[3075]; } notify_request_t;
 int sceUserServiceInitialize(void *);
@@ -192,7 +230,7 @@ static int write_buf(const char *path, const buf_t *b) { return write_file(path,
 
 /* --- registration --- */
 
-/* An add-on: <root>/ps4/<TID>/addcont/<ADD-ON TID>/<LABEL>/ac.pkg. */
+/* An add-on pkg, anywhere on the drive of its game. */
 typedef struct {
     char path[PATH_MAX];
     pkg_t pkg;
@@ -200,9 +238,10 @@ typedef struct {
     int data; /* 1: has data (mounted by the game), 0: only unlocks content */
 } dlc_src_t;
 
-/* One library folder: <root>/ps4/<TID>/app.pkg plus an optional patch.pkg and add-ons. */
+/* One game: its pkg plus an optional update and add-ons. */
 typedef struct {
-    char dir[PATH_MAX], app_path[PATH_MAX], patch_path[PATH_MAX];
+    char dir[PATH_MAX]; /* where the game is: see game_location */
+    char app_path[PATH_MAX], patch_path[PATH_MAX]; /* patch_path is "" without an update */
     pkg_t app, patch;
     int has_patch;
     sfo_t app_sfo, patch_sfo;
@@ -237,93 +276,71 @@ static int dlc_cmp(const void *a, const void *b) {
     return strcmp(((const dlc_src_t *)a)->pkg.content_id, ((const dlc_src_t *)b)->pkg.content_id);
 }
 
-/* Add-ons are used when their folder names match the pkg (title ID and label). */
-static void dlc_open(title_src_t *t) {
-    char base[PATH_MAX];
-    snprintf(base, sizeof(base), "%s/addcont", t->dir);
-    DIR *d = opendir(base);
-    if (!d)
-        return;
-    struct dirent *e;
-    while ((e = readdir(d))) {
-        if (strlen(e->d_name) != 9 || strncmp(e->d_name, "CUSA", 4))
+/* The add-ons the catalog grouped with the game. A second copy of an add-on is left out. */
+static void dlc_open(title_src_t *t, const catalog_t *c, const cat_game_t *g) {
+    for (int k = 0; k < g->ndlc && t->ndlc < MAX_DLC; k++) {
+        const cat_pkg_t *p = &c->pkgs[g->dlc[k]];
+        int dup = 0;
+        for (int i = 0; i < t->ndlc; i++)
+            dup |= !strcmp(t->dlc[i].pkg.content_id, p->content_id);
+        char rm[96];
+        snprintf(rm, sizeof(rm), STATE_DIR "/%s.removed", p->content_id);
+        if (dup || exists(rm)) /* removed: deleted on the console */
             continue;
-        char sub[PATH_MAX];
-        snprintf(sub, sizeof(sub), "%s/%s", base, e->d_name);
-        DIR *l = opendir(sub);
-        if (!l)
-            continue;
-        struct dirent *f;
-        while ((f = readdir(l))) {
-            if (f->d_name[0] == '.' || strlen(f->d_name) != 16)
-                continue;
-            if (t->ndlc == MAX_DLC)
+        if (t->ndlc == t->dlc_cap) { /* about 100 KB per add-on: grown as they are found */
+            int cap = t->dlc_cap ? t->dlc_cap * 2 : 4;
+            if (cap > MAX_DLC)
+                cap = MAX_DLC;
+            dlc_src_t *grown = realloc(t->dlc, sizeof(*grown) * (size_t)cap);
+            if (!grown)
                 break;
-            if (t->ndlc == t->dlc_cap) { /* about 100 KB per add-on: grown as they are found */
-                int cap = t->dlc_cap ? t->dlc_cap * 2 : 4;
-                if (cap > MAX_DLC)
-                    cap = MAX_DLC;
-                dlc_src_t *grown = realloc(t->dlc, sizeof(*grown) * (size_t)cap);
-                if (!grown)
-                    break;
-                t->dlc = grown;
-                t->dlc_cap = cap;
-            }
-            dlc_src_t *a = &t->dlc[t->ndlc];
-            snprintf(a->path, sizeof(a->path), "%s/%s/ac.pkg", sub, f->d_name);
-            if (!exists(a->path))
-                continue;
-            if (pkg_open(&a->pkg, a->path) || read_sfo(&a->pkg, &a->sfo)) {
-                if (a->pkg.fd > 0)
-                    pkg_close(&a->pkg);
-                continue;
-            }
-            const sfo_item_t *cat = sfo_get(&a->sfo, "CATEGORY");
-            /* the fake key was checked when the pkg was moved here; checking it again on
-             * every scan would cost an RSA operation per add-on */
-            if (!cat || strcmp(cat->sval, "ac") || strcmp(a->pkg.title_id, e->d_name) ||
-                strcmp(a->pkg.content_id + 20, f->d_name)) {
-                pkg_close(&a->pkg);
-                continue;
-            }
-            char rm[96];
-            snprintf(rm, sizeof(rm), STATE_DIR "/%s.removed", a->pkg.content_id);
-            if (exists(rm)) { /* deleted on the console */
-                pkg_close(&a->pkg);
-                continue;
-            }
-            a->data = a->pkg.header[0x77] == 0x1b; /* content type: 0x1b with data, 0x1c license only */
-            t->ndlc++;
-            int known = 0;
-            for (int i = 0; i < t->ndlc_tids; i++)
-                known |= !strcmp(t->dlc_tids[i], e->d_name);
-            if (!known && t->ndlc_tids < MAX_DLC_TIDS)
-                snprintf(t->dlc_tids[t->ndlc_tids++], 10, "%s", e->d_name);
+            t->dlc = grown;
+            t->dlc_cap = cap;
         }
-        closedir(l);
+        dlc_src_t *a = &t->dlc[t->ndlc];
+        snprintf(a->path, sizeof(a->path), "%s", p->path);
+        /* the catalog checked the category and the fake key when it first read the pkg;
+         * checking the key again on every scan would cost an RSA operation per add-on */
+        if (pkg_open(&a->pkg, a->path) || read_sfo(&a->pkg, &a->sfo)) {
+            if (a->pkg.fd > 0)
+                pkg_close(&a->pkg);
+            continue;
+        }
+        a->data = a->pkg.header[0x77] == 0x1b; /* content type: 0x1b with data, 0x1c license only */
+        t->ndlc++;
+        int known = 0;
+        for (int i = 0; i < t->ndlc_tids; i++)
+            known |= !strcmp(t->dlc_tids[i], a->pkg.title_id);
+        if (!known && t->ndlc_tids < MAX_DLC_TIDS)
+            snprintf(t->dlc_tids[t->ndlc_tids++], 10, "%s", a->pkg.title_id);
     }
-    closedir(d);
     if (t->ndlc)
         qsort(t->dlc, (size_t)t->ndlc, sizeof(*t->dlc), dlc_cmp);
 }
 
 static int first_time(const char *path);
 
+/* Opens the pkgs of game tid as the catalog of the drive at root grouped them. */
 static int src_open(title_src_t *t, const char *root, const char *tid) {
     memset(t, 0, sizeof(*t));
-    snprintf(t->dir, sizeof(t->dir), "%s/ps4/%s", root, tid);
-    snprintf(t->app_path, sizeof(t->app_path), "%s/app.pkg", t->dir);
-    snprintf(t->patch_path, sizeof(t->patch_path), "%s/patch.pkg", t->dir);
+    const catalog_t *cat = drive_catalog(root);
+    const cat_game_t *g = cat ? catalog_game(cat, tid) : NULL;
+    if (!g)
+        return -1;
+    snprintf(t->app_path, sizeof(t->app_path), "%s", cat->pkgs[g->app].path);
+    if (g->patch >= 0)
+        snprintf(t->patch_path, sizeof(t->patch_path), "%s", cat->pkgs[g->patch].path);
+    game_location(root, tid, t->app_path, t->dir, sizeof(t->dir));
     if (pkg_open(&t->app, t->app_path) || read_sfo(&t->app, &t->app_sfo)) {
         if (first_time(t->app_path))
             printf("[scan] %s: unreadable app pkg\n", t->app_path);
         pkg_close(&t->app);
         return -1;
     }
-    if (exists(t->patch_path)) {
+    if (t->patch_path[0]) {
         const sfo_item_t *gv = sfo_get(&t->app_sfo, "VERSION");
         if (pkg_open(&t->patch, t->patch_path) || read_sfo(&t->patch, &t->patch_sfo)) {
-            snprintf(t->update_issue, sizeof(t->update_issue), "Update ignored: patch.pkg could not be read");
+            snprintf(t->update_issue, sizeof(t->update_issue), "Update ignored: the update pkg could not be read");
             if (t->patch.fd > 0)
                 pkg_close(&t->patch);
         } else {
@@ -356,7 +373,7 @@ static int src_open(title_src_t *t, const char *root, const char *tid) {
             snprintf(digest + i * 2, 3, "%02x", t->patch.digest[i]);
     snprintf(t->marker, sizeof(t->marker), "%s\n%s\n", t->dir, t->has_patch ? digest : "nopatch");
     if (g_cfg.dlc)
-        dlc_open(t);
+        dlc_open(t, cat, g);
     if (t->ndlc) {
         /* one line for all add-ons, so markers of titles without add-ons stay as before */
         uint8_t h[32];
@@ -899,9 +916,9 @@ static int marker_matches(const char *tid, const char *expected) {
 }
 
 /* 1 = needs (re)registration, 0 = registered here, -1 = skip. */
-/* The title is served from another connected drive: the marker names another
- * folder whose game pkg is still there. The first drive keeps it, so the same game
- * on two drives is not switched (and registered again) on every scan. */
+/* The title is served from another copy: the marker names another location (see
+ * game_location) whose game pkg is still there. The first copy keeps it, so the same
+ * game on two drives is not switched (and registered again) on every scan. */
 static int served_elsewhere(const char *tid, const char *dir) {
     char path[64], buf[PATH_MAX + 256] = {0}, pkg[PATH_MAX + 16];
     snprintf(path, sizeof(path), STATE_DIR "/%s.src", tid);
@@ -915,6 +932,9 @@ static int served_elsewhere(const char *tid, const char *dir) {
     buf[strcspn(buf, "\n")] = 0;
     if (!strcmp(buf, dir))
         return 0;
+    size_t l = strlen(buf);
+    if (l > 4 && !strcasecmp(buf + l - 4, ".pkg"))
+        return exists(buf);
     snprintf(pkg, sizeof(pkg), "%s/app.pkg", buf);
     return exists(pkg);
 }
@@ -1627,48 +1647,70 @@ static info_t *info_store(const title_src_t *t) {
     return in;
 }
 
+/* Pkgs moved back (RESTORED_LIST) are left out of the catalog of the drive being walked. */
+static const char *g_walk_root;
+static int g_walk_restored;
+
+static int walk_skip(const char *path, uint64_t size) {
+    return g_walk_restored && restored_has(RESTORED_LIST, drive_rel(g_walk_root, path), size);
+}
+
+/* Finds the pkgs on the drive (every folder) and groups them into games; only new or
+ * changed pkgs are read. 0 when the drive has no pkg. */
+static int catalog_update(catalog_t *cat, const char *root, int fresh) {
+    g_walk_root = root;
+    g_walk_restored = exists(RESTORED_LIST);
+    int unread = catalog_walk(cat, root, walk_skip);
+    if (!cat->npkgs)
+        return 0;
+    if (fresh)
+        notify("Scanning %s for PS4 games...", root + 5);
+    if (unread) {
+        int read = catalog_read(cat);
+        printf("[scan] %s: %d pkg(s), %d new or changed read\n", root, cat->npkgs, read);
+    }
+    catalog_group(cat);
+    for (int i = 0; i < cat->npkgs; i++)
+        if (cat->pkgs[i].state == CAT_BAD && first_time(cat->pkgs[i].path))
+            printf("[scan] skip %s (not a fake PS4 game, update or add-on pkg)\n", cat->pkgs[i].path);
+    if (fresh && cat->orphans)
+        notify("%s: %d add-on(s) have no game on this drive", root + 5, cat->orphans);
+    if (fresh && cat->dupes)
+        notify("%s: %d game pkg(s) are second copies of a game and are not used", root + 5, cat->dupes);
+    return 1;
+}
+
 static void scan_root(const char *root, int fresh, int reconnected) {
     const char *label = root + 5; /* "usb0" / "ext0" */
-    if (!has_candidates(root)) {
-        if (fresh)
-            printf("[scan] %s: no ps4 folder or pkg, skipped\n", root);
+    catalog_t *cat = drive_catalog(root);
+    if (!cat)
         return;
-    }
-    if (fresh)
-        notify("Scanning %s for PS4 games...", label);
     if (reconnected)
         clear_removed_dlc();
-    int moved = adopt_root_pkgs(root);
-    if (moved && !fresh)
-        notify("%s: %d new package(s) found", label, moved);
-    char lib[PATH_MAX];
-    snprintf(lib, sizeof(lib), "%s/ps4", root);
-    DIR *d = opendir(lib);
-    if (!d) {
+    if (g_cfg.organize && has_candidates(root)) {
+        int moved = adopt_root_pkgs(root);
+        if (moved && !fresh)
+            notify("%s: %d new package(s) found", label, moved);
+    }
+    if (!catalog_update(cat, root, fresh)) {
         if (fresh)
-            notify("%s: no PS4 games found", label);
+            printf("[scan] %s: no pkg, skipped\n", root);
         return;
     }
     static title_t titles[MAX_TITLES];
     int count = 0, pending = 0;
-    struct dirent *e;
-    while ((e = readdir(d)) && count < MAX_TITLES) {
-        if (strlen(e->d_name) != 9 || strncmp(e->d_name, "CUSA", 4))
-            continue;
-        char pkg_path[PATH_MAX];
-        snprintf(pkg_path, sizeof(pkg_path), "%s/%s/app.pkg", lib, e->d_name);
-        if (!exists(pkg_path))
-            continue;
+    for (int gi = 0; gi < cat->ngames && count < MAX_TITLES; gi++) {
+        const char *tid = cat->games[gi].title_id;
         title_src_t src;
-        if (src_open(&src, root, e->d_name))
+        if (src_open(&src, root, tid))
             continue;
         if (reconnected) {
             char rm[64];
-            snprintf(rm, sizeof(rm), STATE_DIR "/%s.removed", e->d_name);
+            snprintf(rm, sizeof(rm), STATE_DIR "/%s.removed", tid);
             unlink(rm); /* reconnecting the USB drive brings removed games back */
         }
         title_t *t = &titles[count++];
-        snprintf(t->tid, sizeof(t->tid), "%s", e->d_name);
+        snprintf(t->tid, sizeof(t->tid), "%s", tid);
         snprintf(t->name, sizeof(t->name), "%s", src.name);
         t->ndlc = src.ndlc;
         t->has_patch = src.has_patch;
@@ -1681,7 +1723,6 @@ static void scan_root(const char *root, int fresh, int reconnected) {
         info_store(&src);
         src_close(&src);
     }
-    closedir(d);
     if (fresh && !count)
         notify("%s: no PS4 games found", label);
     else if (fresh)
@@ -1810,14 +1851,13 @@ static void scan_all(void) {
     static int seen[10], first = 1;
     release_stale();
     char root[32];
-    for (int i = 0; i < 10; i++) {
-        if (i < 8)
-            snprintf(root, sizeof(root), "/mnt/usb%d", i);
-        else
-            snprintf(root, sizeof(root), "/mnt/ext%d", i - 8);
+    for (int i = 0; i < NUM_DRIVES; i++) {
+        drive_root(i, root, sizeof(root));
         int present = is_mountpoint(root);
         if (present)
             scan_root(root, !seen[i] || g_manual_scan, !seen[i] && !first);
+        else if (g_cat[i].npkgs)
+            catalog_free(&g_cat[i]); /* read again when the drive is back: it may have changed */
         seen[i] = present;
     }
     first = 0;
@@ -2006,7 +2046,22 @@ static void json_str(buf_t *b, const char *s) {
     buf_put(b, "\"", 1);
 }
 
-/* Finds the library folder of tid on any connected storage. */
+/* Finds the game pkg of tid in the catalogs of the connected drives. */
+static int find_game(const char *tid, char *root, size_t n, char *app_path, size_t an) {
+    for (int i = 0; i < NUM_DRIVES; i++) {
+        char r[32];
+        drive_root(i, r, sizeof(r));
+        const cat_game_t *g = catalog_game(&g_cat[i], tid);
+        if (g && is_mountpoint(r)) {
+            snprintf(root, n, "%s", r);
+            snprintf(app_path, an, "%s", g_cat[i].pkgs[g->app].path);
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* Finds the organized folder <root>/ps4/<tid> on any connected storage. */
 static int find_root(const char *tid, char *root, size_t n) {
     for (int i = 0; i < 10; i++) {
         char r[32], p[PATH_MAX];
@@ -2042,31 +2097,19 @@ void app_games_json(buf_t *out) {
     json_str(out, VERSION);
     buf_printf(out, ",\"games\":[");
     int first = 1;
-    for (int i = 0; i < 10; i++) {
-        char root[32], lib[PATH_MAX];
-        if (i < 8)
-            snprintf(root, sizeof(root), "/mnt/usb%d", i);
-        else
-            snprintf(root, sizeof(root), "/mnt/ext%d", i - 8);
-        if (!is_mountpoint(root))
+    for (int i = 0; i < NUM_DRIVES; i++) {
+        char root[32];
+        drive_root(i, root, sizeof(root));
+        const catalog_t *cat = &g_cat[i];
+        if (!cat->ngames || !is_mountpoint(root))
             continue;
-        snprintf(lib, sizeof(lib), "%s/ps4", root);
-        DIR *d = opendir(lib);
-        if (!d)
-            continue;
-        struct dirent *e;
-        while ((e = readdir(d))) {
-            if (strlen(e->d_name) != 9 || strncmp(e->d_name, "CUSA", 4))
-                continue;
-            char pkg_path[PATH_MAX], dir[PATH_MAX];
-            snprintf(pkg_path, sizeof(pkg_path), "%s/%s/app.pkg", lib, e->d_name);
-            snprintf(dir, sizeof(dir), "%s/%s", lib, e->d_name);
-            if (!exists(pkg_path))
-                continue;
+        for (int gi = 0; gi < cat->ngames; gi++) {
+            const char *tid = cat->games[gi].title_id, *state, *mount = "";
+            char dir[PATH_MAX];
+            game_location(root, tid, cat->pkgs[cat->games[gi].app].path, dir, sizeof(dir));
             const info_t *in = info_find(dir);
-            if (!in && !(in = info_load(root, e->d_name)))
+            if (!in && !(in = info_load(root, tid)))
                 continue;
-            const char *tid = e->d_name, *state, *mount = "";
             char target[64], from[PATH_MAX];
             snprintf(target, sizeof(target), "/user/app/%s", tid);
             int mounted = mounted_from(target, from, sizeof(from));
@@ -2100,7 +2143,6 @@ void app_games_json(buf_t *out) {
             buf_printf(out, "}");
             first = 0;
         }
-        closedir(d);
     }
     buf_printf(out, "]}");
 }
@@ -2117,9 +2159,8 @@ int app_icon(const char *tid, buf_t *out) {
         close(fd);
         return out->len ? 0 : -1;
     }
-    if (find_root(tid, root, sizeof(root)))
+    if (find_game(tid, root, sizeof(root), p, sizeof(p)))
         return -1;
-    snprintf(p, sizeof(p), "%s/ps4/%s/app.pkg", root, tid);
     pkg_t pkg;
     if (pkg_open(&pkg, p))
         return -1;
@@ -2134,8 +2175,8 @@ int app_icon(const char *tid, buf_t *out) {
 }
 
 int app_add(const char *tid, char *msg, size_t cap) {
-    char rm[64], root[32];
-    if (find_root(tid, root, sizeof(root))) {
+    char rm[64], root[32], app_path[PATH_MAX];
+    if (find_game(tid, root, sizeof(root), app_path, sizeof(app_path))) {
         snprintf(msg, cap, "%s is not on any connected USB drive", tid);
         return -1;
     }
@@ -2542,7 +2583,8 @@ static int clean_scan_path(const char *in, char *out, size_t n, char *why, size_
 
 static void config_save(void) {
     buf_t b = {0};
-    buf_printf(&b, "batch=%d\nbatch_size=%d\ndlc=%d\n", g_cfg.batch, g_cfg.batch_size, g_cfg.dlc);
+    buf_printf(&b, "batch=%d\nbatch_size=%d\ndlc=%d\norganize=%d\n", g_cfg.batch, g_cfg.batch_size, g_cfg.dlc,
+               g_cfg.organize);
     for (int i = 0; i < g_cfg.npaths; i++)
         buf_printf(&b, "path=%s\n", g_cfg.paths[i]);
     write_file(CONFIG_PATH, b.data, b.len, 0666);
@@ -2564,6 +2606,8 @@ static void config_load(void) {
             c.batch_size = atoi(line + 11);
         else if (!strncmp(line, "dlc=", 4))
             c.dlc = atoi(line + 4) != 0;
+        else if (!strncmp(line, "organize=", 9))
+            c.organize = atoi(line + 9) != 0;
         else if (!strncmp(line, "path=", 5) && c.npaths < MAX_SCAN_PATHS &&
                  !clean_scan_path(line + 5, path, sizeof(path), why, sizeof(why)))
             snprintf(c.paths[c.npaths++], sizeof(c.paths[0]), "%s", path);
@@ -2574,13 +2618,14 @@ static void config_load(void) {
     if (!c.npaths)
         c.npaths = 1; /* the root */
     g_cfg = c;
-    printf("[config] batch=%d batch_size=%d dlc=%d folders=%d\n", g_cfg.batch, g_cfg.batch_size, g_cfg.dlc,
-           g_cfg.npaths);
+    printf("[config] batch=%d batch_size=%d dlc=%d organize=%d folders=%d\n", g_cfg.batch, g_cfg.batch_size, g_cfg.dlc,
+           g_cfg.organize, g_cfg.npaths);
 }
 
 void app_config_json(buf_t *out) {
-    buf_printf(out, "{\"batch\":%s,\"batch_size\":%d,\"dlc\":%s,\"paths\":[", g_cfg.batch ? "true" : "false",
-               g_cfg.batch_size, g_cfg.dlc ? "true" : "false");
+    buf_printf(out, "{\"batch\":%s,\"batch_size\":%d,\"dlc\":%s,\"organize\":%s,\"paths\":[",
+               g_cfg.batch ? "true" : "false", g_cfg.batch_size, g_cfg.dlc ? "true" : "false",
+               g_cfg.organize ? "true" : "false");
     for (int i = 0; i < g_cfg.npaths; i++) {
         char shown[130];
         snprintf(shown, sizeof(shown), "/%s", g_cfg.paths[i]);
@@ -2605,7 +2650,7 @@ static void url_decode(const char *in, size_t len, char *out, size_t n) {
     out[o] = 0;
 }
 
-/* body: batch=0|1&batch_size=N&dlc=0|1&paths=<folders, one per line> (form encoded). */
+/* body: batch=0|1&batch_size=N&dlc=0|1&organize=0|1&paths=<folders, one per line> (form encoded). */
 int app_config_set(const char *body, char *msg, size_t cap) {
     config_t c = g_cfg;
     char value[1200], why[160] = "";
@@ -2621,6 +2666,8 @@ int app_config_set(const char *body, char *msg, size_t cap) {
                 c.batch_size = atoi(value);
             else if (k == 3 && !strncmp(p, "dlc", 3))
                 c.dlc = atoi(value) != 0;
+            else if (k == 8 && !strncmp(p, "organize", 8))
+                c.organize = atoi(value) != 0;
             else if (k == 5 && !strncmp(p, "paths", 5)) {
                 c.npaths = 0;
                 for (char *line = strtok(value, "\n"); line; line = strtok(NULL, "\n")) {
@@ -2654,7 +2701,8 @@ int app_config_set(const char *body, char *msg, size_t cap) {
     }
     g_cfg = c;
     config_save();
-    printf("[config] saved: batch=%d batch_size=%d dlc=%d folders=%d\n", c.batch, c.batch_size, c.dlc, c.npaths);
+    printf("[config] saved: batch=%d batch_size=%d dlc=%d organize=%d folders=%d\n", c.batch, c.batch_size, c.dlc,
+           c.organize, c.npaths);
     g_next_scan = 0;
     snprintf(msg, cap, "Settings saved");
     return 0;
