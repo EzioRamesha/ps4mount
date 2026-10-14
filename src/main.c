@@ -3050,6 +3050,7 @@ int app_fm_mkdir(const char *dir, const char *name, char *msg, size_t cap) {
         snprintf(msg, cap, err == EEXIST ? "%s already exists" : "Could not create %s", name);
         return -1;
     }
+    g_next_scan = 0;
     printf("[fm] mkdir %s\n", full);
     snprintf(msg, cap, "Folder %s created", name);
     return 0;
