@@ -72,6 +72,7 @@ td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-b
     <select id="sort" aria-label="Sort"><option value="name">Sort by name</option><option value="state">Sort by state</option><option value="source">Sort by location</option></select>
     <select id="drive" aria-label="Drive"><option value="">All drives</option></select>
     <button id="rescan" class="primary">Scan for games</button>
+    <button id="speedbtn" hidden>Test speed</button>
     <button id="probbtn">Problems</button>
     <button id="settingsbtn">Settings</button>
     <button id="logbtn">Log</button>
@@ -223,7 +224,10 @@ es: {
 'No problems found in the last scan.': 'No se encontraron problemas en la última búsqueda.', '{size} of {full}': '{size} de {full}',
 'Could not read the problems: {e}': 'No se pudieron leer los problemas: {e}',
 'Resume adding games? Do this only after restarting the console, once the database message is gone.': '¿Seguir añadiendo juegos? Hazlo solo después de reiniciar la consola, cuando ya no aparezca el mensaje de la base de datos.',
-'Scan {d}': 'Buscar en {d}',
+'Scan {d}': 'Buscar en {d}', 'Test speed': 'Probar velocidad', '{n} MB/s': '{n} MB/s',
+'testing speed…': 'probando velocidad…', 'speed test failed': 'la prueba de velocidad falló',
+'slower than usual (best {best} MB/s): check the cable or port': 'más lenta de lo normal (mejor: {best} MB/s): revisa el cable o el puerto',
+'USB 2 speed: normal for a USB stick, low for an SSD. Check the cable': 'velocidad de USB 2: normal para una memoria USB, baja para un SSD. Revisa el cable',
 'This browser cannot save files: the whole log is shown below': 'Este navegador no puede guardar archivos: el registro completo se muestra abajo',
 'Could not download the log: {e}': 'No se pudo descargar el registro: {e}',
 'Could not read the diagnostics: {e}': 'No se pudo leer el diagnóstico: {e}', 'Copied': 'Copiado',
@@ -301,7 +305,10 @@ pt: {
 'No problems found in the last scan.': 'Nenhum problema encontrado na última verificação.', '{size} of {full}': '{size} de {full}',
 'Could not read the problems: {e}': 'Não foi possível ler os problemas: {e}',
 'Resume adding games? Do this only after restarting the console, once the database message is gone.': 'Voltar a adicionar jogos? Faça isso só depois de reiniciar o console, quando a mensagem do banco de dados tiver sumido.',
-'Scan {d}': 'Verificar {d}',
+'Scan {d}': 'Verificar {d}', 'Test speed': 'Testar velocidade', '{n} MB/s': '{n} MB/s',
+'testing speed…': 'testando velocidade…', 'speed test failed': 'o teste de velocidade falhou',
+'slower than usual (best {best} MB/s): check the cable or port': 'mais lenta que o normal (melhor: {best} MB/s): verifique o cabo ou a porta',
+'USB 2 speed: normal for a USB stick, low for an SSD. Check the cable': 'velocidade de USB 2: normal para um pendrive, baixa para um SSD. Verifique o cabo',
 'This browser cannot save files: the whole log is shown below': 'Este navegador não salva arquivos: o log completo aparece abaixo',
 'Could not download the log: {e}': 'Não foi possível baixar o log: {e}',
 'Could not read the diagnostics: {e}': 'Não foi possível ler o diagnóstico: {e}', 'Copied': 'Copiado',
@@ -379,7 +386,10 @@ fr: {
 'No problems found in the last scan.': 'Aucun problème lors de la dernière recherche.', '{size} of {full}': '{size} sur {full}',
 'Could not read the problems: {e}': 'Impossible de lire les problèmes : {e}',
 'Resume adding games? Do this only after restarting the console, once the database message is gone.': 'Reprendre l’ajout de jeux ? Faites-le seulement après avoir redémarré la console, une fois le message de base de données disparu.',
-'Scan {d}': 'Chercher sur {d}',
+'Scan {d}': 'Chercher sur {d}', 'Test speed': 'Tester la vitesse', '{n} MB/s': '{n} Mo/s',
+'testing speed…': 'test de vitesse…', 'speed test failed': 'échec du test de vitesse',
+'slower than usual (best {best} MB/s): check the cable or port': 'plus lent que d’habitude (meilleur : {best} Mo/s) : vérifiez le câble ou le port',
+'USB 2 speed: normal for a USB stick, low for an SSD. Check the cable': 'vitesse USB 2 : normale pour une clé USB, faible pour un SSD. Vérifiez le câble',
 'This browser cannot save files: the whole log is shown below': 'Ce navigateur ne peut pas enregistrer de fichiers : tout le journal est affiché ci-dessous',
 'Could not download the log: {e}': 'Impossible de télécharger le journal : {e}',
 'Could not read the diagnostics: {e}': 'Impossible de lire le diagnostic : {e}', 'Copied': 'Copié',
@@ -587,12 +597,25 @@ function render() {
   for (var k in counts) s += '<span>' + esc(labels[k] ? t(labels[k]) : k) + ': ' + counts[k] + '</span>';
   drives.forEach(function (d) {
     if (!dv || d.name === dv)
-      s += '<span' + (d.low ? ' class="low" title="' + t('Almost full') + '"' : '') + '>' +
+      s += '<span' + (d.low || d.speed_state === 'slow' || d.speed_state === 'usb2' ? ' class="low"' : '') +
+        (d.low ? ' title="' + t('Almost full') + '"' : '') + '>' +
         t('{name}: {free} free of {total}', {name: esc(d.name), free: gb(d.free), total: gb(d.total)}) +
-        (d.low ? ' · ' + t('almost full') : '') + '</span>';
+        (d.low ? ' · ' + t('almost full') : '') + speedText(d) + '</span>';
   });
   $('summary').innerHTML = s;
   selbar();
+}
+
+/* Result of the drive's last read speed test, for its summary chip. */
+function speedText(d) {
+  var st = d.speed_state;
+  if (st === 'testing') return ' · ' + t('testing speed…');
+  if (st === 'failed') return ' · ' + t('speed test failed');
+  if (st !== 'ok' && st !== 'slow' && st !== 'usb2') return '';
+  var s = ' · ' + t('{n} MB/s', {n: d.speed});
+  if (st === 'slow') s += ' · ' + t('slower than usual (best {best} MB/s): check the cable or port', {best: d.best});
+  if (st === 'usb2') s += ' · ' + t('USB 2 speed: normal for a USB stick, low for an SSD. Check the cable');
+  return s;
 }
 
 function selbar() {
@@ -715,7 +738,17 @@ $('rescan').onclick = function () {
     .then(function (j) { toast(j.message); setTimeout(load, 3000); })
     .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
 };
-function rescanLabel() { $('rescan').textContent = $('drive').value ? t('Scan {d}', {d: $('drive').value}) : t('Scan for games'); }
+function rescanLabel() {
+  $('rescan').textContent = $('drive').value ? t('Scan {d}', {d: $('drive').value}) : t('Scan for games');
+  $('speedbtn').hidden = !$('drive').value;
+}
+$('speedbtn').onclick = function () {
+  var dv = $('drive').value;
+  if (!dv) return;
+  api('/api/speedtest?drive=' + encodeURIComponent(dv), 'POST')
+    .then(function (j) { toast(j.message); if (j.ok !== false) load(); })
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
+};
 $('logbtn').onclick = function () { api('/api/log').then(function (j) { $('log').textContent = j.log; $('logdlg').showModal(); }); };
 /* Fetched (to send the PIN) and saved through a link; a browser that cannot save files
    shows the whole log in the dialog instead. */

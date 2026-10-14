@@ -341,6 +341,14 @@ void web_serve(int listen_fd) {
             rc = app_rescan(rc ? drive : NULL, msg, sizeof(msg));
             json_msg(fd, !rc, msg);
         }
+    } else if (post && !strncmp(path, "/api/speedtest", 14) && (path[14] == 0 || path[14] == '?')) {
+        char drive[8];
+        if (drive_param(path, drive, sizeof(drive)) != 1)
+            json_msg(fd, 0, "invalid drive");
+        else {
+            int rc = app_speedtest(drive, msg, sizeof(msg));
+            json_msg(fd, !rc, msg);
+        }
     } else if (post && !strncmp(path, "/api/restore", 12) && (path[12] == 0 || path[12] == '?')) {
         int rc;
         if (strstr(path, "title_id="))

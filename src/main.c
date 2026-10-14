@@ -44,6 +44,7 @@
 #include "pkg.h"
 #include "policy.h"
 #include "safety.h"
+#include "speed.h"
 #include "web.h"
 #include "icon_data.h"
 
@@ -2032,9 +2033,161 @@ static void release_stale(void) {
     closedir(d);
 }
 
+/* --- drive speed --- */
+
+/* Best read speed of each drive, keyed by its exact size: the slot (usb0...) changes with
+ * the port, and nothing is written on the drives. */
+#define SPEED_FILE STATE_DIR "/speed.txt"
+#define SPEED_TEST_BYTES (256ULL << 20)
+#define SPEED_QUICK_BYTES (64ULL << 20)
+#define SPEED_SECONDS 20
+
+enum { SPEED_NONE, SPEED_TESTING, SPEED_DONE, SPEED_FAILED };
+
+typedef struct {
+    int status;  /* SPEED_NONE, SPEED_TESTING, SPEED_DONE or SPEED_FAILED */
+    int verdict; /* SPEED_DONE: policy_speed_verdict */
+    double mbps, best;
+    int warn;    /* plug-in check found it slower than usual: notify from the main thread */
+} drive_speed_t;
+
+typedef struct {
+    int drive, quick;
+    char path[PATH_MAX];
+    unsigned long long size, total;
+} speed_job_t;
+
+static drive_speed_t g_speed[NUM_DRIVES];
+static pthread_mutex_t g_speed_lock = PTHREAD_MUTEX_INITIALIZER;
+static volatile int g_speed_busy;
+static int g_speed_due[NUM_DRIVES]; /* plug-in check still to run */
+static unsigned g_speed_seed;
+
+static void *speed_thread(void *arg) {
+    speed_job_t *job = arg;
+    char key[32], value[32];
+    snprintf(key, sizeof(key), "size-%llu", job->total);
+    double best = 0, mbps = 0;
+    if (!kv_get(SPEED_FILE, key, value, sizeof(value)))
+        best = strtod(value, NULL);
+    unsigned long long done = 0;
+    int rc = speed_measure(job->path, job->size, job->quick ? SPEED_QUICK_BYTES : SPEED_TEST_BYTES, SPEED_SECONDS,
+                           g_speed_seed++, &mbps, &done);
+    int verdict = rc ? SPEED_OK : policy_speed_verdict(mbps, best);
+    char root[32];
+    drive_root(job->drive, root, sizeof(root));
+    if (rc)
+        printf("[speed] %s: test failed reading %s\n", root, job->path);
+    else
+        printf("[speed] %s: %.0f MB/s (%llu MB read, best %.0f MB/s)%s\n", root, mbps, done >> 20, best,
+               verdict == SPEED_DROP     ? ", slower than usual"
+               : verdict == SPEED_CACHED ? ", from the system cache: not used"
+                                         : "");
+    if (!rc && verdict != SPEED_CACHED && mbps > best) {
+        snprintf(value, sizeof(value), "%.1f", mbps);
+        kv_set(SPEED_FILE, key, value);
+    }
+    pthread_mutex_lock(&g_speed_lock);
+    drive_speed_t *s = &g_speed[job->drive];
+    s->status = rc || verdict == SPEED_CACHED ? SPEED_FAILED : SPEED_DONE;
+    s->verdict = verdict;
+    s->mbps = mbps;
+    s->best = best > mbps || verdict == SPEED_CACHED ? best : mbps;
+    s->warn = job->quick && !rc && verdict == SPEED_DROP;
+    pthread_mutex_unlock(&g_speed_lock);
+    free(job);
+    g_speed_busy = 0;
+    return NULL;
+}
+
+/* A game of ours is open: a test would slow it down and measure less than the drive gives. */
+static int own_game_running(void) {
+    refresh_sandboxes();
+    for (int s = 0; s < g_nsandboxes; s++)
+        for (int i = 0; i < NUM_DRIVES; i++)
+            for (int k = 0; k < g_cat[i].ngames; k++)
+                if (!strcmp(g_cat[i].games[k].title_id, g_sandboxes[s]))
+                    return 1;
+    return 0;
+}
+
+/* Starts a test of drive i on its largest readable pkg. 0 when started. */
+static int speed_start(int i, int quick, char *msg, size_t cap) {
+    char root[32];
+    drive_root(i, root, sizeof(root));
+    unsigned long long avail, total;
+    if (drive_space(root, &avail, &total)) {
+        snprintf(msg, cap, "%s is not connected", root + 5);
+        return -1;
+    }
+    const cat_pkg_t *pick = NULL;
+    for (int k = 0; k < g_cat[i].npkgs; k++) {
+        const cat_pkg_t *p = &g_cat[i].pkgs[k];
+        if (p->state == CAT_OK && (!pick || p->size > pick->size))
+            pick = p;
+    }
+    if (!pick || pick->size < SPEED_QUICK_BYTES) {
+        snprintf(msg, cap, "No pkg of 64 MB or more on %s to test with", root + 5);
+        return -1;
+    }
+    speed_job_t *job = calloc(1, sizeof(*job));
+    if (!job) {
+        snprintf(msg, cap, "Out of memory");
+        return -1;
+    }
+    job->drive = i;
+    job->quick = quick;
+    job->size = pick->size;
+    job->total = total;
+    snprintf(job->path, sizeof(job->path), "%s", pick->path);
+    pthread_mutex_lock(&g_speed_lock);
+    g_speed[i].status = SPEED_TESTING;
+    g_speed[i].warn = 0;
+    pthread_mutex_unlock(&g_speed_lock);
+    g_speed_busy = 1;
+    pthread_t th;
+    if (pthread_create(&th, NULL, speed_thread, job)) {
+        speed_thread(job); /* no thread: test here */
+    } else {
+        pthread_detach(th);
+    }
+    snprintf(msg, cap, "Testing the speed of %s", root + 5);
+    return 0;
+}
+
+/* Main loop, after each scan: forgets unplugged drives, runs the plug-in checks that are
+ * due when nothing else uses the drives, and notifies a drive slower than usual. */
+static void speed_poll(const int present[NUM_DRIVES], const int fresh[NUM_DRIVES]) {
+    char root[32], msg[128];
+    for (int i = 0; i < NUM_DRIVES; i++) {
+        if (fresh[i])
+            g_speed_due[i] = 1;
+        pthread_mutex_lock(&g_speed_lock);
+        drive_speed_t s = g_speed[i];
+        g_speed[i].warn = 0;
+        if (!present[i] && s.status != SPEED_TESTING)
+            memset(&g_speed[i], 0, sizeof(g_speed[i]));
+        pthread_mutex_unlock(&g_speed_lock);
+        drive_root(i, root, sizeof(root));
+        if (s.warn)
+            notify("%s reads at %.0f MB/s, usually %.0f MB/s: check the cable or port", root + 5, s.mbps, s.best);
+        if (!present[i])
+            g_speed_due[i] = 0;
+    }
+    if (g_speed_busy || g_install_busy || own_game_running())
+        return;
+    for (int i = 0; i < NUM_DRIVES; i++)
+        if (g_speed_due[i]) {
+            g_speed_due[i] = 0;
+            if (!speed_start(i, 1, msg, sizeof(msg)))
+                return; /* one test at a time */
+            printf("[speed] plug-in check skipped: %s\n", msg);
+        }
+}
+
 static void scan_all(void) {
     static int seen[NUM_DRIVES], first = 1;
-    int ready[NUM_DRIVES] = {0}, present[NUM_DRIVES] = {0}, manual[NUM_DRIVES] = {0};
+    int ready[NUM_DRIVES] = {0}, present[NUM_DRIVES] = {0}, manual[NUM_DRIVES] = {0}, fresh[NUM_DRIVES] = {0};
     int only = g_scan_only;
     g_scan_only = -1;
     release_stale();
@@ -2069,10 +2222,12 @@ static void scan_all(void) {
             printf("[scan] %s low on space: %llu of %llu bytes free\n", root, avail, total);
         }
         low_warned[i] = low; /* warned again only after space came back */
+        fresh[i] = present[i] && !seen[i];
         seen[i] = present[i];
     }
     first = 0;
     g_manual_scan = 0;
+    speed_poll(present, fresh);
 }
 
 /* --- klog events --- */
@@ -2268,6 +2423,48 @@ int app_rescan(const char *drive, char *msg, size_t cap) {
     return 0;
 }
 
+int app_speedtest(const char *drive, char *msg, size_t cap) {
+    char root[32];
+    int i = 0;
+    for (; i < NUM_DRIVES; i++) {
+        drive_root(i, root, sizeof(root));
+        if (!strcmp(root + 5, drive))
+            break;
+    }
+    if (i == NUM_DRIVES || !is_mountpoint(root)) {
+        snprintf(msg, cap, "%s is not connected", drive);
+        return -1;
+    }
+    if (g_speed_busy) {
+        snprintf(msg, cap, "A speed test is already running");
+        return -1;
+    }
+    if (g_install_busy) {
+        snprintf(msg, cap, "Games are being added: test again when they are ready");
+        return -1;
+    }
+    if (own_game_running()) {
+        snprintf(msg, cap, "Close the game first: a test would slow it down");
+        return -1;
+    }
+    g_speed_due[i] = 0;
+    return speed_start(i, 0, msg, cap);
+}
+
+/* The panel's speed fields of drive i. */
+static void speed_json(buf_t *out, int i) {
+    pthread_mutex_lock(&g_speed_lock);
+    drive_speed_t s = g_speed[i];
+    pthread_mutex_unlock(&g_speed_lock);
+    const char *state = s.status == SPEED_TESTING ? "testing"
+                        : s.status == SPEED_FAILED ? "failed"
+                        : s.status != SPEED_DONE   ? "none"
+                        : s.verdict == SPEED_DROP  ? "slow"
+                        : s.verdict == SPEED_USB2  ? "usb2"
+                                                   : "ok";
+    buf_printf(out, ",\"speed_state\":\"%s\",\"speed\":%.0f,\"best\":%.0f", state, s.mbps, s.best);
+}
+
 int app_resume(char *msg, size_t cap) {
     if (!g_halt[0]) {
         snprintf(msg, cap, "Adding games is not paused");
@@ -2443,9 +2640,11 @@ void app_games_json(buf_t *out) {
         unsigned long long avail, total;
         if (!is_mountpoint(root) || drive_space(root, &avail, &total))
             continue;
-        buf_printf(out, "%s{\"name\":\"%s\",\"games\":%d,\"pkgs\":%d,\"free\":%llu,\"total\":%llu,\"low\":%s}",
+        buf_printf(out, "%s{\"name\":\"%s\",\"games\":%d,\"pkgs\":%d,\"free\":%llu,\"total\":%llu,\"low\":%s",
                    first ? "" : ",", root + 5, g_cat[i].ngames, g_cat[i].npkgs, avail, total,
                    policy_space_low(avail, total) ? "true" : "false");
+        speed_json(out, i);
+        buf_printf(out, "}");
         first = 0;
     }
     buf_printf(out, "]}");
@@ -3407,6 +3606,12 @@ void app_diag(buf_t *out) {
                    "%d duplicate(s), %.1f of %.1f GB free\n",
                    root + 5, sf.f_fstypename, c->npkgs, c->ngames, bad, partial, c->orphans, c->dupes,
                    avail / 1073741824.0, total / 1073741824.0);
+        pthread_mutex_lock(&g_speed_lock);
+        drive_speed_t s = g_speed[i];
+        pthread_mutex_unlock(&g_speed_lock);
+        if (s.status == SPEED_DONE)
+            buf_printf(out, "  speed %.0f MB/s, best %.0f MB/s%s\n", s.mbps, s.best,
+                       s.verdict == SPEED_DROP ? " (slower than usual)" : "");
     }
     buf_printf(out, "Failed:");
     for (int i = 0; i < g_retry.n; i++)
