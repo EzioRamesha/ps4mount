@@ -3561,6 +3561,9 @@ static void pump_events(int ms) {
 
 /* Keeps log.txt bounded; stdout is opened again on the trimmed file. */
 static void log_limit(void) {
+    /* The install and speed threads print to stdout; reopening it while they write is undefined. */
+    if (g_install_busy || g_speed_busy)
+        return;
     if (log_trim(LOG_FILE, LOG_MAX, LOG_KEEP) != 1)
         return;
     freopen(LOG_FILE, "a", stdout);
