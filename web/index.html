@@ -75,7 +75,8 @@ select{background:var(--panel);color:var(--fg);border:1px solid var(--line);bord
 .fmrow{display:flex;gap:10px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);cursor:pointer}
 .fmrow:last-child{border-bottom:none}
 .fmrow:hover{background:#1d222b}
-.fmrow .fmicon{width:36px;height:36px;border-radius:6px;background:#0b0d11 center/cover no-repeat;flex:none;display:flex;align-items:center;justify-content:center;font-size:18px}
+.fmicon{border-radius:6px;background:#0b0d11 center/cover no-repeat;flex:none;display:flex;align-items:center;justify-content:center}
+.fmrow .fmicon{width:36px;height:36px;font-size:18px}
 .fmrow .fmname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fmrow small{display:block;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fmrow .fmsize{color:var(--muted);font-size:12px;flex:none}
@@ -171,10 +172,21 @@ td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-b
 <div id="problems" style="max-height:60vh;overflow:auto"></div>
 <div class="actions" style="padding:10px 0 0"><form method="dialog"><button>Close</button></form></div></dialog>
 <dialog id="fmdlg"><h3>Files</h3>
-<div class="fmbar"><span id="fmcrumbs"></span></div>
+<div class="fmbar"><span id="fmcrumbs"></span><div class="warn" id="fmmovebar" style="flex-basis:100%" hidden></div></div>
 <div id="fmlist" class="fmlist"></div>
 <div class="actions" style="padding:10px 0 0">
   <button id="fmnew">New folder</button>
+  <form method="dialog" style="display:contents"><button>Close</button></form>
+</div></dialog>
+<dialog id="fmsheet"><h3 id="fms-title"></h3>
+<div id="fms-body" style="display:flex;gap:14px;align-items:flex-start">
+  <div class="fmicon" id="fms-icon" style="width:72px;height:72px;font-size:34px"></div>
+  <div id="fms-meta" style="font-size:14px;color:var(--muted)"></div>
+</div>
+<div class="actions" style="padding:14px 0 0">
+  <button id="fms-rename">Rename</button>
+  <button id="fms-move">Move</button>
+  <button class="danger" id="fms-delete">Delete</button>
   <form method="dialog" style="display:contents"><button>Close</button></form>
 </div></dialog>
 <div id="toast" role="status" aria-live="polite"></div>
@@ -767,7 +779,7 @@ $('probbtn').onclick = function () {
 
 /* Files dialog: browse a drive's folders. sel and moving are state for Task 6 (the file
    sheet and move/rename/delete), not used yet. */
-var fm = {path: '', entries: [], sel: {}, moving: null};
+var fm = {path: '', entries: [], sel: {}, moving: null, sheet: null};
 /* CAT_ROLE_* in src/catalog.h: NONE, APP, PATCH, DLC, DUPE, ORPHAN, SPARE, NOGAME. */
 var roleNames = {1: 'Game', 2: 'Update', 3: 'Add-on', 4: 'Duplicate', 5: 'Orphan add-on', 6: 'Spare update', 7: 'Orphan update'};
 
@@ -797,6 +809,13 @@ function fmRender() {
     html += (i > 1 ? ' / ' : '') + '<button type="button" data-crumb="' + esc(acc) + '">' + esc(parts[i]) + '</button>';
   }
   $('fmcrumbs').innerHTML = html;
+  $('fmmovebar').hidden = !fm.moving;
+  if (fm.moving) {
+    $('fmmovebar').innerHTML = t('Moving {name}. Open the destination folder and press Move here.',
+      {name: esc(fm.moving.split('/').pop())}) +
+      ' <button type="button" id="fmdo">' + t('Move here') + '</button>' +
+      ' <button type="button" id="fmcancel">' + t('Cancel') + '</button>';
+  }
   var rows = fm.entries.slice().sort(function (a, b) {
     return (b.dir - a.dir) || a.name.toLowerCase().localeCompare(b.name.toLowerCase());
   }).map(function (e) {
@@ -813,9 +832,25 @@ function fmRender() {
   $('fmlist').innerHTML = rows || '<div class="fmrow">' + t('Empty folder') + '</div>';
 }
 
-/* The sheet of actions for a file row (rename, delete, move) is Task 6; a click on a file
-   does nothing until then. */
-function fmSheet(entry) {}
+/* The sheet of actions for a file row: rename, move (via the "navigate then drop" bar
+   below) and delete. Protected pkgs (in the library) disable all three; the server refuses
+   them anyway, so this just saves the round-trip. */
+function fmSheet(entry) {
+  fm.sheet = entry;
+  var label = entry.pkg ? fmPkgName(entry.pkg, entry.name) : entry.name;
+  $('fms-title').textContent = label;
+  $('fms-icon').style.backgroundImage = entry.pkg ? 'url(/icon/' + encodeURIComponent(entry.pkg.title_id) + ')' : '';
+  $('fms-icon').textContent = entry.pkg ? '' : (entry.dir ? '📁' : '📄');
+  var m = [entry.name, gb(entry.size)];
+  if (entry.pkg) {
+    m.push(t(roleNames[entry.pkg.role] || 'Pkg') + (entry.pkg.version ? ' v' + entry.pkg.version : ''));
+    m.push(entry.pkg.title_id);
+    if (entry.pkg.protected) m.push(t('In use by a game in the library: it cannot be moved or deleted'));
+  }
+  $('fms-meta').innerHTML = m.map(esc).join('<br>');
+  $('fms-delete').disabled = $('fms-move').disabled = $('fms-rename').disabled = !!(entry.pkg && entry.pkg.protected);
+  $('fmsheet').showModal();
+}
 
 $('filesbtn').addEventListener('click', function () {
   var start = drives.length ? '/mnt/' + drives[0].name : '/mnt/usb0';
@@ -832,7 +867,46 @@ $('fmlist').addEventListener('click', function (e) {
   var entry = fm.entries.filter(function (x) { return x.name === row.getAttribute('data-name'); })[0];
   if (!entry) return;
   if (entry.dir) fmOpen(fm.path + '/' + entry.name);
-  else fmSheet(entry); /* Task 6 */
+  else fmSheet(entry);
+});
+$('fmnew').addEventListener('click', function () {
+  var n = prompt(t('Folder name'), '');
+  if (!n) return;
+  api('/api/fm/mkdir?path=' + encodeURIComponent(fm.path) + '&name=' + encodeURIComponent(n), 'POST')
+    .then(function (j) { toast(j.message); fmOpen(fm.path); })
+    .catch(function (e) { toast(t('Error: {e}', {e: e.message})); });
+});
+$('fms-rename').addEventListener('click', function () {
+  var n = prompt(t('New name'), fm.sheet.name);
+  if (!n || n === fm.sheet.name) return;
+  api('/api/fm/rename?path=' + encodeURIComponent(fm.path + '/' + fm.sheet.name) + '&name=' + encodeURIComponent(n), 'POST')
+    .then(function (j) { toast(j.message); $('fmsheet').close(); fmOpen(fm.path); })
+    .catch(function (e) { toast(t('Error: {e}', {e: e.message})); });
+});
+$('fms-move').addEventListener('click', function () {
+  fm.moving = fm.path + '/' + fm.sheet.name;
+  $('fmsheet').close();
+  fmRender();
+});
+$('fms-delete').addEventListener('click', function () {
+  var e = fm.sheet;
+  var what = (e.pkg ? fmPkgName(e.pkg, e.name) + ' (' + e.name + ')' : e.name) + (e.dir ? '' : ' · ' + gb(e.size));
+  if (!confirm(t('Delete {what}? This cannot be undone.', {what: what}))) return;
+  api('/api/fm/delete?path=' + encodeURIComponent(fm.path + '/' + e.name), 'POST')
+    .then(function (j) { toast(j.message); $('fmsheet').close(); fmOpen(fm.path); })
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
+});
+/* The "Move here"/"Cancel" buttons are (re)created by fmRender each time the bar shows, so
+   their clicks are delegated on the bar's own element rather than bound once per button. */
+$('fmmovebar').addEventListener('click', function (e) {
+  if (e.target.id === 'fmdo') {
+    api('/api/fm/move?src=' + encodeURIComponent(fm.moving) + '&dst=' + encodeURIComponent(fm.path), 'POST')
+      .then(function (j) { toast(j.message); fm.moving = null; fmOpen(fm.path); })
+      .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
+  } else if (e.target.id === 'fmcancel') {
+    fm.moving = null;
+    fmRender();
+  }
 });
 $('summary').addEventListener('click', function (e) {
   var st = e.target.getAttribute && e.target.getAttribute('data-state');
