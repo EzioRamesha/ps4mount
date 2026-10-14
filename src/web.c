@@ -179,6 +179,9 @@ void web_serve(int listen_fd) {
             int rc = app_remove(tid, msg, sizeof(msg));
             json_msg(fd, !rc, msg);
         }
+    } else if (post && !strcmp(path, "/api/resume")) {
+        int rc = app_resume(msg, sizeof(msg));
+        json_msg(fd, !rc, msg);
     } else if (post && !strcmp(path, "/api/rescan")) {
         app_rescan();
         json_msg(fd, 1, "Scanning USB drives for games");

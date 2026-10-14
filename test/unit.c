@@ -15,6 +15,7 @@
 #include "origin.h"
 #include "pkg.h"
 #include "pdb_template.h"
+#include "safety.h"
 
 static int g_failed, g_checks;
 
@@ -507,6 +508,41 @@ static void test_catalog_walk(void) {
     CHECK(system(cmd) == 0);
 }
 
+static void test_safety(void) {
+    printf("safety: database corruption in the system log\n");
+    char db[64];
+    CHECK(safety_db_corrupt("<118>[DBR Message][dbRecoverySetCorruptionFlag:140] DbCorruptionOccured : 0x80f50080 : "
+                            "/appinfo.db : detail - 0x80f50005, message - Missing mandatory title : NPXS40074",
+                            db, sizeof(db)));
+    CHECK(!strcmp(db, "/appinfo.db"));
+    CHECK(safety_db_corrupt("[DBR Message][dbRecoveryOpenErrorDialog:48] DbCorruptionOccured : moduleId - 11", db,
+                            sizeof(db)));
+    CHECK(!db[0]);
+    CHECK(safety_db_corrupt("DbCorruptionOccurred : /system_data/priv/mms/app.db:", db, sizeof(db)));
+    CHECK(!strcmp(db, "/system_data/priv/mms/app.db"));
+    CHECK(!safety_db_corrupt("[DBR Warning][update:63] progress has decreased", db, sizeof(db)));
+    CHECK(!safety_db_corrupt("[PlayGoCore] /user/app/CUSA00001 mounted", db, sizeof(db)));
+
+    printf("safety: titles that keep failing\n");
+    retry_t items[2] = {0};
+    retry_table_t t = {items, 2};
+    time_t now = 1000;
+    CHECK(!retry_waiting(&t, "CUSA00001", now));
+    CHECK(retry_failed(&t, "CUSA00001", now) == 1);
+    CHECK(retry_waiting(&t, "CUSA00001", now + RETRY_SECONDS - 1));
+    CHECK(!retry_waiting(&t, "CUSA00001", now + RETRY_SECONDS));
+    CHECK(retry_failed(&t, "CUSA00001", now) == 2 && !retry_given_up(&t, "CUSA00001"));
+    CHECK(retry_failed(&t, "CUSA00001", now) == RETRY_MAX_TRIES && retry_given_up(&t, "CUSA00001"));
+    CHECK(retry_waiting(&t, "CUSA00001", now + 100000)); /* given up: not tried again by itself */
+    CHECK(retry_failed(&t, "CUSA00002", now) == 1);
+    CHECK(retry_failed(&t, "CUSA00003", now) == 0); /* table full */
+    retry_clear_given_up(&t);
+    CHECK(!retry_given_up(&t, "CUSA00001") && !retry_waiting(&t, "CUSA00001", now + 100000));
+    CHECK(retry_waiting(&t, "CUSA00002", now)); /* still waiting: not given up */
+    retry_clear(&t, "CUSA00002");
+    CHECK(!retry_waiting(&t, "CUSA00002", now));
+}
+
 int main(void) {
     test_crypto();
     test_app_json();
@@ -519,6 +555,7 @@ int main(void) {
     test_origin();
     test_catalog_group();
     test_catalog_walk();
+    test_safety();
     printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;
 }
