@@ -802,6 +802,17 @@ static int kv_count(const char *key, const char *value, void *arg) {
     return 0;
 }
 
+static void test_space_low(void) {
+    printf("policy: low drive space\n");
+    const unsigned long long gb = 1ULL << 30;
+    CHECK(!policy_space_low(100 * gb, 1000 * gb));
+    CHECK(policy_space_low(49 * gb, 1000 * gb));       /* under 5% */
+    CHECK(!policy_space_low(50 * gb, 1000 * gb));
+    CHECK(policy_space_low(gb, 16 * gb));               /* under 2 GB on a small drive */
+    CHECK(!policy_space_low(3 * gb, 16 * gb));
+    CHECK(!policy_space_low(0, 0));                     /* unknown size */
+}
+
 static void test_policy(void) {
     printf("policy: what to do with a game\n");
     const char *why;
@@ -928,6 +939,7 @@ int main(void) {
     test_catalog_cache();
     test_safety();
     test_policy();
+    test_space_low();
     printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;
 }

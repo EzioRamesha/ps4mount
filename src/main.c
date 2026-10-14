@@ -219,6 +219,17 @@ static int is_mountpoint(const char *path) {
     return statfs(path, &sf) == 0 && !strcmp(sf.f_mntonname, path);
 }
 
+/* Free and total bytes of the drive at root. 0 on success. */
+static int drive_space(const char *root, unsigned long long *free_bytes, unsigned long long *total_bytes) {
+    struct statfs sf;
+    *free_bytes = *total_bytes = 0;
+    if (statfs(root, &sf))
+        return -1;
+    *free_bytes = (unsigned long long)sf.f_bavail * sf.f_bsize;
+    *total_bytes = (unsigned long long)sf.f_blocks * sf.f_bsize;
+    return 0;
+}
+
 /* --- appmeta entries copied verbatim from the pkg --- */
 
 typedef struct {
@@ -2038,10 +2049,18 @@ static void scan_all(void) {
         }
     }
     catalog_link(g_cat, NUM_DRIVES, update_choice, g_cfg.cross);
+    static int low_warned[NUM_DRIVES];
     for (int i = 0; i < NUM_DRIVES; i++) {
         drive_root(i, root, sizeof(root));
         if (ready[i])
             scan_root(root, !seen[i] || g_manual_scan, !seen[i] && !first);
+        unsigned long long avail, total;
+        int low = present[i] && !drive_space(root, &avail, &total) && policy_space_low(avail, total);
+        if (low && !low_warned[i]) {
+            notify("%s is almost full: %.1f GB free", root + 5, avail / 1073741824.0);
+            printf("[scan] %s low on space: %llu of %llu bytes free\n", root, avail, total);
+        }
+        low_warned[i] = low; /* warned again only after space came back */
         seen[i] = present[i];
     }
     first = 0;
@@ -2394,12 +2413,12 @@ void app_games_json(buf_t *out) {
     for (int i = 0; i < NUM_DRIVES; i++) {
         char root[32];
         drive_root(i, root, sizeof(root));
-        struct statfs sf;
-        if (!is_mountpoint(root) || statfs(root, &sf))
+        unsigned long long avail, total;
+        if (!is_mountpoint(root) || drive_space(root, &avail, &total))
             continue;
-        buf_printf(out, "%s{\"name\":\"%s\",\"games\":%d,\"pkgs\":%d,\"free\":%llu,\"total\":%llu}",
-                   first ? "" : ",", root + 5, g_cat[i].ngames, g_cat[i].npkgs,
-                   (unsigned long long)sf.f_bavail * sf.f_bsize, (unsigned long long)sf.f_blocks * sf.f_bsize);
+        buf_printf(out, "%s{\"name\":\"%s\",\"games\":%d,\"pkgs\":%d,\"free\":%llu,\"total\":%llu,\"low\":%s}",
+                   first ? "" : ",", root + 5, g_cat[i].ngames, g_cat[i].npkgs, avail, total,
+                   policy_space_low(avail, total) ? "true" : "false");
         first = 0;
     }
     buf_printf(out, "]}");

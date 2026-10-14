@@ -22,6 +22,7 @@ button:disabled{opacity:.45;cursor:default}
 main{padding:20px;max-width:1400px;margin:0 auto}
 .summary{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;color:var(--muted)}
 .summary span{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px 12px}
+.summary span.low{background:#3a1f1d;border-color:#5c2c28;color:#ffb4ac}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
 .art{aspect-ratio:1/1;background:#0b0d11 center/cover no-repeat;position:relative}
@@ -306,7 +307,9 @@ function render() {
   var s = '<span>' + games.length + ' game(s)</span>';
   for (var k in counts) s += '<span>' + esc(labels[k] || k) + ': ' + counts[k] + '</span>';
   drives.forEach(function (d) {
-    if (!dv || d.name === dv) s += '<span>' + esc(d.name) + ': ' + gb(d.free) + ' free of ' + gb(d.total) + '</span>';
+    if (!dv || d.name === dv)
+      s += '<span' + (d.low ? ' class="low" title="Almost full"' : '') + '>' + esc(d.name) + ': ' + gb(d.free) + ' free of ' +
+        gb(d.total) + (d.low ? ' · almost full' : '') + '</span>';
   });
   $('summary').innerHTML = s;
   selbar();

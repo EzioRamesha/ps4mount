@@ -33,6 +33,11 @@ typedef struct {
 /* "internal", "duplicate", "excluded", "removed", "running", "ready", "failed" or "pending". */
 const char *policy_panel_state(const panel_facts_t *f);
 
+/* A drive is low on space under SPACE_LOW_PERCENT of its size or SPACE_LOW_BYTES free. */
+#define SPACE_LOW_PERCENT 5
+#define SPACE_LOW_BYTES (2ULL << 30)
+int policy_space_low(unsigned long long free_bytes, unsigned long long total_bytes);
+
 /* State files: one "<key>\t<value>" line per key (a key alone means value "1").
  * kv_get returns 0 and fills value when the key is there; kv_set with value NULL removes
  * the key. Keys and values have no tab or line break. 0 on success. */
