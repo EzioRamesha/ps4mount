@@ -1653,6 +1653,29 @@ static info_t *info_store(const title_src_t *t) {
     return in;
 }
 
+/* A game in a ps4/<TID> folder gets "<title>.txt" there, so the folder can be told apart
+ * on a computer. Written once: a file already there is left alone. */
+static void write_name_file(const title_src_t *t) {
+    size_t l = strlen(t->dir);
+    if (l > 4 && !strcasecmp(t->dir + l - 4, ".pkg"))
+        return; /* used where it is: its own file name already says what it is */
+    char name[128], path[PATH_MAX + 130], orig[PATH_MAX];
+    origin_name_file(name, sizeof(name), t->name);
+    snprintf(path, sizeof(path), "%s/%s", t->dir, name);
+    if (exists(path))
+        return;
+    buf_t b = {0};
+    buf_printf(&b, "%s\r\nTitle ID: %s\r\nVersion: %s%s\r\nAdd-ons: %d\r\n", t->name, t->app.title_id, t->ver,
+               t->has_patch ? " (with update)" : "", t->ndlc);
+    if (!origin_find(t->dir, "app.pkg", orig, sizeof(orig)))
+        buf_printf(&b, "Game pkg was: %s\r\n", orig);
+    if (t->has_patch && !origin_find(t->dir, "patch.pkg", orig, sizeof(orig)))
+        buf_printf(&b, "Update pkg was: %s\r\n", orig);
+    if (write_buf(path, &b))
+        printf("[scan] %s: %s\n", path, strerror(errno));
+    buf_free(&b);
+}
+
 /* Pkgs moved back (RESTORED_LIST) are left out of the catalog of the drive being walked. */
 static const char *g_walk_root;
 static int g_walk_restored;
@@ -1739,6 +1762,7 @@ static void scan_root(const char *root, int fresh, int reconnected) {
         pending += t->state == 1;
         if (t->state == 0)
             keep_mounted(&src); /* while its pkgs are open: they are not read again */
+        write_name_file(&src);
         info_store(&src);
         src_close(&src);
     }
@@ -2421,8 +2445,13 @@ static void restore_files(const char *root, const char *tid, const char *name, i
     snprintf(marker, sizeof(marker), "%s/" ORIGIN_FILE, game);
     char probe[PATH_MAX];
     snprintf(probe, sizeof(probe), "%s/app.pkg", game);
-    if (!exists(probe)) /* keep the record while a pkg could not be moved */
+    if (!exists(probe)) { /* keep the record while a pkg could not be moved */
         unlink(marker);
+        char nf[128], nfp[PATH_MAX + 130];
+        origin_name_file(nf, sizeof(nf), name);
+        snprintf(nfp, sizeof(nfp), "%s/%s", game, nf);
+        unlink(nfp);
+    }
     rmdir(game);
     snprintf(probe, sizeof(probe), HOLD_DIR "/app/%s", tid);
     rm_tree(probe);

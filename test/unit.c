@@ -340,6 +340,33 @@ static void touch(const char *path) {
         fclose(f);
 }
 
+static void test_name_file(void) {
+    printf("origin: game name file\n");
+    char out[128];
+    origin_name_file(out, sizeof(out), "Persona 5");
+    CHECK(!strcmp(out, "Persona 5.txt"));
+    origin_name_file(out, sizeof(out), "Ratchet: Into the Nexus? <\"Pro\"> a/b\\c|d*");
+    CHECK(!strcmp(out, "Ratchet_ Into the Nexus_ __Pro__ a_b_c_d_.txt"));
+    origin_name_file(out, sizeof(out), "Ends with dots... ");
+    CHECK(!strcmp(out, "Ends with dots.txt"));
+    origin_name_file(out, sizeof(out), "");
+    CHECK(!strcmp(out, "game.txt"));
+    origin_name_file(out, sizeof(out), "...");
+    CHECK(!strcmp(out, "game.txt"));
+    origin_name_file(out, sizeof(out), "origin");
+    CHECK(!strcmp(out, "origin (name).txt")); /* never the origin record */
+    char lng[300];
+    memset(lng, 'x', sizeof(lng) - 1);
+    lng[sizeof(lng) - 1] = 0;
+    origin_name_file(out, sizeof(out), lng);
+    CHECK(strlen(out) <= 104 && !strcmp(out + strlen(out) - 4, ".txt"));
+    memcpy(lng + 99, "\xe3\x83\x9a", 3); /* a 3-byte character across the 100-byte limit */
+    origin_name_file(out, sizeof(out), lng);
+    CHECK(strlen(out) == 99 + 4 && !strcmp(out + 99, ".txt"));
+    origin_name_file(out, sizeof(out), "\xe3\x83\x9a\xe3\x83\xab\xe3\x82\xbd\xe3\x83\x8a"); /* UTF-8 kept */
+    CHECK(!strcmp(out, "\xe3\x83\x9a\xe3\x83\xab\xe3\x82\xbd\xe3\x83\x8a.txt"));
+}
+
 static void test_origin(void) {
     printf("origin records and restored list\n");
     char root[] = "/tmp/ps4mount-test-XXXXXX", game[128], list[128], out[256], p[256];
@@ -606,6 +633,7 @@ int main(void) {
     test_pkg_entry();
     test_log_trim();
     test_origin();
+    test_name_file();
     test_catalog_group();
     test_catalog_walk();
     test_catalog_cache();

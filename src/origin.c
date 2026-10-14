@@ -90,3 +90,22 @@ int origin_free_path(const char *root, const char *orig, char *out, size_t n) {
     }
     return -1;
 }
+
+#define NAME_FILE_MAX 100 /* bytes of the title kept in the name */
+
+void origin_name_file(char *out, size_t n, const char *title) {
+    char name[NAME_FILE_MAX + 1];
+    size_t l = 0;
+    for (const unsigned char *s = (const unsigned char *)title; *s && l < NAME_FILE_MAX; s++)
+        name[l++] = *s < 0x20 || strchr("\\/:*?\"<>|", *s) ? '_' : (char)*s;
+    while (l && ((unsigned char)title[l] & 0xc0) == 0x80) /* never cut a UTF-8 character */
+        l--;
+    while (l && (name[l - 1] == '.' || name[l - 1] == ' '))
+        l--;
+    name[l] = 0;
+    if (!l)
+        snprintf(name, sizeof(name), "game");
+    else if (!strcasecmp(name, "origin"))
+        snprintf(name, sizeof(name), "origin (name)");
+    snprintf(out, n, "%s.txt", name);
+}

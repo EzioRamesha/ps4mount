@@ -21,6 +21,10 @@ int origin_find(const char *game_dir, const char *rel, char *orig, size_t n);
 int restored_add(const char *list, const char *rel, uint64_t size);
 int restored_has(const char *list, const char *rel, uint64_t size);
 
+/* Name of the file that shows a game's title in its ps4/<TID> folder: "<title>.txt", with
+ * the characters exFAT does not allow replaced by '_' (UTF-8 is kept as is). */
+void origin_name_file(char *out, size_t n, const char *title);
+
 /* Joins an original path to a free name in its folder: "<root>/<orig>", or with " (1)",
  * " (2)"... before the extension when the name is taken. 0 when a free name was found. */
 int origin_free_path(const char *root, const char *orig, char *out, size_t n);
