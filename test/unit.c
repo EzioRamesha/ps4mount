@@ -11,6 +11,7 @@
 #include "build.h"
 #include "catalog.h"
 #include "crypto.h"
+#include "fm.h"
 #include "logfile.h"
 #include "origin.h"
 #include "pkg.h"
@@ -971,6 +972,28 @@ static void test_safety(void) {
     CHECK(!retry_waiting(&t, "CUSA00002", now));
 }
 
+static void test_fm(void) {
+    printf("file manager path rules\n");
+    CHECK(fm_path_ok("/mnt/usb0/games") && fm_drive_of("/mnt/usb0/games") == 0);
+    CHECK(fm_path_ok("/mnt/ext1/a b/c.pkg") && fm_drive_of("/mnt/ext1/x") == 9);
+    CHECK(fm_path_ok("/mnt/usb7/x") && fm_drive_of("/mnt/usb7/x") == 7);
+    CHECK(!fm_path_ok("/mnt/usb8/x"));            /* no such drive */
+    CHECK(!fm_path_ok("/data/ps4mount/log.txt")); /* not a drive */
+    CHECK(!fm_path_ok("/mnt/usb0/../usb1/x"));    /* .. escape */
+    CHECK(!fm_path_ok("/mnt/usb0//x"));           /* empty segment */
+    CHECK(!fm_path_ok("mnt/usb0/x"));             /* not absolute */
+    CHECK(!fm_path_ok("/mnt/usb0/a\nb"));         /* control char */
+    CHECK(fm_path_ok("/mnt/usb0") && fm_is_drive_root("/mnt/usb0"));
+    CHECK(fm_is_drive_root("/mnt/usb0/"));
+    CHECK(!fm_is_drive_root("/mnt/usb0/games"));
+    CHECK(fm_name_ok("Bloodborne v1.09.pkg") && fm_name_ok("games"));
+    CHECK(!fm_name_ok("") && !fm_name_ok(".") && !fm_name_ok(".."));
+    CHECK(!fm_name_ok("a/b") && !fm_name_ok("a\tb"));
+    CHECK(fm_covers("/mnt/usb0/games", "/mnt/usb0/games"));
+    CHECK(fm_covers("/mnt/usb0/games", "/mnt/usb0/games/sub/x.pkg"));
+    CHECK(!fm_covers("/mnt/usb0/games", "/mnt/usb0/games2/x.pkg"));
+}
+
 int main(void) {
     test_crypto();
     test_app_json();
@@ -993,6 +1016,7 @@ int main(void) {
     test_space_low();
     test_speed_verdict();
     test_speed_measure();
+    test_fm();
     printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;
 }
