@@ -314,6 +314,28 @@ static size_t file_text(const char *path, char *out, size_t cap) {
     return n;
 }
 
+static void test_log_tail(void) {
+    printf("log tail\n");
+    char path[] = "/tmp/ps4mount-tail-XXXXXX", out[64];
+    int fd = mkstemp(path);
+    CHECK(fd >= 0);
+    const char *text = "one\ntwo\nthree\nfour\n";
+    CHECK(write(fd, text, strlen(text)) == (ssize_t)strlen(text));
+    close(fd);
+    CHECK(log_tail(path, 2, out, sizeof(out)) == 11 && !strcmp(out, "three\nfour\n"));
+    CHECK(log_tail(path, 10, out, sizeof(out)) == (long)strlen(text) && !strcmp(out, text));
+    CHECK(log_tail(path, 3, out, 12) == 11 && !strcmp(out, "three\nfour\n")); /* only whole lines fit */
+    CHECK(log_tail(path, 0, out, sizeof(out)) == 0 && !out[0]);
+    FILE *f = fopen(path, "a");
+    if (f) {
+        fputs("five, no line break", f);
+        fclose(f);
+    }
+    CHECK(log_tail(path, 1, out, sizeof(out)) == 19 && !strcmp(out, "five, no line break"));
+    CHECK(log_tail("/tmp/ps4mount-no-such-file", 5, out, sizeof(out)) == -1 && !out[0]);
+    unlink(path);
+}
+
 static void test_log_trim(void) {
     printf("log trim\n");
     char path[] = "/tmp/ps4mount-log-XXXXXX", text[256];
@@ -722,6 +744,7 @@ int main(void) {
     test_sfo();
     test_pkg_entry();
     test_log_trim();
+    test_log_tail();
     test_origin();
     test_name_file();
     test_catalog_group();

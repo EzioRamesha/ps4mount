@@ -36,6 +36,7 @@ void app_games_json(buf_t *out) {
 int app_add(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "%s", tid) < 0; }
 int app_remove(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "%s", tid) < 0; }
 void app_rescan(void) {}
+void app_diag(buf_t *out) { buf_printf(out, "diag \"line\"\n"); }
 int app_exclude(const char *tid, int on, char *msg, size_t cap) {
     return snprintf(msg, cap, "%s %s", tid, on ? "excluded" : "included") < 0;
 }
@@ -101,11 +102,44 @@ static void test_silent_client(int listen_fd) {
     close(c);
 }
 
+/* Sends req and returns the whole response in out (served by a child process). */
+static void request(int listen_fd, const char *req, char *out, size_t n) {
+    out[0] = 0;
+    int c = connect_panel();
+    if (c < 0)
+        return;
+    if (write(c, req, strlen(req)) != (ssize_t)strlen(req)) {
+        close(c);
+        return;
+    }
+    pid_t pid = fork();
+    if (pid == 0) {
+        web_serve(listen_fd);
+        _exit(0);
+    }
+    size_t len = 0;
+    ssize_t r;
+    while (len + 1 < n && (r = read(c, out + len, n - 1 - len)) > 0)
+        len += (size_t)r;
+    out[len] = 0;
+    close(c);
+    waitpid(pid, NULL, 0);
+}
+
+static void test_diag(int listen_fd) {
+    printf("diagnostics as JSON\n");
+    char resp[4096];
+    request(listen_fd, "GET /api/diag HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "200 OK") != NULL);
+    CHECK(strstr(resp, "{\"text\":\"diag \\\"line\\\"\\n\"}") != NULL);
+}
+
 int main(void) {
     signal(SIGPIPE, SIG_IGN);
     int listen_fd = web_listen();
     CHECK(listen_fd >= 0);
     if (listen_fd >= 0) {
+        test_diag(listen_fd);
         test_stalled_reader(listen_fd);
         test_silent_client(listen_fd);
         close(listen_fd);
