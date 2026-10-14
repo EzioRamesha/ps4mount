@@ -35,6 +35,7 @@ void app_games_json(buf_t *out) {
 }
 int app_add(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "%s", tid) < 0; }
 int app_remove(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "%s", tid) < 0; }
+int app_launch(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "launch[%s]", tid) < 0; }
 int app_rescan(const char *drive, char *msg, size_t cap) {
     return snprintf(msg, cap, "rescan[%s]", drive ? drive : "all") < 0;
 }
@@ -179,6 +180,19 @@ static void test_log_download(int listen_fd) {
     CHECK(end != NULL && strstr(resp, "Connection: close\r\n\r\n") == end - 17);
 }
 
+static void test_launch(int listen_fd) {
+    printf("start a game\n");
+    char resp[2048];
+    request(listen_fd, "POST /api/launch?title_id=CUSA00001 HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "launch[CUSA00001]") != NULL);
+    request(listen_fd, "POST /api/launch?title_id=../etc HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "invalid title_id") != NULL);
+    request(listen_fd, "POST /api/launch HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "invalid title_id") != NULL);
+    request(listen_fd, "GET /api/launch?title_id=CUSA00001 HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "404") != NULL);
+}
+
 static void test_rescan(int listen_fd) {
     printf("scan all drives or one\n");
     char resp[2048];
@@ -297,6 +311,7 @@ int main(void) {
     if (listen_fd >= 0) {
         test_diag(listen_fd);
         test_update_choice(listen_fd);
+        test_launch(listen_fd);
         test_rescan(listen_fd);
         test_speedtest(listen_fd);
         test_log_download(listen_fd);

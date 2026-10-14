@@ -128,6 +128,8 @@ static void game_location(const char *root, const char *tid, const char *app_pat
 
 typedef struct { char useless[45]; char message[3075]; } notify_request_t;
 int sceUserServiceInitialize(void *);
+int sceUserServiceGetForegroundUser(uint32_t *user_id);
+int sceKernelLoadStartModule(const char *path, size_t argc, const void *argv, uint32_t flags, void *opt, int *res);
 int sceAppInstUtilInitialize(void);
 int sceAppInstUtilAppInstallAll(void *);
 int sceAppInstUtilAppUnInstall(const char *);
@@ -2892,6 +2894,65 @@ int app_exclude(const char *tid, int on, char *msg, size_t cap) {
     }
     printf("[web] %s set to never be added\n", tid);
     snprintf(msg, cap, "%s will not be added again. The pkgs stay on the drive.", tid);
+    return 0;
+}
+
+/* Starting a game uses sceLncUtilLaunchApp (the call the home screen uses), looked up at
+ * runtime like AppInstallTitleDir: linking it would stop the payload from loading where it
+ * is gone. The context layout is the one PS5 homebrew launchers use. */
+typedef struct {
+    uint32_t structsize, user_id, app_opt;
+    uint64_t crash_report;
+    uint32_t check_flag;
+} launch_ctx_t;
+typedef int (*launch_fn)(const char *title_id, const char **argv, launch_ctx_t *ctx);
+static launch_fn g_launch;
+
+static launch_fn launcher(void) {
+    static int tried;
+    if (!g_launch && !tried) {
+        tried = 1;
+        sceKernelLoadStartModule("/system/common/lib/libSceLncUtil.sprx", 0, NULL, 0, NULL, NULL);
+        uint32_t h = 0;
+        if (!kernel_dynlib_handle(getpid(), "libSceLncUtil.sprx", &h))
+            g_launch = (launch_fn)kernel_dynlib_dlsym(getpid(), h, "sceLncUtilLaunchApp");
+        printf("[launch] sceLncUtilLaunchApp %s\n", g_launch ? "present" : "missing");
+    }
+    return g_launch;
+}
+
+int app_launch(const char *tid, char *msg, size_t cap) {
+    char app[64];
+    snprintf(app, sizeof(app), "/user/app/%s", tid);
+    if (!db_is_registered(tid) || !mounted_from(app, NULL, 0)) {
+        snprintf(msg, cap, "%s is not ready to play", tid);
+        return -1;
+    }
+    if (g_install_busy) {
+        snprintf(msg, cap, "Games are being added; try again in a moment");
+        return -1;
+    }
+    if (own_game_running()) {
+        snprintf(msg, cap, "Close the running game first");
+        return -1;
+    }
+    if (!launcher()) {
+        snprintf(msg, cap, "Starting games is not supported on this firmware");
+        return -1;
+    }
+    uint32_t user = 0;
+    if (sceUserServiceGetForegroundUser(&user)) {
+        snprintf(msg, cap, "No user is logged in on the console");
+        return -1;
+    }
+    launch_ctx_t ctx = {sizeof(ctx), user, 0, 0, 0};
+    int rc = g_launch(tid, NULL, &ctx);
+    printf("[web] launch %s: rc=0x%08x user=%u\n", tid, rc, user);
+    if (rc < 0) {
+        snprintf(msg, cap, "Failed to start %s (0x%08x)", tid, rc);
+        return -1;
+    }
+    snprintf(msg, cap, "Starting %s", tid);
     return 0;
 }
 
