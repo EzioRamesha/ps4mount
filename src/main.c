@@ -3227,6 +3227,7 @@ static void config_save(void) {
     if (g_cfg.pin[0])
         buf_printf(&b, "pin=%s\n", g_cfg.pin);
     write_file(CONFIG_PATH, b.data, b.len, 0600);
+    chmod(CONFIG_PATH, 0600); /* open() keeps the mode of a file that already exists */
     buf_free(&b);
 }
 
