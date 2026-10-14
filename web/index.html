@@ -93,6 +93,10 @@ td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-b
 </main>
 <dialog id="setdlg"><h3>Settings</h3>
 <form class="settings" id="setform">
+  <label>Language
+    <select id="s-lang"><option value="">Automatic (browser language)</option><option value="en">English</option>
+      <option value="es">Español</option><option value="pt">Português (Brasil)</option><option value="fr">Français</option></select>
+  </label>
   <div class="hint">Every folder of every drive is searched for pkgs, which are used where they are.</div>
   <label class="check"><input type="checkbox" id="s-organize"> Move pkgs into the ps4 folder</label>
   <label>Folders whose pkgs are moved (one per line, relative to each drive)
@@ -151,6 +155,278 @@ var order = {running: 0, ready: 1, pending: 2, failed: 3, removed: 4, excluded: 
 
 function $(id) { return document.getElementById(id); }
 
+/* Panel text in the browser's language (or the one picked in Settings, kept in this
+   browser). Keys are the English text; messages sent by the console stay in English.
+   Translations: please improve them on GitHub. */
+var I18N = {
+es: {
+'Search game or CUSA': 'Buscar juego o CUSA', 'Sort': 'Ordenar', 'Sort by name': 'Ordenar por nombre',
+'Sort by state': 'Ordenar por estado', 'Sort by location': 'Ordenar por ubicación', 'Drive': 'Unidad',
+'All drives': 'Todas las unidades', 'Scan for games': 'Buscar juegos', 'Problems': 'Problemas', 'Settings': 'Ajustes',
+'Log': 'Registro', 'Diagnostics': 'Diagnóstico', 'Stop': 'Detener', 'Enter PIN': 'Introducir PIN',
+'Resume adding games': 'Seguir añadiendo juegos',
+'No PS4 games found. Copy the .pkg files (game, update and add-ons) to a USB drive, in any folder.': 'No se encontraron juegos de PS4. Copia los archivos .pkg (juego, actualización y complementos) a una unidad USB, en cualquier carpeta.',
+'Add selected': 'Añadir seleccionados', 'Remove selected': 'Quitar seleccionados',
+'Never add selected': 'No añadir nunca los seleccionados', 'Clear selection': 'Borrar selección',
+'Language': 'Idioma', 'Automatic (browser language)': 'Automático (idioma del navegador)',
+'Every folder of every drive is searched for pkgs, which are used where they are.': 'Se buscan pkgs en todas las carpetas de todas las unidades, y se usan donde están.',
+'Move pkgs into the ps4 folder': 'Mover los pkgs a la carpeta ps4',
+'Folders whose pkgs are moved (one per line, relative to each drive)': 'Carpetas cuyos pkgs se mueven (una por línea, relativas a cada unidad)',
+'/ is the root of the drive. Games are moved into the ps4 folder, so it cannot be used here.': '/ es la raíz de la unidad. Los juegos se mueven a la carpeta ps4, así que no se puede usar aquí.',
+'Folders to ignore (one per line, relative to each drive)': 'Carpetas que ignorar (una por línea, relativas a cada unidad)',
+'Pkgs in these folders and their subfolders are never used.': 'Los pkgs de estas carpetas y sus subcarpetas nunca se usan.',
+'Seconds between scans': 'Segundos entre búsquedas',
+'10 to 300. Longer is lighter on drives with many folders; Scan for games always scans at once.': 'De 10 a 300. Más tiempo es más ligero para unidades con muchas carpetas; Buscar juegos siempre busca al momento.',
+'Add new games in groups': 'Añadir juegos nuevos por grupos', 'Games per group': 'Juegos por grupo',
+'Smaller groups are gentler on the system when many games are added at once.': 'Los grupos pequeños cargan menos el sistema cuando se añaden muchos juegos a la vez.',
+'Install add-ons (DLC)': 'Instalar complementos (DLC)',
+'Use updates and add-ons from other drives': 'Usar actualizaciones y complementos de otras unidades',
+'For a game on one drive with its update or add-ons on another. Keep both drives connected: without the other drive, the game is added again without them.': 'Para un juego en una unidad con su actualización o complementos en otra. Mantén ambas unidades conectadas: sin la otra unidad, el juego se vuelve a añadir sin ellos.',
+'Panel PIN': 'PIN del panel', 'Remove the PIN': 'Quitar el PIN', 'Pkgs moved back': 'Pkgs devueltos',
+'Move all games back': 'Devolver todos los juegos', 'Pick up moved-back pkgs again': 'Volver a usar los pkgs devueltos',
+'Cancel': 'Cancelar', 'Save': 'Guardar', 'Download the whole log': 'Descargar el registro completo', 'Close': 'Cerrar',
+'Paste this into a GitHub issue when something goes wrong. It holds no password and no network address.': 'Pega esto en una incidencia de GitHub cuando algo falle. No contiene contraseñas ni direcciones de red.',
+'Copy': 'Copiar',
+'Pkgs that are found but not used. Nothing here is deleted or changed by PS4Mount.': 'Pkgs encontrados pero no usados. PS4Mount no borra ni cambia nada de esto.',
+'installed': 'instalado', 'being added': 'añadiéndose', 'turned off': 'desactivado', 'deleted on the console': 'borrado en la consola',
+'Same game on more than one place (this copy is not used)': 'El mismo juego en más de un sitio (esta copia no se usa)',
+'Add-on without its game': 'Complemento sin su juego', 'Update without its game': 'Actualización sin su juego',
+'Cannot be read (damaged, not a PS4 pkg, or not game/update/add-on)': 'No se puede leer (dañado, no es un pkg de PS4, o no es juego/actualización/complemento)',
+'Incomplete: still copying or cut off; used once complete': 'Incompleto: aún copiándose o cortado; se usará cuando esté completo',
+'Ready': 'Listo', 'Running': 'En ejecución', 'Not in library': 'No está en la biblioteca',
+'Installed on console': 'Instalado en la consola', 'Adding': 'Añadiendo', 'On another drive': 'En otra unidad',
+'Failed': 'Error', 'Never added': 'No se añade nunca',
+'Wrong PIN. PIN of the PS4Mount panel:': 'PIN incorrecto. PIN del panel de PS4Mount:',
+'PIN of the PS4Mount panel:': 'PIN del panel de PS4Mount:', 'New: {tag}': 'Nueva: {tag}',
+'A newer PS4Mount is available': 'Hay una versión más reciente de PS4Mount',
+'too many wrong PINs, wait a minute': 'demasiados PIN incorrectos, espera un minuto', 'wrong PIN': 'PIN incorrecto',
+'PIN needed': 'se necesita el PIN', 'Add to library': 'Añadir a la biblioteca', 'Try again': 'Reintentar',
+'Allow': 'Permitir', 'Remove from library': 'Quitar de la biblioteca', 'Close the game to remove it': 'Cierra el juego para quitarlo',
+'Never add': 'No añadir nunca', 'Move pkgs back': 'Devolver los pkgs', 'Please wait…': 'Espera…',
+'Update to use': 'Actualización que usar', 'Update: highest': 'Actualización: la más alta', 'No update': 'Sin actualización',
+'Update {v}': 'Actualización {v}', 'Add-ons: {used} of {total} used': 'Complementos: {used} de {total} en uso',
+'on another drive': 'en otra unidad',
+'{n} add-ons are on: a running game only sees about {max} (a console limit). Turn off the ones you do not need.': 'Hay {n} complementos activados: un juego en ejecución solo ve unos {max} (límite de la consola). Desactiva los que no necesites.',
+'Select': 'Seleccionar', 'with update from another drive': 'con actualización de otra unidad', 'with update': 'con actualización',
+'{n} add-on(s)': '{n} complemento(s)', 'mounted {how}': 'montado {how}', '{n} game(s)': '{n} juego(s)',
+'{name}: {free} free of {total}': '{name}: {free} libres de {total}', 'Almost full': 'Casi llena', 'almost full': 'casi llena',
+'{n} selected': '{n} seleccionados', '{name} ({n} games)': '{name} ({n} juegos)',
+'Adding games is paused: {why}. Games already added still work. Restart the console before resuming.': 'Se ha pausado la adición de juegos: {why}. Los juegos ya añadidos siguen funcionando. Reinicia la consola antes de reanudar.',
+'Could not read the list: {e}': 'No se pudo leer la lista: {e}',
+'Remove {tid} from the library? The pkg stays on the USB drive.': '¿Quitar {tid} de la biblioteca? El pkg se queda en la unidad USB.',
+'Never add {tid}? It leaves the library and is skipped by every scan until you click Allow. The pkgs stay on the drive.': '¿No añadir nunca {tid}? Sale de la biblioteca y todas las búsquedas lo saltan hasta que pulses Permitir. Los pkgs se quedan en la unidad.',
+'Move the pkgs of {tid} back to where they came from, with their original names?\n\nThe game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.': '¿Devolver los pkgs de {tid} a su sitio original, con sus nombres originales?\n\nEl juego sale de la biblioteca y PS4Mount deja de usar estos pkgs. No se borra ningún pkg.',
+'Error: {e}': 'Error: {e}', 'Add {n} game(s)?': '¿Añadir {n} juego(s)?',
+'Remove {n} game(s)? The pkgs stay on the drive.': '¿Quitar {n} juego(s)? Los pkgs se quedan en la unidad.',
+'Never add {n} game(s)?': '¿No añadir nunca {n} juego(s)?', '{ok} done': '{ok} hechos',
+'{failed} failed (see Log)': '{failed} con error (ver Registro)', 'Problem': 'Problema', 'Title': 'Título', 'Pkg': 'Pkg',
+'No problems found in the last scan.': 'No se encontraron problemas en la última búsqueda.', '{size} of {full}': '{size} de {full}',
+'Could not read the problems: {e}': 'No se pudieron leer los problemas: {e}',
+'Resume adding games? Do this only after restarting the console, once the database message is gone.': '¿Seguir añadiendo juegos? Hazlo solo después de reiniciar la consola, cuando ya no aparezca el mensaje de la base de datos.',
+'Scan {d}': 'Buscar en {d}',
+'This browser cannot save files: the whole log is shown below': 'Este navegador no puede guardar archivos: el registro completo se muestra abajo',
+'Could not download the log: {e}': 'No se pudo descargar el registro: {e}',
+'Could not read the diagnostics: {e}': 'No se pudo leer el diagnóstico: {e}', 'Copied': 'Copiado',
+'Select the text and copy it': 'Selecciona el texto y cópialo', 'Leave empty to keep the PIN': 'Déjalo vacío para mantener el PIN',
+'No PIN': 'Sin PIN',
+'4 to 8 digits. With a PIN, every browser must enter it before using the panel.': 'De 4 a 8 dígitos. Con PIN, cada navegador debe introducirlo antes de usar el panel.',
+'A PIN is set.': 'Hay un PIN configurado.', 'Anyone on your network can use the panel now.': 'Ahora cualquiera en tu red puede usar el panel.',
+'Could not read the settings: {e}': 'No se pudieron leer los ajustes: {e}',
+'Move the pkgs of ALL games back to where they came from, with their original names?\n\nAll PS4Mount games leave the library and PS4Mount stops picking these pkgs up. No pkg is deleted.': '¿Devolver los pkgs de TODOS los juegos a su sitio original, con sus nombres originales?\n\nTodos los juegos de PS4Mount salen de la biblioteca y PS4Mount deja de usar estos pkgs. No se borra ningún pkg.',
+'Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.': '¿Volver a usar los pkgs devueltos? Se mueven a la carpeta ps4 y se añaden en la próxima búsqueda.',
+'The PIN must be 4 to 8 digits': 'El PIN debe tener de 4 a 8 dígitos',
+'Stop PS4Mount? The games stay unavailable until it is loaded again.': '¿Detener PS4Mount? Los juegos no estarán disponibles hasta que se vuelva a cargar.'
+},
+pt: {
+'Search game or CUSA': 'Buscar jogo ou CUSA', 'Sort': 'Ordenar', 'Sort by name': 'Ordenar por nome',
+'Sort by state': 'Ordenar por estado', 'Sort by location': 'Ordenar por local', 'Drive': 'Unidade',
+'All drives': 'Todas as unidades', 'Scan for games': 'Procurar jogos', 'Problems': 'Problemas', 'Settings': 'Configurações',
+'Log': 'Log', 'Diagnostics': 'Diagnóstico', 'Stop': 'Parar', 'Enter PIN': 'Digitar PIN',
+'Resume adding games': 'Voltar a adicionar jogos',
+'No PS4 games found. Copy the .pkg files (game, update and add-ons) to a USB drive, in any folder.': 'Nenhum jogo de PS4 encontrado. Copie os arquivos .pkg (jogo, atualização e complementos) para uma unidade USB, em qualquer pasta.',
+'Add selected': 'Adicionar selecionados', 'Remove selected': 'Remover selecionados',
+'Never add selected': 'Nunca adicionar os selecionados', 'Clear selection': 'Limpar seleção',
+'Language': 'Idioma', 'Automatic (browser language)': 'Automático (idioma do navegador)',
+'Every folder of every drive is searched for pkgs, which are used where they are.': 'Todas as pastas de todas as unidades são verificadas em busca de pkgs, que são usados onde estão.',
+'Move pkgs into the ps4 folder': 'Mover os pkgs para a pasta ps4',
+'Folders whose pkgs are moved (one per line, relative to each drive)': 'Pastas cujos pkgs são movidos (uma por linha, relativas a cada unidade)',
+'/ is the root of the drive. Games are moved into the ps4 folder, so it cannot be used here.': '/ é a raiz da unidade. Os jogos são movidos para a pasta ps4, então ela não pode ser usada aqui.',
+'Folders to ignore (one per line, relative to each drive)': 'Pastas a ignorar (uma por linha, relativas a cada unidade)',
+'Pkgs in these folders and their subfolders are never used.': 'Os pkgs dessas pastas e subpastas nunca são usados.',
+'Seconds between scans': 'Segundos entre verificações',
+'10 to 300. Longer is lighter on drives with many folders; Scan for games always scans at once.': 'De 10 a 300. Mais tempo é mais leve para unidades com muitas pastas; Procurar jogos sempre verifica na hora.',
+'Add new games in groups': 'Adicionar jogos novos em grupos', 'Games per group': 'Jogos por grupo',
+'Smaller groups are gentler on the system when many games are added at once.': 'Grupos menores pesam menos no sistema quando muitos jogos são adicionados de uma vez.',
+'Install add-ons (DLC)': 'Instalar complementos (DLC)',
+'Use updates and add-ons from other drives': 'Usar atualizações e complementos de outras unidades',
+'For a game on one drive with its update or add-ons on another. Keep both drives connected: without the other drive, the game is added again without them.': 'Para um jogo em uma unidade com a atualização ou os complementos em outra. Mantenha as duas unidades conectadas: sem a outra unidade, o jogo é adicionado de novo sem eles.',
+'Panel PIN': 'PIN do painel', 'Remove the PIN': 'Remover o PIN', 'Pkgs moved back': 'Pkgs devolvidos',
+'Move all games back': 'Devolver todos os jogos', 'Pick up moved-back pkgs again': 'Usar de novo os pkgs devolvidos',
+'Cancel': 'Cancelar', 'Save': 'Salvar', 'Download the whole log': 'Baixar o log completo', 'Close': 'Fechar',
+'Paste this into a GitHub issue when something goes wrong. It holds no password and no network address.': 'Cole isto em uma issue do GitHub quando algo der errado. Não contém senhas nem endereços de rede.',
+'Copy': 'Copiar',
+'Pkgs that are found but not used. Nothing here is deleted or changed by PS4Mount.': 'Pkgs encontrados mas não usados. O PS4Mount não apaga nem altera nada daqui.',
+'installed': 'instalado', 'being added': 'sendo adicionado', 'turned off': 'desativado', 'deleted on the console': 'apagado no console',
+'Same game on more than one place (this copy is not used)': 'Mesmo jogo em mais de um lugar (esta cópia não é usada)',
+'Add-on without its game': 'Complemento sem o jogo', 'Update without its game': 'Atualização sem o jogo',
+'Cannot be read (damaged, not a PS4 pkg, or not game/update/add-on)': 'Não pode ser lido (danificado, não é um pkg de PS4, ou não é jogo/atualização/complemento)',
+'Incomplete: still copying or cut off; used once complete': 'Incompleto: ainda copiando ou cortado; será usado quando estiver completo',
+'Ready': 'Pronto', 'Running': 'Em execução', 'Not in library': 'Fora da biblioteca',
+'Installed on console': 'Instalado no console', 'Adding': 'Adicionando', 'On another drive': 'Em outra unidade',
+'Failed': 'Falhou', 'Never added': 'Nunca adicionado',
+'Wrong PIN. PIN of the PS4Mount panel:': 'PIN incorreto. PIN do painel do PS4Mount:',
+'PIN of the PS4Mount panel:': 'PIN do painel do PS4Mount:', 'New: {tag}': 'Nova: {tag}',
+'A newer PS4Mount is available': 'Há uma versão mais nova do PS4Mount',
+'too many wrong PINs, wait a minute': 'muitos PINs incorretos, aguarde um minuto', 'wrong PIN': 'PIN incorreto',
+'PIN needed': 'é preciso o PIN', 'Add to library': 'Adicionar à biblioteca', 'Try again': 'Tentar de novo',
+'Allow': 'Permitir', 'Remove from library': 'Remover da biblioteca', 'Close the game to remove it': 'Feche o jogo para removê-lo',
+'Never add': 'Nunca adicionar', 'Move pkgs back': 'Devolver os pkgs', 'Please wait…': 'Aguarde…',
+'Update to use': 'Atualização a usar', 'Update: highest': 'Atualização: a mais alta', 'No update': 'Sem atualização',
+'Update {v}': 'Atualização {v}', 'Add-ons: {used} of {total} used': 'Complementos: {used} de {total} em uso',
+'on another drive': 'em outra unidade',
+'{n} add-ons are on: a running game only sees about {max} (a console limit). Turn off the ones you do not need.': '{n} complementos estão ativados: um jogo em execução só vê cerca de {max} (limite do console). Desative os que não precisar.',
+'Select': 'Selecionar', 'with update from another drive': 'com atualização de outra unidade', 'with update': 'com atualização',
+'{n} add-on(s)': '{n} complemento(s)', 'mounted {how}': 'montado {how}', '{n} game(s)': '{n} jogo(s)',
+'{name}: {free} free of {total}': '{name}: {free} livres de {total}', 'Almost full': 'Quase cheia', 'almost full': 'quase cheia',
+'{n} selected': '{n} selecionados', '{name} ({n} games)': '{name} ({n} jogos)',
+'Adding games is paused: {why}. Games already added still work. Restart the console before resuming.': 'A adição de jogos está pausada: {why}. Os jogos já adicionados continuam funcionando. Reinicie o console antes de retomar.',
+'Could not read the list: {e}': 'Não foi possível ler a lista: {e}',
+'Remove {tid} from the library? The pkg stays on the USB drive.': 'Remover {tid} da biblioteca? O pkg continua na unidade USB.',
+'Never add {tid}? It leaves the library and is skipped by every scan until you click Allow. The pkgs stay on the drive.': 'Nunca adicionar {tid}? Ele sai da biblioteca e todas as verificações o pulam até você clicar em Permitir. Os pkgs continuam na unidade.',
+'Move the pkgs of {tid} back to where they came from, with their original names?\n\nThe game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.': 'Devolver os pkgs de {tid} para onde vieram, com os nomes originais?\n\nO jogo sai da biblioteca e o PS4Mount para de usar esses pkgs. Nenhum pkg é apagado.',
+'Error: {e}': 'Erro: {e}', 'Add {n} game(s)?': 'Adicionar {n} jogo(s)?',
+'Remove {n} game(s)? The pkgs stay on the drive.': 'Remover {n} jogo(s)? Os pkgs continuam na unidade.',
+'Never add {n} game(s)?': 'Nunca adicionar {n} jogo(s)?', '{ok} done': '{ok} concluídos',
+'{failed} failed (see Log)': '{failed} falharam (veja o Log)', 'Problem': 'Problema', 'Title': 'Título', 'Pkg': 'Pkg',
+'No problems found in the last scan.': 'Nenhum problema encontrado na última verificação.', '{size} of {full}': '{size} de {full}',
+'Could not read the problems: {e}': 'Não foi possível ler os problemas: {e}',
+'Resume adding games? Do this only after restarting the console, once the database message is gone.': 'Voltar a adicionar jogos? Faça isso só depois de reiniciar o console, quando a mensagem do banco de dados tiver sumido.',
+'Scan {d}': 'Verificar {d}',
+'This browser cannot save files: the whole log is shown below': 'Este navegador não salva arquivos: o log completo aparece abaixo',
+'Could not download the log: {e}': 'Não foi possível baixar o log: {e}',
+'Could not read the diagnostics: {e}': 'Não foi possível ler o diagnóstico: {e}', 'Copied': 'Copiado',
+'Select the text and copy it': 'Selecione o texto e copie', 'Leave empty to keep the PIN': 'Deixe vazio para manter o PIN',
+'No PIN': 'Sem PIN',
+'4 to 8 digits. With a PIN, every browser must enter it before using the panel.': 'De 4 a 8 dígitos. Com PIN, cada navegador precisa digitá-lo antes de usar o painel.',
+'A PIN is set.': 'Há um PIN definido.', 'Anyone on your network can use the panel now.': 'Agora qualquer pessoa na sua rede pode usar o painel.',
+'Could not read the settings: {e}': 'Não foi possível ler as configurações: {e}',
+'Move the pkgs of ALL games back to where they came from, with their original names?\n\nAll PS4Mount games leave the library and PS4Mount stops picking these pkgs up. No pkg is deleted.': 'Devolver os pkgs de TODOS os jogos para onde vieram, com os nomes originais?\n\nTodos os jogos do PS4Mount saem da biblioteca e o PS4Mount para de usar esses pkgs. Nenhum pkg é apagado.',
+'Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.': 'Usar de novo os pkgs devolvidos? Eles são movidos para a pasta ps4 e adicionados na próxima verificação.',
+'The PIN must be 4 to 8 digits': 'O PIN deve ter de 4 a 8 dígitos',
+'Stop PS4Mount? The games stay unavailable until it is loaded again.': 'Parar o PS4Mount? Os jogos ficam indisponíveis até ele ser carregado de novo.'
+},
+fr: {
+'Search game or CUSA': 'Chercher un jeu ou CUSA', 'Sort': 'Trier', 'Sort by name': 'Trier par nom',
+'Sort by state': 'Trier par état', 'Sort by location': 'Trier par emplacement', 'Drive': 'Disque',
+'All drives': 'Tous les disques', 'Scan for games': 'Chercher des jeux', 'Problems': 'Problèmes', 'Settings': 'Réglages',
+'Log': 'Journal', 'Diagnostics': 'Diagnostic', 'Stop': 'Arrêter', 'Enter PIN': 'Saisir le PIN',
+'Resume adding games': 'Reprendre l’ajout de jeux',
+'No PS4 games found. Copy the .pkg files (game, update and add-ons) to a USB drive, in any folder.': 'Aucun jeu PS4 trouvé. Copiez les fichiers .pkg (jeu, mise à jour et extensions) sur un disque USB, dans n’importe quel dossier.',
+'Add selected': 'Ajouter la sélection', 'Remove selected': 'Retirer la sélection',
+'Never add selected': 'Ne jamais ajouter la sélection', 'Clear selection': 'Effacer la sélection',
+'Language': 'Langue', 'Automatic (browser language)': 'Automatique (langue du navigateur)',
+'Every folder of every drive is searched for pkgs, which are used where they are.': 'Tous les dossiers de tous les disques sont parcourus à la recherche de pkgs, utilisés là où ils sont.',
+'Move pkgs into the ps4 folder': 'Déplacer les pkgs dans le dossier ps4',
+'Folders whose pkgs are moved (one per line, relative to each drive)': 'Dossiers dont les pkgs sont déplacés (un par ligne, relatif à chaque disque)',
+'/ is the root of the drive. Games are moved into the ps4 folder, so it cannot be used here.': '/ est la racine du disque. Les jeux sont déplacés dans le dossier ps4, il ne peut donc pas être utilisé ici.',
+'Folders to ignore (one per line, relative to each drive)': 'Dossiers à ignorer (un par ligne, relatif à chaque disque)',
+'Pkgs in these folders and their subfolders are never used.': 'Les pkgs de ces dossiers et de leurs sous-dossiers ne sont jamais utilisés.',
+'Seconds between scans': 'Secondes entre deux recherches',
+'10 to 300. Longer is lighter on drives with many folders; Scan for games always scans at once.': 'De 10 à 300. Plus long est plus léger pour les disques avec beaucoup de dossiers ; Chercher des jeux cherche toujours immédiatement.',
+'Add new games in groups': 'Ajouter les nouveaux jeux par groupes', 'Games per group': 'Jeux par groupe',
+'Smaller groups are gentler on the system when many games are added at once.': 'Des groupes plus petits ménagent le système quand beaucoup de jeux sont ajoutés à la fois.',
+'Install add-ons (DLC)': 'Installer les extensions (DLC)',
+'Use updates and add-ons from other drives': 'Utiliser les mises à jour et extensions d’autres disques',
+'For a game on one drive with its update or add-ons on another. Keep both drives connected: without the other drive, the game is added again without them.': 'Pour un jeu sur un disque avec sa mise à jour ou ses extensions sur un autre. Gardez les deux disques branchés : sans l’autre disque, le jeu est ajouté à nouveau sans elles.',
+'Panel PIN': 'PIN du panneau', 'Remove the PIN': 'Supprimer le PIN', 'Pkgs moved back': 'Pkgs remis en place',
+'Move all games back': 'Remettre tous les jeux en place', 'Pick up moved-back pkgs again': 'Reprendre les pkgs remis en place',
+'Cancel': 'Annuler', 'Save': 'Enregistrer', 'Download the whole log': 'Télécharger tout le journal', 'Close': 'Fermer',
+'Paste this into a GitHub issue when something goes wrong. It holds no password and no network address.': 'Collez ceci dans un ticket GitHub en cas de problème. Il ne contient ni mot de passe ni adresse réseau.',
+'Copy': 'Copier',
+'Pkgs that are found but not used. Nothing here is deleted or changed by PS4Mount.': 'Pkgs trouvés mais non utilisés. PS4Mount ne supprime ni ne modifie rien ici.',
+'installed': 'installée', 'being added': 'en cours d’ajout', 'turned off': 'désactivée', 'deleted on the console': 'supprimée sur la console',
+'Same game on more than one place (this copy is not used)': 'Même jeu à plusieurs endroits (cette copie n’est pas utilisée)',
+'Add-on without its game': 'Extension sans son jeu', 'Update without its game': 'Mise à jour sans son jeu',
+'Cannot be read (damaged, not a PS4 pkg, or not game/update/add-on)': 'Illisible (endommagé, pas un pkg PS4, ou ni jeu, ni mise à jour, ni extension)',
+'Incomplete: still copying or cut off; used once complete': 'Incomplet : copie en cours ou coupée ; utilisé une fois complet',
+'Ready': 'Prêt', 'Running': 'En cours', 'Not in library': 'Hors bibliothèque',
+'Installed on console': 'Installé sur la console', 'Adding': 'Ajout en cours', 'On another drive': 'Sur un autre disque',
+'Failed': 'Échec', 'Never added': 'Jamais ajouté',
+'Wrong PIN. PIN of the PS4Mount panel:': 'PIN incorrect. PIN du panneau PS4Mount :',
+'PIN of the PS4Mount panel:': 'PIN du panneau PS4Mount :', 'New: {tag}': 'Nouveau : {tag}',
+'A newer PS4Mount is available': 'Une version plus récente de PS4Mount est disponible',
+'too many wrong PINs, wait a minute': 'trop de PIN incorrects, attendez une minute', 'wrong PIN': 'PIN incorrect',
+'PIN needed': 'PIN requis', 'Add to library': 'Ajouter à la bibliothèque', 'Try again': 'Réessayer',
+'Allow': 'Autoriser', 'Remove from library': 'Retirer de la bibliothèque', 'Close the game to remove it': 'Fermez le jeu pour le retirer',
+'Never add': 'Ne jamais ajouter', 'Move pkgs back': 'Remettre les pkgs en place', 'Please wait…': 'Patientez…',
+'Update to use': 'Mise à jour à utiliser', 'Update: highest': 'Mise à jour : la plus récente', 'No update': 'Sans mise à jour',
+'Update {v}': 'Mise à jour {v}', 'Add-ons: {used} of {total} used': 'Extensions : {used} sur {total} utilisées',
+'on another drive': 'sur un autre disque',
+'{n} add-ons are on: a running game only sees about {max} (a console limit). Turn off the ones you do not need.': '{n} extensions sont activées : un jeu en cours n’en voit qu’environ {max} (limite de la console). Désactivez celles dont vous n’avez pas besoin.',
+'Select': 'Sélectionner', 'with update from another drive': 'avec mise à jour d’un autre disque', 'with update': 'avec mise à jour',
+'{n} add-on(s)': '{n} extension(s)', 'mounted {how}': 'monté {how}', '{n} game(s)': '{n} jeu(x)',
+'{name}: {free} free of {total}': '{name} : {free} libres sur {total}', 'Almost full': 'Presque plein', 'almost full': 'presque plein',
+'{n} selected': '{n} sélectionné(s)', '{name} ({n} games)': '{name} ({n} jeux)',
+'Adding games is paused: {why}. Games already added still work. Restart the console before resuming.': 'L’ajout de jeux est en pause : {why}. Les jeux déjà ajoutés fonctionnent toujours. Redémarrez la console avant de reprendre.',
+'Could not read the list: {e}': 'Impossible de lire la liste : {e}',
+'Remove {tid} from the library? The pkg stays on the USB drive.': 'Retirer {tid} de la bibliothèque ? Le pkg reste sur le disque USB.',
+'Never add {tid}? It leaves the library and is skipped by every scan until you click Allow. The pkgs stay on the drive.': 'Ne jamais ajouter {tid} ? Il quitte la bibliothèque et chaque recherche l’ignore jusqu’à ce que vous cliquiez sur Autoriser. Les pkgs restent sur le disque.',
+'Move the pkgs of {tid} back to where they came from, with their original names?\n\nThe game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.': 'Remettre les pkgs de {tid} à leur emplacement d’origine, avec leurs noms d’origine ?\n\nLe jeu quitte la bibliothèque et PS4Mount n’utilise plus ces pkgs. Aucun pkg n’est supprimé.',
+'Error: {e}': 'Erreur : {e}', 'Add {n} game(s)?': 'Ajouter {n} jeu(x) ?',
+'Remove {n} game(s)? The pkgs stay on the drive.': 'Retirer {n} jeu(x) ? Les pkgs restent sur le disque.',
+'Never add {n} game(s)?': 'Ne jamais ajouter {n} jeu(x) ?', '{ok} done': '{ok} terminé(s)',
+'{failed} failed (see Log)': '{failed} en échec (voir le Journal)', 'Problem': 'Problème', 'Title': 'Titre', 'Pkg': 'Pkg',
+'No problems found in the last scan.': 'Aucun problème lors de la dernière recherche.', '{size} of {full}': '{size} sur {full}',
+'Could not read the problems: {e}': 'Impossible de lire les problèmes : {e}',
+'Resume adding games? Do this only after restarting the console, once the database message is gone.': 'Reprendre l’ajout de jeux ? Faites-le seulement après avoir redémarré la console, une fois le message de base de données disparu.',
+'Scan {d}': 'Chercher sur {d}',
+'This browser cannot save files: the whole log is shown below': 'Ce navigateur ne peut pas enregistrer de fichiers : tout le journal est affiché ci-dessous',
+'Could not download the log: {e}': 'Impossible de télécharger le journal : {e}',
+'Could not read the diagnostics: {e}': 'Impossible de lire le diagnostic : {e}', 'Copied': 'Copié',
+'Select the text and copy it': 'Sélectionnez le texte et copiez-le', 'Leave empty to keep the PIN': 'Laisser vide pour garder le PIN',
+'No PIN': 'Pas de PIN',
+'4 to 8 digits. With a PIN, every browser must enter it before using the panel.': '4 à 8 chiffres. Avec un PIN, chaque navigateur doit le saisir avant d’utiliser le panneau.',
+'A PIN is set.': 'Un PIN est défini.', 'Anyone on your network can use the panel now.': 'Pour l’instant, n’importe qui sur votre réseau peut utiliser le panneau.',
+'Could not read the settings: {e}': 'Impossible de lire les réglages : {e}',
+'Move the pkgs of ALL games back to where they came from, with their original names?\n\nAll PS4Mount games leave the library and PS4Mount stops picking these pkgs up. No pkg is deleted.': 'Remettre les pkgs de TOUS les jeux à leur emplacement d’origine, avec leurs noms d’origine ?\n\nTous les jeux PS4Mount quittent la bibliothèque et PS4Mount n’utilise plus ces pkgs. Aucun pkg n’est supprimé.',
+'Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.': 'Reprendre les pkgs remis en place ? Ils sont déplacés dans le dossier ps4 et ajoutés à la prochaine recherche.',
+'The PIN must be 4 to 8 digits': 'Le PIN doit comporter 4 à 8 chiffres',
+'Stop PS4Mount? The games stay unavailable until it is loaded again.': 'Arrêter PS4Mount ? Les jeux restent indisponibles jusqu’à ce qu’il soit rechargé.'
+}
+};
+function langPicked() { try { return localStorage.getItem('ps4mount-lang') || ''; } catch (e) { return ''; } }
+var LANG = (function () {
+  var l = langPicked() || ((navigator.languages && navigator.languages[0]) || navigator.language || 'en').slice(0, 2).toLowerCase();
+  return I18N[l] ? l : 'en';
+})();
+var DICT = I18N[LANG] || {};
+/* t('Scan {d}', {d: 'usb1'}): the text in the panel's language, with its values filled in. */
+function t(s, vars) {
+  var out = DICT[s] || s;
+  if (vars) out = out.replace(/\{(\w+)\}/g, function (m, k) { return k in vars ? vars[k] : m; });
+  return out;
+}
+/* The text written in the page itself: text nodes, placeholders, labels and titles. */
+function translatePage() {
+  document.documentElement.lang = LANG;
+  if (LANG === 'en') return;
+  var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false), n, nodes = [];
+  while ((n = w.nextNode())) nodes.push(n);
+  nodes.forEach(function (node) {
+    var p = node.parentNode.nodeName;
+    if (p === 'SCRIPT' || p === 'STYLE' || p === 'TEXTAREA' || p === 'PRE') return;
+    var raw = node.nodeValue, key = raw.replace(/\s+/g, ' ').trim();
+    if (key && DICT[key]) node.nodeValue = raw.match(/^\s*/)[0] + DICT[key] + raw.match(/\s*$/)[0];
+  });
+  ['placeholder', 'aria-label', 'title'].forEach(function (a) {
+    [].forEach.call(document.querySelectorAll('[' + a + ']'), function (el) {
+      var v = el.getAttribute(a);
+      if (DICT[v]) el.setAttribute(a, DICT[v]);
+    });
+  });
+}
+translatePage();
+
 /* The browser of older firmwares has no <dialog>: the dialogs then show inside the page and
    showModal()/close() do not exist. Give them the same behavior with plain CSS. */
 (function dialogFallback() {
@@ -182,7 +458,7 @@ function pinAsk(wrong) {
   if (pinDeclined) return Promise.resolve(false);
   if (!pinAsking) pinAsking = new Promise(function (done) {
     setTimeout(function () {
-      var p = prompt(wrong ? 'Wrong PIN. PIN of the PS4Mount panel:' : 'PIN of the PS4Mount panel:');
+      var p = prompt(t(wrong ? 'Wrong PIN. PIN of the PS4Mount panel:' : 'PIN of the PS4Mount panel:'));
       pinAsking = null;
       if (p === null) { pinDeclined = true; $('pinbtn').hidden = false; done(false); return; }
       pinPut(p.replace(/\s/g, '')); done(true);
@@ -205,9 +481,9 @@ function checkRelease(current) {
     var latest = verNums(r.tag);
     if (!latest || !verNewer(latest, mine) || !/^https:\/\/github\.com\//.test(r.url)) return;
     var a = $('newver');
-    a.textContent = 'New: ' + r.tag;
+    a.textContent = t('New: {tag}', {tag: r.tag});
     a.href = r.url;
-    a.title = 'A newer PS4Mount is available';
+    a.title = t('A newer PS4Mount is available');
     a.hidden = false;
   }
   var cached = null;
@@ -229,11 +505,11 @@ function api(path, method, body, retried) {
   if (body !== undefined) h['Content-Type'] = 'application/x-www-form-urlencoded';
   return fetch(path, {method: method || 'GET', cache: 'no-store', headers: h, body: body}).then(function (r) {
     return r.json().then(function (j) {
-      if (r.status === 429) throw new Error('too many wrong PINs, wait a minute');
+      if (r.status === 429) throw new Error(t('too many wrong PINs, wait a minute'));
       if (r.status === 401 && j.error === 'pin') {
-        if (retried > 2) throw new Error('wrong PIN');
+        if (retried > 2) throw new Error(t('wrong PIN'));
         return pinAsk(!!pin).then(function (again) {
-          if (!again) throw new Error('PIN needed');
+          if (!again) throw new Error(t('PIN needed'));
           return api(path, method, body, (retried || 0) + 1);
         });
       }
@@ -256,22 +532,23 @@ function render() {
     if (dv && g.drive !== dv) return;
     shown++;
     var tid = g.title_id, act = '';
-    if (g.state === 'removed') act = '<button class="primary" data-a="mount" data-t="' + tid + '">Add to library</button>';
-    else if (g.state === 'failed') act = '<button class="primary" data-a="mount" data-t="' + tid + '">Try again</button>';
-    else if (g.state === 'excluded') act = '<button class="primary" data-a="include" data-t="' + tid + '">Allow</button>';
-    else if (g.state === 'ready') act = '<button class="danger" data-a="unmount" data-t="' + tid + '">Remove from library</button>';
-    else if (g.state === 'running') act = '<button disabled>Close the game to remove it</button>';
+    if (g.state === 'removed') act = '<button class="primary" data-a="mount" data-t="' + tid + '">' + t('Add to library') + '</button>';
+    else if (g.state === 'failed') act = '<button class="primary" data-a="mount" data-t="' + tid + '">' + t('Try again') + '</button>';
+    else if (g.state === 'excluded') act = '<button class="primary" data-a="include" data-t="' + tid + '">' + t('Allow') + '</button>';
+    else if (g.state === 'ready') act = '<button class="danger" data-a="unmount" data-t="' + tid + '">' + t('Remove from library') + '</button>';
+    else if (g.state === 'running') act = '<button disabled>' + t('Close the game to remove it') + '</button>';
     if (g.state !== 'excluded' && g.state !== 'internal' && g.state !== 'running')
-      act += '<button data-a="exclude" data-t="' + tid + '">Never add</button>';
+      act += '<button data-a="exclude" data-t="' + tid + '">' + t('Never add') + '</button>';
     if (g.state !== 'running' && g.state !== 'internal' && !/\.pkg$/i.test(g.source))
-      act += '<button data-a="restore" data-t="' + tid + '">Move pkgs back</button>';
-    if (busy[tid]) act = '<button disabled>Please wait…</button>';
+      act += '<button data-a="restore" data-t="' + tid + '">' + t('Move pkgs back') + '</button>';
+    if (busy[tid]) act = '<button disabled>' + t('Please wait…') + '</button>';
     var upd = '';
     if (g.updates && g.updates.length && g.state !== 'internal') {
-      upd = '<select data-upd="' + tid + '" aria-label="Update to use"' + (g.state === 'running' ? ' disabled' : '') + '>' +
-        '<option value="">Update: highest</option><option value="none"' + (g.update_choice === 'none' ? ' selected' : '') + '>No update</option>';
+      upd = '<select data-upd="' + tid + '" aria-label="' + t('Update to use') + '"' + (g.state === 'running' ? ' disabled' : '') + '>' +
+        '<option value="">' + t('Update: highest') + '</option><option value="none"' + (g.update_choice === 'none' ? ' selected' : '') + '>' +
+        t('No update') + '</option>';
       g.updates.forEach(function (v) {
-        upd += '<option value="' + esc(v) + '"' + (g.update_choice === v ? ' selected' : '') + '>Update ' + esc(v) + '</option>';
+        upd += '<option value="' + esc(v) + '"' + (g.update_choice === v ? ' selected' : '') + '>' + t('Update {v}', {v: esc(v)}) + '</option>';
       });
       upd += '</select>';
     }
@@ -279,38 +556,40 @@ function render() {
     if (g.addons && g.addons.length) {
       var used = 0;
       g.addons.forEach(function (a) { if (a.state !== 'off' && a.state !== 'deleted') used++; });
-      adds = '<details class="addons" data-t="' + tid + '"' + (openAddons[tid] ? ' open' : '') + '><summary>Add-ons: ' + used + ' of ' + g.addons.length + ' used</summary>';
+      adds = '<details class="addons" data-t="' + tid + '"' + (openAddons[tid] ? ' open' : '') + '><summary>' +
+        t('Add-ons: {used} of {total} used', {used: used, total: g.addons.length}) + '</summary>';
       g.addons.forEach(function (a) {
         adds += '<label><input type="checkbox" data-addon="' + esc(a.content_id) + '"' + (a.state === 'on' || a.state === 'adding' ? ' checked' : '') +
           (g.state === 'running' || g.state === 'internal' ? ' disabled' : '') + '> <span>' + esc(a.name || a.content_id.slice(20)) +
-          '<small>' + (a.name ? esc(a.content_id.slice(20)) + ' · ' : '') + esc(addonLabels[a.state] || a.state) +
-          (a.other_drive ? ' · on another drive' : '') + '</small></span></label>';
+          '<small>' + (a.name ? esc(a.content_id.slice(20)) + ' · ' : '') + esc(addonLabels[a.state] ? t(addonLabels[a.state]) : a.state) +
+          (a.other_drive ? ' · ' + t('on another drive') : '') + '</small></span></label>';
       });
       adds += '</details>';
       if (used > MAX_RUNNING_ADDONS)
-        adds += '<div class="warn">' + used + ' add-ons are on: a running game only sees about ' + MAX_RUNNING_ADDONS +
-          ' (a console limit). Turn off the ones you do not need.</div>';
+        adds += '<div class="warn">' + t('{n} add-ons are on: a running game only sees about {max} (a console limit). Turn off the ones you do not need.',
+          {n: used, max: MAX_RUNNING_ADDONS}) + '</div>';
     }
     var pick = g.state !== 'internal' && g.state !== 'running';
     html += '<div class="card' + (selected[tid] ? ' sel' : '') + '"><div class="art" style="background-image:url(/icon/' + tid + ')">' +
-      '<span class="badge b-' + g.state + '">' + esc(labels[g.state] || g.state) + '</span>' +
-      (pick ? '<input type="checkbox" class="pick" data-sel="' + tid + '" aria-label="Select"' + (selected[tid] ? ' checked' : '') + '>' : '') + '</div>' +
+      '<span class="badge b-' + g.state + '">' + esc(labels[g.state] ? t(labels[g.state]) : g.state) + '</span>' +
+      (pick ? '<input type="checkbox" class="pick" data-sel="' + tid + '" aria-label="' + t('Select') + '"' + (selected[tid] ? ' checked' : '') + '>' : '') + '</div>' +
       '<div class="info"><div class="name">' + esc(g.name) + '</div>' +
       '<div class="meta">' + tid + ' · v' + esc(g.version) +
-        (g.has_patch ? (g.update_other_drive ? ' (with update from another drive)' : ' (with update)') : '') +
-        (g.dlc ? ' · ' + g.dlc + ' add-on' + (g.dlc > 1 ? 's' : '') : '') + ' · ' + gb(g.size) + '</div>' +
-      '<div class="meta">' + esc(g.source) + (g.mount ? ' · mounted ' + g.mount : '') + '</div>' + upd + adds +
+        (g.has_patch ? ' (' + t(g.update_other_drive ? 'with update from another drive' : 'with update') + ')' : '') +
+        (g.dlc ? ' · ' + t('{n} add-on(s)', {n: g.dlc}) : '') + ' · ' + gb(g.size) + '</div>' +
+      '<div class="meta">' + esc(g.source) + (g.mount ? ' · ' + t('mounted {how}', {how: esc(g.mount)}) : '') + '</div>' + upd + adds +
       (g.update_issue ? '<div class="warn">' + esc(g.update_issue) + '</div>' : '') + '</div>' +
       '<div class="actions">' + act + '</div></div>';
   });
   $('grid').innerHTML = html;
   $('empty').hidden = games.length > 0;
-  var s = '<span>' + games.length + ' game(s)</span>';
-  for (var k in counts) s += '<span>' + esc(labels[k] || k) + ': ' + counts[k] + '</span>';
+  var s = '<span>' + t('{n} game(s)', {n: games.length}) + '</span>';
+  for (var k in counts) s += '<span>' + esc(labels[k] ? t(labels[k]) : k) + ': ' + counts[k] + '</span>';
   drives.forEach(function (d) {
     if (!dv || d.name === dv)
-      s += '<span' + (d.low ? ' class="low" title="Almost full"' : '') + '>' + esc(d.name) + ': ' + gb(d.free) + ' free of ' +
-        gb(d.total) + (d.low ? ' · almost full' : '') + '</span>';
+      s += '<span' + (d.low ? ' class="low" title="' + t('Almost full') + '"' : '') + '>' +
+        t('{name}: {free} free of {total}', {name: esc(d.name), free: gb(d.free), total: gb(d.total)}) +
+        (d.low ? ' · ' + t('almost full') : '') + '</span>';
   });
   $('summary').innerHTML = s;
   selbar();
@@ -319,12 +598,14 @@ function render() {
 function selbar() {
   var n = Object.keys(selected).length;
   $('selbar').hidden = !n;
-  $('selcount').textContent = n + ' selected';
+  $('selcount').textContent = t('{n} selected', {n: n});
 }
 
 function drivelist() {
-  var sel = $('drive'), cur = sel.value, h = '<option value="">All drives</option>';
-  drives.forEach(function (d) { h += '<option value="' + esc(d.name) + '">' + esc(d.name) + ' (' + d.games + ' games)</option>'; });
+  var sel = $('drive'), cur = sel.value, h = '<option value="">' + t('All drives') + '</option>';
+  drives.forEach(function (d) {
+    h += '<option value="' + esc(d.name) + '">' + t('{name} ({n} games)', {name: esc(d.name), n: d.games}) + '</option>';
+  });
   sel.innerHTML = h;
   sel.value = drives.some(function (d) { return d.name === cur; }) ? cur : '';
   rescanLabel();
@@ -339,23 +620,24 @@ function load() {
     for (var t in selected) if (!live[t]) delete selected[t];
     drivelist();
     $('paused').hidden = !j.paused;
-    $('paused-msg').textContent = j.paused ? 'Adding games is paused: ' + j.paused + '. Games already added still work. Restart the console before resuming.' : '';
+    $('paused-msg').textContent = j.paused ?
+      t('Adding games is paused: {why}. Games already added still work. Restart the console before resuming.', {why: j.paused}) : '';
     render();
   })
-    .catch(function (e) { if (!pinDeclined) toast('Could not read the list: ' + e.message); });
+    .catch(function (e) { if (!pinDeclined) toast(t('Could not read the list: {e}', {e: e.message})); });
 }
 
 $('grid').addEventListener('click', function (e) {
   var b = e.target.closest('button[data-a]');
   if (!b) return;
   var tid = b.getAttribute('data-t'), a = b.getAttribute('data-a');
-  if (a === 'unmount' && !confirm('Remove ' + tid + ' from the library? The pkg stays on the USB drive.')) return;
-  if (a === 'exclude' && !confirm('Never add ' + tid + '? It leaves the library and is skipped by every scan until you click Allow. The pkgs stay on the drive.')) return;
-  if (a === 'restore' && !confirm('Move the pkgs of ' + tid + ' back to where they came from, with their original names?\n\n' +
-      'The game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.')) return;
+  if (a === 'unmount' && !confirm(t('Remove {tid} from the library? The pkg stays on the USB drive.', {tid: tid}))) return;
+  if (a === 'exclude' && !confirm(t('Never add {tid}? It leaves the library and is skipped by every scan until you click Allow. The pkgs stay on the drive.', {tid: tid}))) return;
+  if (a === 'restore' && !confirm(t('Move the pkgs of {tid} back to where they came from, with their original names?\n\n' +
+      'The game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.', {tid: tid}))) return;
   busy[tid] = 1; render();
   api('/api/' + a + '?title_id=' + tid, 'POST').then(function (j) { toast(j.message); })
-    .catch(function (err) { toast('Error: ' + err.message); })
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); })
     .then(function () { delete busy[tid]; load(); });
 });
 $('grid').addEventListener('change', function (e) {
@@ -387,8 +669,8 @@ $('selbar').addEventListener('click', function (e) {
   var b = e.target.closest('button[data-bulk]');
   if (!b) return;
   var a = b.getAttribute('data-bulk'), list = Object.keys(selected);
-  var what = {mount: 'Add', unmount: 'Remove', exclude: 'Never add'}[a];
-  if (!list.length || !confirm(what + ' ' + list.length + ' game(s)?' + (a === 'unmount' ? ' The pkgs stay on the drive.' : ''))) return;
+  var ask = {mount: 'Add {n} game(s)?', unmount: 'Remove {n} game(s)? The pkgs stay on the drive.', exclude: 'Never add {n} game(s)?'}[a];
+  if (!list.length || !confirm(t(ask, {n: list.length}))) return;
   var ok = 0, failed = 0;
   list.forEach(function (t) { busy[t] = 1; });
   render();
@@ -396,7 +678,7 @@ $('selbar').addEventListener('click', function (e) {
   (function next(i) {
     if (i >= list.length) {
       selected = {};
-      toast(what + ': ' + ok + ' done' + (failed ? ', ' + failed + ' failed (see Log)' : ''));
+      toast(t('{ok} done', {ok: ok}) + (failed ? ', ' + t('{failed} failed (see Log)', {failed: failed}) : ''));
       load();
       return;
     }
@@ -410,30 +692,30 @@ $('probbtn').onclick = function () {
   api('/api/problems').then(function (j) {
     var h = '';
     j.problems.forEach(function (p) {
-      var what = kinds[p.kind] || p.kind;
-      if (p.kind === 'incomplete' && p.full_size) what += ' (' + gb(p.size) + ' of ' + gb(p.full_size) + ')';
+      var what = kinds[p.kind] ? t(kinds[p.kind]) : p.kind;
+      if (p.kind === 'incomplete' && p.full_size) what += ' (' + t('{size} of {full}', {size: gb(p.size), full: gb(p.full_size)}) + ')';
       h += '<tr><td>' + esc(what) + '</td><td>' + esc(p.title_id || '-') + '</td><td>' + esc(p.path) + '</td></tr>';
     });
-    $('problems').innerHTML = h ? '<table><tr><th>Problem</th><th>Title</th><th>Pkg</th></tr>' + h + '</table>' :
-      '<p>No problems found in the last scan.</p>';
+    $('problems').innerHTML = h ? '<table><tr><th>' + t('Problem') + '</th><th>' + t('Title') + '</th><th>' + t('Pkg') + '</th></tr>' +
+      h + '</table>' : '<p>' + t('No problems found in the last scan.') + '</p>';
     $('probdlg').showModal();
-  }).catch(function (e) { toast('Could not read the problems: ' + e.message); });
+  }).catch(function (e) { toast(t('Could not read the problems: {e}', {e: e.message})); });
 };
 $('q').addEventListener('input', render);
 $('sort').onchange = render;
 $('drive').onchange = function () { rescanLabel(); render(); };
 $('resume').onclick = function () {
-  if (!confirm('Resume adding games? Do this only after restarting the console, once the database message is gone.')) return;
+  if (!confirm(t('Resume adding games? Do this only after restarting the console, once the database message is gone.'))) return;
   api('/api/resume', 'POST').then(function (j) { toast(j.message); load(); })
-    .catch(function (err) { toast('Error: ' + err.message); });
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
 };
 $('rescan').onclick = function () {
   var dv = $('drive').value;
   api('/api/rescan' + (dv ? '?drive=' + encodeURIComponent(dv) : ''), 'POST')
     .then(function (j) { toast(j.message); setTimeout(load, 3000); })
-    .catch(function (err) { toast('Error: ' + err.message); });
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
 };
-function rescanLabel() { $('rescan').textContent = $('drive').value ? 'Scan ' + $('drive').value : 'Scan for games'; }
+function rescanLabel() { $('rescan').textContent = $('drive').value ? t('Scan {d}', {d: $('drive').value}) : t('Scan for games'); }
 $('logbtn').onclick = function () { api('/api/log').then(function (j) { $('log').textContent = j.log; $('logdlg').showModal(); }); };
 /* Fetched (to send the PIN) and saved through a link; a browser that cannot save files
    shows the whole log in the dialog instead. */
@@ -441,14 +723,14 @@ $('logsave').onclick = function () {
   var h = {}, pin = pinGet();
   if (pin) h['X-PIN'] = pin;
   fetch('/api/log.txt', {cache: 'no-store', headers: h}).then(function (r) {
-    if (!r.ok) throw new Error(r.status === 401 ? 'PIN needed' : r.status);
+    if (!r.ok) throw new Error(r.status === 401 ? t('PIN needed') : r.status);
     return r.blob ? r.blob() : r.text();
   }).then(function (data) {
     var a = document.createElement('a');
     if (typeof data === 'string' || !window.URL || !URL.createObjectURL || !('download' in a)) {
       if (typeof data === 'string') $('log').textContent = data;
       else data.text().then(function (t) { $('log').textContent = t; });
-      toast('This browser cannot save files: the whole log is shown below');
+      toast(t('This browser cannot save files: the whole log is shown below'));
       return;
     }
     var url = URL.createObjectURL(data);
@@ -458,18 +740,18 @@ $('logsave').onclick = function () {
     a.click();
     document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
-  }).catch(function (err) { toast('Could not download the log: ' + err.message); });
+  }).catch(function (err) { toast(t('Could not download the log: {e}', {e: err.message})); });
 };
 $('diagbtn').onclick = function () {
   api('/api/diag').then(function (j) { $('diag').value = j.text; $('diagdlg').showModal(); })
-    .catch(function (e) { toast('Could not read the diagnostics: ' + e.message); });
+    .catch(function (e) { toast(t('Could not read the diagnostics: {e}', {e: e.message})); });
 };
 $('diagcopy').onclick = function () {
   var t = $('diag');
   t.focus(); t.select();
   var ok = false;
   try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-  toast(ok ? 'Copied' : 'Select the text and copy it');
+  toast(t(ok ? 'Copied' : 'Select the text and copy it'));
 };
 $('settingsbtn').onclick = function () {
   api('/api/config').then(function (c) {
@@ -484,26 +766,27 @@ $('settingsbtn').onclick = function () {
     $('s-size').disabled = !c.batch;
     $('s-paths').disabled = !c.organize;
     $('s-pin').value = ''; $('s-pinoff').checked = false;
-    $('s-pin').placeholder = c.pin_set ? 'Leave empty to keep the PIN' : 'No PIN';
-    $('s-pinhint').textContent = '4 to 8 digits. With a PIN, every browser must enter it before using the panel.' +
-      (c.pin_set ? ' A PIN is set.' : ' Anyone on your network can use the panel now.');
+    $('s-pin').placeholder = t(c.pin_set ? 'Leave empty to keep the PIN' : 'No PIN');
+    $('s-pinhint').textContent = t('4 to 8 digits. With a PIN, every browser must enter it before using the panel.') + ' ' +
+      t(c.pin_set ? 'A PIN is set.' : 'Anyone on your network can use the panel now.');
     $('s-pinoff-row').hidden = !c.pin_set;
+    $('s-lang').value = langPicked();
     $('setdlg').showModal();
-  }).catch(function (e) { toast('Could not read the settings: ' + e.message); });
+  }).catch(function (e) { toast(t('Could not read the settings: {e}', {e: e.message})); });
 };
 $('s-batch').onchange = function () { $('s-size').disabled = !this.checked; };
 $('s-organize').onchange = function () { $('s-paths').disabled = !this.checked; };
 $('s-cancel').onclick = function () { $('setdlg').close(); };
 $('s-restore').onclick = function () {
-  if (!confirm('Move the pkgs of ALL games back to where they came from, with their original names?\n\n' +
-      'All PS4Mount games leave the library and PS4Mount stops picking these pkgs up. No pkg is deleted.')) return;
+  if (!confirm(t('Move the pkgs of ALL games back to where they came from, with their original names?\n\n' +
+      'All PS4Mount games leave the library and PS4Mount stops picking these pkgs up. No pkg is deleted.'))) return;
   api('/api/restore', 'POST').then(function (j) { toast(j.message); $('setdlg').close(); })
-    .catch(function (err) { toast('Error: ' + err.message); });
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
 };
 $('s-forget').onclick = function () {
-  if (!confirm('Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.')) return;
+  if (!confirm(t('Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.'))) return;
   api('/api/restored/forget', 'POST').then(function (j) { toast(j.message); })
-    .catch(function (err) { toast('Error: ' + err.message); });
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
 };
 $('setform').onsubmit = function (e) {
   e.preventDefault();
@@ -513,17 +796,22 @@ $('setform').onsubmit = function (e) {
     '&interval=' + encodeURIComponent($('s-interval').value) + '&ignore=' + encodeURIComponent($('s-ignore').value) +
     '&paths=' + encodeURIComponent($('s-paths').value);
   var pin = $('s-pin').value.replace(/\s/g, ''), off = $('s-pinoff').checked;
-  if (pin && !/^[0-9]{4,8}$/.test(pin)) { toast('The PIN must be 4 to 8 digits'); return; }
+  if (pin && !/^[0-9]{4,8}$/.test(pin)) { toast(t('The PIN must be 4 to 8 digits')); return; }
   if (off) body += '&pin=';
   else if (pin) body += '&pin=' + pin;
+  var lang = $('s-lang').value;
   api('/api/config', 'POST', body).then(function (j) {
     if (off) pinPut(''); else if (pin) pinPut(pin);
     toast(j.message); $('setdlg').close();
-  }).catch(function (err) { toast('Error: ' + err.message); });
+    if (lang !== langPicked()) {
+      try { if (lang) localStorage.setItem('ps4mount-lang', lang); else localStorage.removeItem('ps4mount-lang'); } catch (e) {}
+      location.reload();
+    }
+  }).catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
 };
 $('pinbtn').onclick = function () { pinDeclined = false; load(); };
 $('stop').onclick = function () {
-  if (!confirm('Stop PS4Mount? The games stay unavailable until it is loaded again.')) return;
+  if (!confirm(t('Stop PS4Mount? The games stay unavailable until it is loaded again.'))) return;
   api('/api/stop', 'POST').then(function (j) { toast(j.message); });
 };
 load();

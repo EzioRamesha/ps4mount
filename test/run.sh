@@ -13,3 +13,4 @@ ${CC:-cc} -O1 -g -Wall -Wextra -Ibuild/test -Isrc -o build/test/unit test/unit.c
 ${CC:-cc} -O1 -g -Wall -Wextra -Ibuild/test -Isrc -DWEB_PORT=18770 -o build/test/web_unit test/web_unit.c src/web.c src/build.c src/crypto.c src/pkg.c
 build/test/unit
 build/test/web_unit
+if command -v node >/dev/null; then node test/i18n_check.js; else echo "i18n: node not installed, translation check skipped"; fi
