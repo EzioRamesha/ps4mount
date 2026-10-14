@@ -128,7 +128,8 @@ td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-b
   </div>
   <div class="row"><button type="button" id="s-cancel">Cancel</button><button class="primary" type="submit">Save</button></div>
 </form></dialog>
-<dialog id="logdlg"><h3>Log</h3><pre id="log"></pre><form method="dialog"><button>Close</button></form></dialog>
+<dialog id="logdlg"><h3>Log</h3><pre id="log"></pre>
+<div class="actions" style="padding:10px 0 0"><button class="primary" id="logsave">Download the whole log</button><form method="dialog"><button>Close</button></form></div></dialog>
 <dialog id="diagdlg"><h3>Diagnostics</h3>
 <p class="meta">Paste this into a GitHub issue when something goes wrong. It holds no password and no network address.</p>
 <textarea id="diag" readonly spellcheck="false" style="width:100%;min-height:50vh;background:#0b0d11;color:var(--fg);border:1px solid var(--line);border-radius:8px;font:12px ui-monospace,Consolas,monospace"></textarea>
@@ -434,6 +435,31 @@ $('rescan').onclick = function () {
 };
 function rescanLabel() { $('rescan').textContent = $('drive').value ? 'Scan ' + $('drive').value : 'Scan for games'; }
 $('logbtn').onclick = function () { api('/api/log').then(function (j) { $('log').textContent = j.log; $('logdlg').showModal(); }); };
+/* Fetched (to send the PIN) and saved through a link; a browser that cannot save files
+   shows the whole log in the dialog instead. */
+$('logsave').onclick = function () {
+  var h = {}, pin = pinGet();
+  if (pin) h['X-PIN'] = pin;
+  fetch('/api/log.txt', {cache: 'no-store', headers: h}).then(function (r) {
+    if (!r.ok) throw new Error(r.status === 401 ? 'PIN needed' : r.status);
+    return r.blob ? r.blob() : r.text();
+  }).then(function (data) {
+    var a = document.createElement('a');
+    if (typeof data === 'string' || !window.URL || !URL.createObjectURL || !('download' in a)) {
+      if (typeof data === 'string') $('log').textContent = data;
+      else data.text().then(function (t) { $('log').textContent = t; });
+      toast('This browser cannot save files: the whole log is shown below');
+      return;
+    }
+    var url = URL.createObjectURL(data);
+    a.href = url;
+    a.download = 'ps4mount-log.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+  }).catch(function (err) { toast('Could not download the log: ' + err.message); });
+};
 $('diagbtn').onclick = function () {
   api('/api/diag').then(function (j) { $('diag').value = j.text; $('diagdlg').showModal(); })
     .catch(function (e) { toast('Could not read the diagnostics: ' + e.message); });
