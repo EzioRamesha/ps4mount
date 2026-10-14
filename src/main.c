@@ -77,12 +77,13 @@ typedef struct {
     int nignore;
     int interval; /* seconds between scans */
     char pin[9];  /* panel PIN, "" for none */
+    int cross;    /* updates and add-ons may be on another drive than their game */
 } config_t;
 
 #define MIN_INTERVAL 10
 #define MAX_INTERVAL 300
 
-static config_t g_cfg = {1, 5, 1, {""}, 1, 0, {""}, 0, SCAN_SECONDS, ""};
+static config_t g_cfg = {1, 5, 1, {""}, 1, 0, {""}, 0, SCAN_SECONDS, "", 0};
 
 /* Set when the system log reports a corrupted system database: no game is added until
  * the user resumes in the panel. Kept in HALT_FILE across restarts. */
@@ -296,8 +297,10 @@ static int addon_off(const char *content_id);
 /* The add-ons the catalog grouped with the game. A second copy of an add-on, and add-ons
  * deleted on the console or turned off in the panel, are left out. */
 static void dlc_open(title_src_t *t, const catalog_t *c, const cat_game_t *g) {
-    for (int k = 0; k < g->ndlc && t->ndlc < MAX_DLC; k++) {
-        const cat_pkg_t *p = &c->pkgs[g->dlc[k]];
+    const cat_pkg_t *list[CAT_MAX_DLC];
+    int nlist = catalog_dlc_of(g_cat, c, g, list, CAT_MAX_DLC);
+    for (int k = 0; k < nlist && t->ndlc < MAX_DLC; k++) {
+        const cat_pkg_t *p = list[k];
         int dup = 0;
         for (int i = 0; i < t->ndlc; i++)
             dup |= !strcmp(t->dlc[i].pkg.content_id, p->content_id);
@@ -346,8 +349,9 @@ static int src_open(title_src_t *t, const char *root, const char *tid) {
     if (!g)
         return -1;
     snprintf(t->app_path, sizeof(t->app_path), "%s", cat->pkgs[g->app].path);
-    if (g->patch >= 0)
-        snprintf(t->patch_path, sizeof(t->patch_path), "%s", cat->pkgs[g->patch].path);
+    const cat_pkg_t *patch = catalog_patch(g_cat, cat, g);
+    if (patch)
+        snprintf(t->patch_path, sizeof(t->patch_path), "%s", patch->path);
     game_location(root, tid, t->app_path, t->dir, sizeof(t->dir));
     if (pkg_open(&t->app, t->app_path) || read_sfo(&t->app, &t->app_sfo)) {
         if (first_time(t->app_path))
@@ -1828,30 +1832,41 @@ static int catalog_update(catalog_t *cat, const char *root, int fresh) {
             printf("[scan] wait %s: incomplete, %llu of %llu bytes (still copying or cut off)\n", p->path,
                    (unsigned long long)p->size, (unsigned long long)p->full_size);
     }
-    if (fresh && cat->orphans)
-        notify("%s: %d add-on(s) have no game on this drive", root + 5, cat->orphans);
-    if (fresh && cat->dupes)
-        notify("%s: %d game pkg(s) are second copies of a game and are not used", root + 5, cat->dupes);
     return 1;
 }
 
-static void scan_root(const char *root, int fresh, int reconnected) {
-    const char *label = root + 5; /* "usb0" / "ext0" */
+/* First step of a scan of the drive at root: its catalog is brought up to date. 0 when
+ * the drive has no pkg. */
+static int scan_prepare(const char *root, int fresh, int reconnected) {
     catalog_t *cat = drive_catalog(root);
     if (!cat)
-        return;
+        return 0;
     if (reconnected)
         clear_removed_dlc();
     if (g_cfg.organize && has_candidates(root)) {
         int moved = adopt_root_pkgs(root);
         if (moved && !fresh)
-            notify("%s: %d new package(s) found", label, moved);
+            notify("%s: %d new package(s) found", root + 5, moved);
     }
     if (!catalog_update(cat, root, fresh)) {
         if (fresh)
             printf("[scan] %s: no pkg, skipped\n", root);
-        return;
+        return 0;
     }
+    return 1;
+}
+
+/* Second step, once every drive is prepared and linked: adds, keeps or skips its games. */
+static void scan_root(const char *root, int fresh, int reconnected) {
+    const char *label = root + 5; /* "usb0" / "ext0" */
+    catalog_t *cat = drive_catalog(root);
+    if (!cat)
+        return;
+    if (fresh && cat->orphans)
+        notify("%s: %d add-on(s) have no game on %s", label, cat->orphans,
+               g_cfg.cross ? "any connected drive" : "this drive");
+    if (fresh && cat->dupes)
+        notify("%s: %d game pkg(s) are second copies of a game and are not used", label, cat->dupes);
     static title_t titles[MAX_TITLES];
     int count = 0, pending = 0, paused = 0;
     for (int gi = 0; gi < cat->ngames && count < MAX_TITLES; gi++) {
@@ -2006,19 +2021,28 @@ static void release_stale(void) {
 }
 
 static void scan_all(void) {
-    static int seen[10], first = 1;
+    static int seen[NUM_DRIVES], first = 1;
+    int ready[NUM_DRIVES] = {0}, present[NUM_DRIVES] = {0};
     release_stale();
+    /* pkgs of a drive move when it is walked: drop what points to other drives first */
+    catalog_unlink(g_cat, NUM_DRIVES);
     char root[32];
     for (int i = 0; i < NUM_DRIVES; i++) {
         drive_root(i, root, sizeof(root));
-        int present = is_mountpoint(root);
-        if (present)
-            scan_root(root, !seen[i] || g_manual_scan, !seen[i] && !first);
+        present[i] = is_mountpoint(root);
+        if (present[i])
+            ready[i] = scan_prepare(root, !seen[i] || g_manual_scan, !seen[i] && !first);
         else if (g_cat_loaded[i]) {
             catalog_free(&g_cat[i]); /* checked again when the drive is back: it may have changed */
             g_cat_loaded[i] = 0;
         }
-        seen[i] = present;
+    }
+    catalog_link(g_cat, NUM_DRIVES, update_choice, g_cfg.cross);
+    for (int i = 0; i < NUM_DRIVES; i++) {
+        drive_root(i, root, sizeof(root));
+        if (ready[i])
+            scan_root(root, !seen[i] || g_manual_scan, !seen[i] && !first);
+        seen[i] = present[i];
     }
     first = 0;
     g_manual_scan = 0;
@@ -2273,11 +2297,13 @@ static const info_t *info_load(const char *root, const char *tid) {
 /* The add-ons of g for the panel: content ID, name and state, "on" (in place for the
  * console), "adding", "off" (turned off in the panel) or "deleted" (deleted on the console). */
 static void addons_json(buf_t *out, const catalog_t *cat, const cat_game_t *g) {
-    for (int k = 0; k < g->ndlc; k++) {
-        const cat_pkg_t *p = &cat->pkgs[g->dlc[k]];
+    const cat_pkg_t *list[CAT_MAX_DLC];
+    int n = catalog_dlc_of(g_cat, cat, g, list, CAT_MAX_DLC);
+    for (int k = 0; k < n; k++) {
+        const cat_pkg_t *p = list[k];
         int dup = 0;
         for (int j = 0; j < k; j++)
-            dup |= !strcmp(cat->pkgs[g->dlc[j]].content_id, p->content_id);
+            dup |= !strcmp(list[j]->content_id, p->content_id);
         if (dup)
             continue;
         char path[PATH_MAX];
@@ -2294,7 +2320,7 @@ static void addons_json(buf_t *out, const catalog_t *cat, const cat_game_t *g) {
         }
         buf_printf(out, "%s{\"content_id\":\"%s\",\"name\":", k ? "," : "", p->content_id);
         json_str(out, p->name);
-        buf_printf(out, ",\"state\":\"%s\"}", state);
+        buf_printf(out, ",\"state\":\"%s\",\"other_drive\":%s}", state, k >= g->ndlc ? "true" : "false");
     }
 }
 
@@ -2350,10 +2376,12 @@ void app_games_json(buf_t *out) {
             const char *choice = update_choice(tid);
             buf_printf(out, ",\"drive\":\"%s\",\"update_choice\":", root + 5);
             json_str(out, choice ? choice : "");
-            buf_printf(out, ",\"updates\":[");
-            for (int k = 0; k < g->nupdates; k++) {
+            const cat_pkg_t *ups[2 * CAT_MAX_UPDATES], *used = catalog_patch(g_cat, cat, g);
+            int nups = catalog_updates_of(g_cat, cat, g, ups, 2 * CAT_MAX_UPDATES);
+            buf_printf(out, ",\"update_other_drive\":%s,\"updates\":[", used && g->patch < 0 ? "true" : "false");
+            for (int k = 0; k < nups; k++) {
                 buf_printf(out, "%s", k ? "," : "");
-                json_str(out, cat->pkgs[g->updates[k]].app_ver);
+                json_str(out, ups[k]->app_ver);
             }
             buf_printf(out, "],\"addons\":[");
             addons_json(out, cat, g);
@@ -2417,12 +2445,15 @@ int app_addon(const char *content_id, int on, char *msg, size_t cap) {
     char tid[10] = "";
     for (int i = 0; i < NUM_DRIVES && !tid[0]; i++) {
         const catalog_t *c = &g_cat[i];
-        for (int gi = 0; gi < c->ngames && !tid[0]; gi++)
-            for (int k = 0; k < c->games[gi].ndlc; k++)
-                if (!strcmp(c->pkgs[c->games[gi].dlc[k]].content_id, content_id)) {
+        for (int gi = 0; gi < c->ngames && !tid[0]; gi++) {
+            const cat_pkg_t *list[CAT_MAX_DLC];
+            int n = catalog_dlc_of(g_cat, c, &c->games[gi], list, CAT_MAX_DLC);
+            for (int k = 0; k < n; k++)
+                if (!strcmp(list[k]->content_id, content_id)) {
                     snprintf(tid, sizeof(tid), "%s", c->games[gi].title_id);
                     break;
                 }
+        }
     }
     if (!tid[0]) {
         snprintf(msg, cap, "This add-on is not on any connected drive");
@@ -2942,8 +2973,8 @@ static int clean_scan_path(const char *in, char *out, size_t n, char *why, size_
 
 static void config_save(void) {
     buf_t b = {0};
-    buf_printf(&b, "batch=%d\nbatch_size=%d\ndlc=%d\norganize=%d\ninterval=%d\n", g_cfg.batch, g_cfg.batch_size,
-               g_cfg.dlc, g_cfg.organize, g_cfg.interval);
+    buf_printf(&b, "batch=%d\nbatch_size=%d\ndlc=%d\norganize=%d\ninterval=%d\ncross=%d\n", g_cfg.batch,
+               g_cfg.batch_size, g_cfg.dlc, g_cfg.organize, g_cfg.interval, g_cfg.cross);
     for (int i = 0; i < g_cfg.npaths; i++)
         buf_printf(&b, "path=%s\n", g_cfg.paths[i]);
     for (int i = 0; i < g_cfg.nignore; i++)
@@ -2981,6 +3012,8 @@ static void config_load(void) {
             c.organize = atoi(line + 9) != 0;
         else if (!strncmp(line, "interval=", 9))
             c.interval = atoi(line + 9);
+        else if (!strncmp(line, "cross=", 6))
+            c.cross = atoi(line + 6) != 0;
         else if (!strncmp(line, "pin=", 4) && pin_valid(line + 4))
             snprintf(c.pin, sizeof(c.pin), "%s", line + 4);
         else if (!strncmp(line, "ignore=", 7) && c.nignore < MAX_SCAN_PATHS &&
@@ -3003,9 +3036,10 @@ static void config_load(void) {
 }
 
 void app_config_json(buf_t *out) {
-    buf_printf(out, "{\"batch\":%s,\"batch_size\":%d,\"dlc\":%s,\"organize\":%s,\"interval\":%d,\"paths\":[",
+    buf_printf(out,
+               "{\"batch\":%s,\"batch_size\":%d,\"dlc\":%s,\"organize\":%s,\"interval\":%d,\"cross\":%s,\"paths\":[",
                g_cfg.batch ? "true" : "false", g_cfg.batch_size, g_cfg.dlc ? "true" : "false",
-               g_cfg.organize ? "true" : "false", g_cfg.interval);
+               g_cfg.organize ? "true" : "false", g_cfg.interval, g_cfg.cross ? "true" : "false");
     for (int i = 0; i < g_cfg.npaths; i++) {
         char shown[130];
         snprintf(shown, sizeof(shown), "/%s", g_cfg.paths[i]);
@@ -3037,7 +3071,7 @@ static void url_decode(const char *in, size_t len, char *out, size_t n) {
     out[o] = 0;
 }
 
-/* body: batch=0|1&batch_size=N&dlc=0|1&organize=0|1&interval=N&paths=<folders, one per line>
+/* body: batch=0|1&batch_size=N&dlc=0|1&organize=0|1&interval=N&cross=0|1&paths=<folders, one per line>
  * &ignore=<folders, one per line>&pin=<4 to 8 digits, empty to remove; absent keeps it> (form encoded). */
 int app_config_set(const char *body, char *msg, size_t cap) {
     config_t c = g_cfg;
@@ -3058,6 +3092,8 @@ int app_config_set(const char *body, char *msg, size_t cap) {
                 c.organize = atoi(value) != 0;
             else if (k == 8 && !strncmp(p, "interval", 8))
                 c.interval = atoi(value);
+            else if (k == 5 && !strncmp(p, "cross", 5))
+                c.cross = atoi(value) != 0;
             else if (k == 3 && !strncmp(p, "pin", 3)) {
                 if (value[0] && !pin_valid(value)) {
                     snprintf(msg, cap, "Not saved: the PIN must be 4 to 8 digits");
@@ -3299,8 +3335,9 @@ void app_diag(buf_t *out) {
     buf_printf(out, "%s\nFirmware %s, registration %s, klog %s\n", VERSION, g_fw_text, reg_mode_name(),
                g_klog >= 0 ? (g_live ? "live" : "connected") : "not connected");
     buf_printf(out, "Adding games: %s%s\n", g_halt[0] ? "PAUSED, " : "on", g_halt);
-    buf_printf(out, "Settings: organize=%d dlc=%d batch=%d/%d interval=%d folders=%d ignored=%d\n", g_cfg.organize,
-               g_cfg.dlc, g_cfg.batch, g_cfg.batch_size, g_cfg.interval, g_cfg.npaths, g_cfg.nignore);
+    buf_printf(out, "Settings: organize=%d dlc=%d batch=%d/%d interval=%d cross=%d folders=%d ignored=%d\n",
+               g_cfg.organize, g_cfg.dlc, g_cfg.batch, g_cfg.batch_size, g_cfg.interval, g_cfg.cross, g_cfg.npaths,
+               g_cfg.nignore);
     for (int i = 0; i < NUM_DRIVES; i++) {
         char root[32];
         drive_root(i, root, sizeof(root));

@@ -299,6 +299,7 @@ void catalog_group(catalog_t *c, cat_choose_fn choose) {
         snprintf(g->title_id, sizeof(g->title_id), "%s", c->pkgs[i].title_id);
         g->app = i;
         g->patch = -1;
+        g->xpatch = -1;
         c->pkgs[i].role = CAT_ROLE_APP;
     }
     for (int i = 0; i < c->npkgs; i++) {
@@ -341,6 +342,120 @@ const cat_game_t *catalog_game(const catalog_t *c, const char *title_id) {
         if (!strcmp(c->games[i].title_id, title_id))
             return &c->games[i];
     return NULL;
+}
+
+static const cat_pkg_t *ref_pkg(const catalog_t *all, cat_ref_t r) { return &all[r.drive].pkgs[r.pkg]; }
+
+const cat_pkg_t *catalog_patch(const catalog_t *all, const catalog_t *c, const cat_game_t *g) {
+    if (g->patch >= 0)
+        return &c->pkgs[g->patch];
+    return g->xpatch >= 0 ? ref_pkg(all, g->xupdates[g->xpatch]) : NULL;
+}
+
+int catalog_updates_of(const catalog_t *all, const catalog_t *c, const cat_game_t *g, const cat_pkg_t **out, int max) {
+    int n = 0;
+    for (int k = 0; k < g->nupdates && n < max; k++)
+        out[n++] = &c->pkgs[g->updates[k]];
+    for (int k = 0; k < g->nxupdates && n < max; k++)
+        out[n++] = ref_pkg(all, g->xupdates[k]);
+    return n;
+}
+
+int catalog_dlc_of(const catalog_t *all, const catalog_t *c, const cat_game_t *g, const cat_pkg_t **out, int max) {
+    int n = 0;
+    for (int k = 0; k < g->ndlc && n < max; k++)
+        out[n++] = &c->pkgs[g->dlc[k]];
+    for (int k = 0; k < g->nxdlc && n < max; k++)
+        out[n++] = ref_pkg(all, g->xdlc[k]);
+    return n;
+}
+
+void catalog_unlink(catalog_t *all, int n) {
+    for (int d = 0; d < n; d++)
+        for (int k = 0; k < all[d].ngames; k++) {
+            cat_game_t *g = &all[d].games[k];
+            g->nxupdates = g->nxdlc = 0;
+            g->xpatch = -1;
+        }
+}
+
+/* The update of g among the ones of every drive: the chosen version, else the highest. */
+static void pick_any_update(catalog_t *all, catalog_t *c, cat_game_t *g, cat_choose_fn choose) {
+    const char *want = choose ? choose(g->title_id) : NULL;
+    if (g->patch >= 0)
+        c->pkgs[g->patch].role = CAT_ROLE_SPARE;
+    g->patch = g->xpatch = -1;
+    if (want && !strcmp(want, CAT_NO_UPDATE))
+        return;
+    const cat_pkg_t *best = NULL;
+    int best_local = -1, best_x = -1;
+    for (int k = 0; k < g->nupdates + g->nxupdates; k++) {
+        int local = k < g->nupdates;
+        const cat_pkg_t *u = local ? &c->pkgs[g->updates[k]] : ref_pkg(all, g->xupdates[k - g->nupdates]);
+        int wanted = want && !strcmp(u->app_ver, want);
+        if (wanted || !best || strcmp(u->app_ver, best->app_ver) > 0) {
+            best = u;
+            best_local = local ? g->updates[k] : -1;
+            best_x = local ? -1 : k - g->nupdates;
+        }
+        if (wanted)
+            break;
+    }
+    g->patch = best_local;
+    g->xpatch = best_x;
+    if (best_local >= 0)
+        c->pkgs[best_local].role = CAT_ROLE_PATCH;
+    else if (best_x >= 0)
+        all[g->xupdates[best_x].drive].pkgs[g->xupdates[best_x].pkg].role = CAT_ROLE_PATCH;
+}
+
+void catalog_link(catalog_t *all, int n, cat_choose_fn choose, int cross) {
+    for (int d = 0; d < n; d++)
+        if (all[d].npkgs)
+            catalog_group(&all[d], choose);
+    if (!cross)
+        return;
+    for (int d = 0; d < n; d++)
+        for (int i = 0; i < all[d].npkgs; i++) {
+            cat_pkg_t *u = &all[d].pkgs[i];
+            if (u->role != CAT_ROLE_NOGAME)
+                continue;
+            for (int e = 0; e < n; e++) {
+                cat_game_t *g = e == d ? NULL : game_find(&all[e], u->title_id);
+                if (g && g->nupdates + g->nxupdates < CAT_MAX_UPDATES) {
+                    g->xupdates[g->nxupdates++] = (cat_ref_t){d, i};
+                    u->role = CAT_ROLE_SPARE;
+                }
+            }
+        }
+    for (int e = 0; e < n; e++)
+        for (int k = 0; k < all[e].ngames; k++)
+            if (all[e].games[k].nxupdates)
+                pick_any_update(all, &all[e], &all[e].games[k], choose);
+    for (int d = 0; d < n; d++)
+        for (int i = 0; i < all[d].npkgs; i++) {
+            cat_pkg_t *a = &all[d].pkgs[i];
+            if (a->role != CAT_ROLE_ORPHAN)
+                continue;
+            for (int e = 0; e < n; e++) {
+                if (e == d)
+                    continue;
+                for (int k = 0; k < all[e].ngames; k++) {
+                    cat_game_t *g = &all[e].games[k];
+                    const cat_pkg_t *patch = catalog_patch(all, &all[e], g);
+                    if (strcmp(g->title_id, a->title_id) && !serves(&all[e].pkgs[g->app], a) &&
+                        !(patch && serves(patch, a)))
+                        continue;
+                    if (g->ndlc + g->nxdlc >= CAT_MAX_DLC)
+                        continue;
+                    g->xdlc[g->nxdlc++] = (cat_ref_t){d, i};
+                    if (a->role == CAT_ROLE_ORPHAN) {
+                        a->role = CAT_ROLE_DLC;
+                        all[d].orphans--;
+                    }
+                }
+            }
+        }
 }
 
 /* One line per read pkg, fields separated by tabs, the path last:
