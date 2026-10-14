@@ -162,6 +162,37 @@ static void request(int listen_fd, const char *req, char *out, size_t n) {
     waitpid(pid, NULL, 0);
 }
 
+/* Like request(), but writes req1 then forks web_serve (so its first read only sees req1),
+ * then waits before writing req2 -- simulating a request line split across TCP segments. */
+static void request_split(int listen_fd, const char *req1, const char *req2, char *out, size_t n) {
+    out[0] = 0;
+    int c = connect_panel();
+    if (c < 0)
+        return;
+    if (write(c, req1, strlen(req1)) != (ssize_t)strlen(req1)) {
+        close(c);
+        return;
+    }
+    pid_t pid = fork();
+    if (pid == 0) {
+        web_serve(listen_fd);
+        _exit(0);
+    }
+    usleep(100000);
+    if (write(c, req2, strlen(req2)) != (ssize_t)strlen(req2)) {
+        close(c);
+        waitpid(pid, NULL, 0);
+        return;
+    }
+    size_t len = 0;
+    ssize_t r;
+    while (len + 1 < n && (r = read(c, out + len, n - 1 - len)) > 0)
+        len += (size_t)r;
+    out[len] = 0;
+    close(c);
+    waitpid(pid, NULL, 0);
+}
+
 static void test_diag(int listen_fd) {
     printf("diagnostics as JSON\n");
     char resp[4096];
@@ -340,6 +371,32 @@ static void test_fm_long_target(int listen_fd) {
     CHECK(strstr(resp, "delete[") == NULL); /* never dispatched to app_fm_delete */
 }
 
+/* Regression for the 414 guard itself misfiring: a long fm request legitimately spans more
+ * than one TCP segment, and web_serve's single-shot initial read() could return before the
+ * request line was fully buffered, making the 414 guard misread "not here yet" as "too long".
+ * Splits a valid long request across two writes 100ms apart and expects it to still dispatch
+ * with the full path -- never a false 414. */
+static void test_fm_split_request(int listen_fd) {
+    printf("file manager request split across reads\n");
+    char path[300] = "/mnt/usb0/";
+    size_t base = strlen(path);
+    for (size_t i = base; i < 240; i++)
+        path[i] = 'a';
+    path[240] = 0;
+
+    char req[768];
+    int rl = snprintf(req, sizeof(req), "POST /api/fm/delete?path=%s HTTP/1.1\r\n\r\n", path);
+    CHECK(rl > 255 && (size_t)rl < sizeof(req)); /* long enough to matter; split happens well before the end */
+
+    char req1[128] = {0}, resp[4096];
+    memcpy(req1, req, 100);
+    request_split(listen_fd, req1, req + 100, resp, sizeof(resp));
+    char want[300];
+    snprintf(want, sizeof(want), "delete[%s]", path);
+    CHECK(strstr(resp, want) != NULL); /* dispatched with the full path */
+    CHECK(strstr(resp, "414") == NULL); /* not a false 414 from reading only the first chunk */
+}
+
 static void test_pin_guard(int listen_fd) {
     printf("panel PIN\n");
     char resp[2048];
@@ -399,6 +456,7 @@ int main(void) {
         test_launch(listen_fd);
         test_fm_api(listen_fd);
         test_fm_long_target(listen_fd);
+        test_fm_split_request(listen_fd);
         test_rescan(listen_fd);
         test_speedtest(listen_fd);
         test_log_download(listen_fd);

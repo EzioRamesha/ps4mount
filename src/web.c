@@ -306,6 +306,19 @@ void web_serve(int listen_fd) {
         return;
     }
     req[n] = 0;
+    /* A long fm path (the move API can be several KB percent-encoded) may legitimately span
+     * more than one TCP segment, so the first read above can return before the request line
+     * is fully buffered. Parsing method/path against a half-arrived line would make the 414
+     * guard below misread a merely-not-yet-received target as too long. Keep reading (bounded
+     * by the same SO_RCVTIMEO as a stalled client) until a newline shows the line is complete,
+     * or the buffer is full (a genuinely over-long target, which the 414 guard then catches). */
+    while (!memchr(req, '\n', (size_t)n) && (size_t)n < sizeof(req) - 1) {
+        ssize_t m = read(fd, req + n, sizeof(req) - 1 - (size_t)n);
+        if (m <= 0)
+            break;
+        n += m;
+        req[n] = 0;
+    }
     /* the body of a POST may arrive after the headers */
     char *body = strstr(req, "\r\n\r\n");
     const char *cl = strstr(req, "Content-Length:");
