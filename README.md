@@ -36,7 +36,8 @@ The web panel, opened from the **Media** tab:
   any other layout.
 - Adds the games to the home screen with their icon, name and update version.
 - Applies updates: put the update `.pkg` anywhere on the same drive and it is picked up automatically.
-  With several updates of a game, the highest version is used.
+  With several updates of a game, the highest version is used, or the one you pick in the panel
+  (including no update).
 - Installs add-ons (DLC), with data or unlock-only. An add-on is matched to its game by title ID, or by
   the add-on IDs the game lists (so add-ons of another region of the same game work too).
 - Adds many games in groups, so a drive with dozens of games does not overload the console.
@@ -48,7 +49,9 @@ The web panel, opened from the **Media** tab:
 - Notifications while scanning (how many games were found on each drive) and for added and removed
   games.
 - A web panel, also available as **PS4Mount** in the **Media** tab, to see the games and add or
-  remove them from the library.
+  remove them from the library (one by one or several at once), keep a game out of the library, pick
+  its update, see the pkgs that are not used and why, filter by drive, and copy a diagnostics report.
+  It can be protected with a PIN and tells you when a newer PS4Mount is released.
 
 ## Requirements
 
@@ -94,7 +97,9 @@ game with its update and add-ons on the same drive. For example:
 Hidden folders, `System Volume Information` and `$RECYCLE.BIN` are not searched. When the same game is
 twice on a drive, the first copy (by path) is used and the scan notification says so. A game is
 reported as ready only after its add-ons are installed too. An add-on whose game is not on the same
-drive is not used; the scan notification says how many there are.
+drive is not used; the scan notification says how many there are. **Problems** in the panel lists
+these pkgs (duplicates, add-ons or updates without their game, and pkgs that cannot be read) with their
+path.
 
 To add more games later, copy their `.pkg` files to the drive.
 
@@ -125,19 +130,36 @@ the same network. The panel shows every game found on the connected drives, with
 | Installed on console | A normal installation of this game exists; PS4Mount leaves it alone |
 | On another drive | The same game is also on another connected drive, which is the one used |
 | Failed | Adding it failed 3 times; it is not tried again until you click **Try again** or **Scan for games** |
+| Never added | You chose **Never add**; every scan skips it until you click **Allow** |
 
-Games can be searched by name or title ID and sorted by name, state or location.
+Games can be searched by name or title ID, sorted by name, state or location, and filtered by drive.
+The summary shows the free and total space of each drive.
+
+A game with update pkgs has an **Update** list: **highest** (the default), **No update**, or a
+specific version. The game is added again with the chosen update; the choice is kept in
+`/data/ps4mount/updates.txt`.
+
+Tick the box on several games to **Add selected**, **Remove selected** or **Never add selected** at
+once. The games are handled one after the other.
+
+When a newer PS4Mount is released, a **New: vX.Y.Z** link appears next to the version. The browser you
+use for the panel asks GitHub at most every 12 hours; the console itself never goes online for this.
 
 Buttons:
 
 - **Remove from library**: removes the game from the home screen. The `.pkg` stays on the drive.
+- **Never add** / **Allow**: keeps a game out of the library on every scan (for example a game you
+  only keep as a backup), or lets it be added again. The list is kept in `/data/ps4mount/excluded.txt`.
 - **Move pkgs back**: removes the game from the library and moves its `.pkg` files back to where they
   came from (see [Moving pkgs back](#moving-pkgs-back)). Only shown for games moved into the ps4 folder.
 - **Try again**: tries a failed game again.
 - **Add to library**: adds a removed game back.
 - **Scan for games**: checks the drives now and shows how many games were found on each one.
 - **Settings**: see below.
+- **Problems**: lists the pkgs found but not used (see [Usage](#usage)).
 - **Log**: shows the PS4Mount log.
+- **Diagnostics**: a report to paste in a bug report (version, firmware, settings, drives, failed
+  games and the end of the log), with a **Copy** button. It holds no password or network address.
 - **Stop**: stops PS4Mount. Its games cannot start until it is loaded again.
 
 ### Settings
@@ -150,13 +172,19 @@ Buttons:
 | Folders whose pkgs are moved | `/` | With the setting above on: folders, relative to each drive, whose `.pkg` files are moved (one per line). `/` is the root. The `ps4` folder cannot be used: it holds the games already moved. |
 | Add new games in groups | On | Adds many new games in groups instead of one after the other, which keeps the console stable when a drive has a lot of games. |
 | Games per group | 5 | Size of each group (1 to 50). |
+| Folders to ignore | (none) | Folders, relative to each drive, whose `.pkg` files and subfolders are never used (one per line), for example `/Backup`. |
+| Seconds between scans | 10 | How often the drives are checked (10 to 300). Longer is lighter on drives with many folders; **Scan for games** always checks at once. |
 | Install add-ons (DLC) | On | Installs add-on `.pkg` files. When off, add-ons are not used. |
+| Panel PIN | (none) | 4 to 8 digits. With a PIN, each browser must enter it once before using the panel. Leave the field empty to keep the PIN, or tick **Remove the PIN**. |
 
 The settings also have **Move all games back** and **Pick up moved-back pkgs again** (see below).
 
 Settings are saved in `/data/ps4mount/config.txt`.
 
-The panel has no password. Anyone on your local network can open it.
+Without a PIN, anyone on your local network can use the panel. With a PIN, 5 wrong PINs in a row block
+the panel for a minute. The panel uses plain HTTP, so the PIN keeps out people on your network, not
+someone who can read its traffic. If you forget the PIN, delete the `pin=` line from
+`/data/ps4mount/config.txt` over FTP and load PS4Mount again.
 
 ### Safety
 
@@ -240,8 +268,9 @@ what is needed to find the cause:
    more than one partition.
 6. **What happened**: what you did, what you expected, and the exact message or error code shown on
    the console.
-7. **The log**: open the web panel, click **Log** and copy the text, or download
-   `/data/ps4mount/log.txt` over FTP. Include the part from the moment the problem happened.
+7. **The diagnostics report**: open the web panel, click **Diagnostics** and **Copy**. It covers
+   points 1, 3 and 5 and ends with the log. For a longer log, click **Log** or download
+   `/data/ps4mount/log.txt` over FTP, and include the part from the moment the problem happened.
 
 Do not attach `.pkg` files or links to them.
 
