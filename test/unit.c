@@ -950,11 +950,15 @@ static void test_safety(void) {
     retry_table_t t = {items, 2};
     time_t now = 1000;
     CHECK(!retry_waiting(&t, "CUSA00001", now));
+    CHECK(retry_remaining(&t, "CUSA00001", now) == 0); /* no entry: nothing pending */
     CHECK(retry_failed(&t, "CUSA00001", now) == 1);
+    CHECK(retry_remaining(&t, "CUSA00001", now) == RETRY_SECONDS);
+    CHECK(retry_remaining(&t, "CUSA00001", now + RETRY_SECONDS) == 0);
     CHECK(retry_waiting(&t, "CUSA00001", now + RETRY_SECONDS - 1));
     CHECK(!retry_waiting(&t, "CUSA00001", now + RETRY_SECONDS));
     CHECK(retry_failed(&t, "CUSA00001", now) == 2 && !retry_given_up(&t, "CUSA00001"));
     CHECK(retry_failed(&t, "CUSA00001", now) == RETRY_MAX_TRIES && retry_given_up(&t, "CUSA00001"));
+    CHECK(retry_remaining(&t, "CUSA00001", now) == 0); /* given up: no countdown */
     CHECK(retry_waiting(&t, "CUSA00001", now + 100000)); /* given up: not tried again by itself */
     CHECK(retry_failed(&t, "CUSA00002", now) == 1);
     CHECK(retry_failed(&t, "CUSA00003", now) == 0); /* table full */

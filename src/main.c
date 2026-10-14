@@ -2615,6 +2615,7 @@ void app_games_json(buf_t *out) {
             json_str(out, in->dir);
             buf_printf(out, ",\"dlc\":%d,\"update_issue\":", in->ndlc);
             json_str(out, in->update_issue);
+            buf_printf(out, ",\"retry_in\":%ld", retry_remaining(&g_retry, tid, time(NULL)));
             const cat_game_t *g = &cat->games[gi];
             const char *choice = update_choice(tid);
             buf_printf(out, ",\"drive\":\"%s\",\"update_choice\":", root + 5);
