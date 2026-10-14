@@ -36,6 +36,9 @@ void app_games_json(buf_t *out) {
 int app_add(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "%s", tid) < 0; }
 int app_remove(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "%s", tid) < 0; }
 void app_rescan(void) {}
+int app_exclude(const char *tid, int on, char *msg, size_t cap) {
+    return snprintf(msg, cap, "%s %s", tid, on ? "excluded" : "included") < 0;
+}
 int app_resume(char *msg, size_t cap) { return snprintf(msg, cap, "resumed") < 0; }
 void app_stop(void) {}
 int app_restore(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "%s", tid ? tid : "all") < 0; }

@@ -25,7 +25,7 @@ main{padding:20px;max-width:1400px;margin:0 auto}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
 .art{aspect-ratio:1/1;background:#0b0d11 center/cover no-repeat;position:relative}
 .badge{position:absolute;left:10px;top:10px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;background:#000a}
-.b-ready{background:var(--ok)}.b-running{background:var(--accent)}.b-removed{background:#555}.b-internal{background:var(--warn)}.b-pending{background:var(--warn)}.b-duplicate{background:#555}.b-failed{background:var(--bad)}
+.b-ready{background:var(--ok)}.b-running{background:var(--accent)}.b-removed{background:#555}.b-internal{background:var(--warn)}.b-pending{background:var(--warn)}.b-duplicate{background:#555}.b-failed{background:var(--bad)}.b-excluded{background:#555}
 .info{padding:12px 14px;display:flex;flex-direction:column;gap:4px;flex:1}
 .name{font-weight:600;font-size:16px}
 .meta{color:var(--muted);font-size:13px;word-break:break-all}
@@ -77,6 +77,14 @@ select{background:var(--panel);color:var(--fg);border:1px solid var(--line);bord
     <textarea id="s-paths" spellcheck="false"></textarea>
     <span class="hint">/ is the root of the drive. Games are moved into the ps4 folder, so it cannot be used here.</span>
   </label>
+  <label>Folders to ignore (one per line, relative to each drive)
+    <textarea id="s-ignore" spellcheck="false" placeholder="/Backup"></textarea>
+    <span class="hint">Pkgs in these folders and their subfolders are never used.</span>
+  </label>
+  <label>Seconds between scans
+    <input type="number" id="s-interval" min="10" max="300">
+    <span class="hint">10 to 300. Longer is lighter on drives with many folders; Scan for games always scans at once.</span>
+  </label>
   <label class="check"><input type="checkbox" id="s-batch"> Add new games in groups</label>
   <label>Games per group
     <input type="number" id="s-size" min="1" max="50">
@@ -94,8 +102,8 @@ select{background:var(--panel);color:var(--fg);border:1px solid var(--line);bord
 <div id="toast"></div>
 <script>
 var games = [], busy = {};
-var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', duplicate: 'On another drive', failed: 'Failed'};
-var order = {running: 0, ready: 1, pending: 2, failed: 3, removed: 4, duplicate: 5, internal: 6};
+var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', duplicate: 'On another drive', failed: 'Failed', excluded: 'Never added'};
+var order = {running: 0, ready: 1, pending: 2, failed: 3, removed: 4, excluded: 5, duplicate: 6, internal: 7};
 
 function $(id) { return document.getElementById(id); }
 
@@ -141,6 +149,9 @@ function render() {
     var act = '';
     if (g.state === 'removed') act = '<button class="primary" data-a="mount" data-t="' + g.title_id + '">Add to library</button>';
     else if (g.state === 'failed') act = '<button class="primary" data-a="mount" data-t="' + g.title_id + '">Try again</button>';
+    else if (g.state === 'excluded') act = '<button class="primary" data-a="include" data-t="' + g.title_id + '">Allow</button>';
+    if (g.state !== 'excluded' && g.state !== 'internal' && g.state !== 'running')
+      act += '<button data-a="exclude" data-t="' + g.title_id + '">Never add</button>';
     else if (g.state === 'ready') act = '<button class="danger" data-a="unmount" data-t="' + g.title_id + '">Remove from library</button>';
     else if (g.state === 'running') act = '<button disabled>Close the game to remove it</button>';
     if (g.state !== 'running' && g.state !== 'internal' && !/\.pkg$/i.test(g.source))
@@ -177,6 +188,7 @@ $('grid').addEventListener('click', function (e) {
   if (!b) return;
   var tid = b.getAttribute('data-t'), a = b.getAttribute('data-a');
   if (a === 'unmount' && !confirm('Remove ' + tid + ' from the library? The pkg stays on the USB drive.')) return;
+  if (a === 'exclude' && !confirm('Never add ' + tid + '? It leaves the library and is skipped by every scan until you click Allow. The pkgs stay on the drive.')) return;
   if (a === 'restore' && !confirm('Move the pkgs of ' + tid + ' back to where they came from, with their original names?\n\n' +
       'The game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.')) return;
   busy[tid] = 1; render();
@@ -196,6 +208,8 @@ $('logbtn').onclick = function () { api('/api/log').then(function (j) { $('log')
 $('settingsbtn').onclick = function () {
   api('/api/config').then(function (c) {
     $('s-paths').value = c.paths.join('\n');
+    $('s-ignore').value = (c.ignore || []).join('\n');
+    $('s-interval').value = c.interval || 10;
     $('s-batch').checked = c.batch;
     $('s-size').value = c.batch_size;
     $('s-dlc').checked = c.dlc;
@@ -223,6 +237,7 @@ $('setform').onsubmit = function (e) {
   e.preventDefault();
   var body = 'batch=' + ($('s-batch').checked ? 1 : 0) + '&batch_size=' + encodeURIComponent($('s-size').value) +
     '&dlc=' + ($('s-dlc').checked ? 1 : 0) + '&organize=' + ($('s-organize').checked ? 1 : 0) +
+    '&interval=' + encodeURIComponent($('s-interval').value) + '&ignore=' + encodeURIComponent($('s-ignore').value) +
     '&paths=' + encodeURIComponent($('s-paths').value);
   fetch('/api/config', {method: 'POST', cache: 'no-store', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: body})
     .then(function (r) { return r.json(); })

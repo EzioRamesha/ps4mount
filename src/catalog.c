@@ -66,11 +66,27 @@ static int found(catalog_t *c, int sorted, const char *path, const struct stat *
     return 0;
 }
 
-static void walk(catalog_t *c, int sorted, const char *root, const char *dir, int depth, cat_skip_fn skip) {
+typedef struct {
+    catalog_t *c;
+    int sorted; /* the first entries of c, known before this walk */
+    const char *root;
+    size_t rootlen;
+    cat_skip_fn skip;
+    const char *const *ignore;
+    int nignore;
+} walk_t;
+
+static int ignored(const walk_t *w, const char *rel) {
+    for (int i = 0; i < w->nignore; i++)
+        if (!strcasecmp(w->ignore[i], rel))
+            return 1;
+    return 0;
+}
+
+static void walk(const walk_t *w, const char *dir, int depth) {
     DIR *d = opendir(dir);
     if (!d)
         return;
-    size_t rootlen = strlen(root);
     struct dirent *e;
     while ((e = readdir(d))) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
@@ -86,21 +102,24 @@ static void walk(catalog_t *c, int sorted, const char *root, const char *dir, in
             is_dir = S_ISDIR(st.st_mode);
             is_reg = S_ISREG(st.st_mode);
         }
+        const char *rel = path + w->rootlen + 1;
         if (is_dir) {
-            if (depth < CAT_MAX_DEPTH && !skip_dir(e->d_name, path + rootlen + 1))
-                walk(c, sorted, root, path, depth + 1, skip);
-        } else if (is_reg && has_pkg_ext(e->d_name) && !stat(path, &st) && !(skip && skip(path, (uint64_t)st.st_size))) {
-            if (found(c, sorted, path, &st))
+            if (depth < CAT_MAX_DEPTH && !skip_dir(e->d_name, rel) && !ignored(w, rel))
+                walk(w, path, depth + 1);
+        } else if (is_reg && has_pkg_ext(e->d_name) && !stat(path, &st) &&
+                   !(w->skip && w->skip(path, (uint64_t)st.st_size))) {
+            if (found(w->c, w->sorted, path, &st))
                 break;
         }
     }
     closedir(d);
 }
 
-int catalog_walk(catalog_t *c, const char *root, cat_skip_fn skip) {
+int catalog_walk(catalog_t *c, const char *root, cat_skip_fn skip, const char *const *ignore, int nignore) {
     for (int i = 0; i < c->npkgs; i++)
         c->pkgs[i].seen = 0;
-    walk(c, c->npkgs, root, root, 0, skip);
+    walk_t w = {c, c->npkgs, root, strlen(root), skip, ignore, nignore};
+    walk(&w, root, 0);
     int n = 0, unread = 0;
     for (int i = 0; i < c->npkgs; i++) {
         if (!c->pkgs[i].seen)

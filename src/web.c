@@ -179,6 +179,13 @@ void web_serve(int listen_fd) {
             int rc = app_remove(tid, msg, sizeof(msg));
             json_msg(fd, !rc, msg);
         }
+    } else if (post && (!strncmp(path, "/api/exclude", 12) || !strncmp(path, "/api/include", 12))) {
+        if (title_param(path, tid))
+            json_msg(fd, 0, "invalid title_id");
+        else {
+            int rc = app_exclude(tid, path[5] == 'e', msg, sizeof(msg));
+            json_msg(fd, !rc, msg);
+        }
     } else if (post && !strcmp(path, "/api/resume")) {
         int rc = app_resume(msg, sizeof(msg));
         json_msg(fd, !rc, msg);
