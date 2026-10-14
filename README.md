@@ -206,6 +206,7 @@ Buttons:
 - **Test speed**: with a drive picked in the drive filter, measures its read speed (see above).
 - **Settings**: see below.
 - **Problems**: lists the pkgs found but not used (see [Usage](#usage)).
+- **Files**: browse the drives and manage pkgs directly (see [Files](#files)).
 - **Log**: shows the end of the PS4Mount log; **Download the whole log** saves it as
   `ps4mount-log.txt`.
 - **Diagnostics**: a report to paste in a bug report (version, firmware, settings, drives, failed
@@ -277,6 +278,18 @@ back** in the settings, undoes the move:
 The `.pkg` files moved back stay where they are on the next scans (they are listed in
 `/data/ps4mount/restored.txt`). To add them again, use **Pick up moved-back pkgs again** in the
 settings. A `.pkg` you move, rename or replace yourself is picked up as usual.
+
+### Files
+
+Click **Files** to browse the connected drives directly: folders, pkgs and other files, with
+breadcrumbs back to the drive root. Each pkg shows what it is (game, update or add-on, its title ID
+and version) and whether a library game is using it. From the list you can make a new folder, and
+rename, move or delete a file or folder.
+
+A pkg used by a game in the library cannot be renamed, moved or deleted: remove the game from the
+library first, or move its pkgs back. Moving is limited to the same drive for now; moving a file
+between drives is planned for a later version. Deleting a file or folder is permanent: there is no
+undo and no trash.
 
 ## Good to know
 
