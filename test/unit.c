@@ -508,6 +508,59 @@ static void test_catalog_walk(void) {
     CHECK(system(cmd) == 0);
 }
 
+static void test_catalog_cache(void) {
+    printf("catalog: saved and loaded again\n");
+    catalog_t c = {0};
+    c.cap = 8;
+    c.pkgs = calloc((size_t)c.cap, sizeof(*c.pkgs));
+    cat_pkg_t *g = cat_add(&c, "/u/A Game/game.pkg", "gd", "EP0001-CUSA00001_00-PERSONA000000000", "01.00");
+    snprintf(g->services[g->nservices++], 20, "EP0001-CUSA00009_00");
+    snprintf(g->services[g->nservices++], 20, "UP0001-CUSA00010_00");
+    g->size = 123456789012ULL;
+    g->mtime = 1700000000;
+    cat_add(&c, "/u/A Game/upd.pkg", "gp", "EP0001-CUSA00001_00-PERSONA000000000", "01.10")->size = 5;
+    cat_add(&c, "/u/bad.pkg", "", "EP0001-CUSA00003_00-BROKEN0000000000", "")->state = CAT_BAD;
+    cat_add(&c, "/u/new.pkg", "gd", "EP0001-CUSA00004_00-NEW0000000000000", "01.00")->state = CAT_UNREAD;
+    cat_add(&c, "/u/tab\there.pkg", "gd", "EP0001-CUSA00005_00-TAB0000000000000", "01.00");
+
+    char path[] = "/tmp/ps4mount-cat-XXXXXX";
+    int fd = mkstemp(path);
+    CHECK(fd >= 0);
+    close(fd);
+    CHECK(catalog_save(&c, path) == 0);
+
+    FILE *f = fopen(path, "a");
+    CHECK(f != NULL);
+    if (f) {
+        fputs("garbage line\n2\tx\n", f);
+        fclose(f);
+    }
+    catalog_t d = {0};
+    CHECK(catalog_load(&d, path) == 3); /* the unread one and the one with a tab are not kept */
+    CHECK(d.npkgs == 3);
+    for (int i = 1; i < d.npkgs; i++)
+        CHECK(strcmp(d.pkgs[i - 1].path, d.pkgs[i].path) < 0);
+    const cat_pkg_t *a = NULL, *bad = NULL;
+    for (int i = 0; i < d.npkgs; i++) {
+        if (!strcmp(d.pkgs[i].path, "/u/A Game/game.pkg"))
+            a = &d.pkgs[i];
+        if (!strcmp(d.pkgs[i].path, "/u/bad.pkg"))
+            bad = &d.pkgs[i];
+    }
+    CHECK(a && a->state == CAT_OK && a->size == 123456789012ULL && a->mtime == 1700000000);
+    CHECK(a && !strcmp(a->category, "gd") && !strcmp(a->title_id, "CUSA00001") && !strcmp(a->app_ver, "01.00"));
+    CHECK(a && !strcmp(a->content_id, "EP0001-CUSA00001_00-PERSONA000000000"));
+    CHECK(a && a->nservices == 2 && !strcmp(a->services[1], "UP0001-CUSA00010_00"));
+    CHECK(bad && bad->state == CAT_BAD);
+    catalog_group(&d);
+    CHECK(d.ngames == 1 && d.games[0].patch >= 0);
+
+    CHECK(catalog_load(&d, "/tmp/ps4mount-no-such-file") == -1);
+    catalog_free(&c);
+    catalog_free(&d);
+    unlink(path);
+}
+
 static void test_safety(void) {
     printf("safety: database corruption in the system log\n");
     char db[64];
@@ -555,6 +608,7 @@ int main(void) {
     test_origin();
     test_catalog_group();
     test_catalog_walk();
+    test_catalog_cache();
     test_safety();
     printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;

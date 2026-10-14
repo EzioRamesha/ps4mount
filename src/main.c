@@ -81,6 +81,7 @@ static config_t g_cfg = {1, 5, 1, {""}, 1, 0};
 #define NUM_DRIVES 10 /* /mnt/usb0-7, /mnt/ext0-1 */
 
 static catalog_t g_cat[NUM_DRIVES];
+static unsigned char g_cat_loaded[NUM_DRIVES]; /* saved catalog read since the drive appeared */
 
 static void drive_root(int i, char *out, size_t n) {
     if (i < 8)
@@ -1661,19 +1662,32 @@ static int walk_skip(const char *path, uint64_t size) {
 }
 
 /* Finds the pkgs on the drive (every folder) and groups them into games; only new or
- * changed pkgs are read. 0 when the drive has no pkg. */
+ * changed pkgs are read, also across restarts (STATE_DIR/catalog-<drive>.txt). 0 when the
+ * drive has no pkg. */
 static int catalog_update(catalog_t *cat, const char *root, int fresh) {
+    char file[64];
+    snprintf(file, sizeof(file), STATE_DIR "/catalog-%s.txt", root + 5);
+    int idx = (int)(cat - g_cat);
+    if (!g_cat_loaded[idx]) {
+        g_cat_loaded[idx] = 1;
+        int n = catalog_load(cat, file);
+        if (n > 0)
+            printf("[scan] %s: %d pkg(s) known from the last run\n", root, n);
+    }
+    int before = cat->npkgs;
     g_walk_root = root;
     g_walk_restored = exists(RESTORED_LIST);
     int unread = catalog_walk(cat, root, walk_skip);
-    if (!cat->npkgs)
-        return 0;
-    if (fresh)
+    if (fresh && cat->npkgs)
         notify("Scanning %s for PS4 games...", root + 5);
     if (unread) {
         int read = catalog_read(cat);
         printf("[scan] %s: %d pkg(s), %d new or changed read\n", root, cat->npkgs, read);
     }
+    if ((unread || cat->npkgs != before) && catalog_save(cat, file))
+        printf("[scan] %s: could not save %s: %s\n", root, file, strerror(errno));
+    if (!cat->npkgs)
+        return 0;
     catalog_group(cat);
     for (int i = 0; i < cat->npkgs; i++)
         if (cat->pkgs[i].state == CAT_BAD && first_time(cat->pkgs[i].path))
@@ -1866,8 +1880,10 @@ static void scan_all(void) {
         int present = is_mountpoint(root);
         if (present)
             scan_root(root, !seen[i] || g_manual_scan, !seen[i] && !first);
-        else if (g_cat[i].npkgs)
-            catalog_free(&g_cat[i]); /* read again when the drive is back: it may have changed */
+        else if (g_cat_loaded[i]) {
+            catalog_free(&g_cat[i]); /* checked again when the drive is back: it may have changed */
+            g_cat_loaded[i] = 0;
+        }
         seen[i] = present;
     }
     first = 0;
