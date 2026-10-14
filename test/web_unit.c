@@ -38,6 +38,8 @@ int app_remove(const char *tid, char *msg, size_t cap) { return snprintf(msg, ca
 void app_rescan(void) {}
 void app_diag(buf_t *out) { buf_printf(out, "diag \"line\"\n"); }
 void app_problems_json(buf_t *out) { buf_printf(out, "{\"problems\":[]}"); }
+static const char *test_pin = "";
+const char *app_pin(void) { return test_pin; }
 int app_set_update(const char *tid, const char *ver, char *msg, size_t cap) {
     return snprintf(msg, cap, "%s=[%s]", tid, ver) < 0;
 }
@@ -155,6 +157,55 @@ static void test_update_choice(int listen_fd) {
     CHECK(strstr(resp, "{\"problems\":[]}") != NULL);
 }
 
+static void test_pin_guard(int listen_fd) {
+    printf("panel PIN\n");
+    char resp[2048];
+    test_pin = "4821";
+    request(listen_fd, "GET /api/problems HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "401") != NULL && strstr(resp, "\"pin\"") != NULL);
+    request(listen_fd, "GET / HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "200 OK") != NULL);
+    request(listen_fd, "GET /api/problems HTTP/1.1\r\nHost: x\r\nx-pin:  4821 \r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "{\"problems\":[]}") != NULL);
+    request(listen_fd, "GET /api/problems HTTP/1.1\r\nX-PIN: 48210\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "401") != NULL);
+    request(listen_fd, "GET /api/problems HTTP/1.1\r\nX-PIN: 482\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "401") != NULL);
+    /* a PIN in the query or body is not a header */
+    request(listen_fd, "POST /api/update?title_id=CUSA00001&version=&x-pin:4821 HTTP/1.1\r\n\r\nX-PIN: 4821", resp,
+            sizeof(resp));
+    CHECK(strstr(resp, "401") != NULL);
+    /* the lock lives in the server process: serve the wrong PINs and the right one in one child */
+    int fds[PIN_MAX_FAILS + 1];
+    for (int i = 0; i <= PIN_MAX_FAILS; i++) {
+        const char *r = i < PIN_MAX_FAILS ? "GET /api/problems HTTP/1.1\r\nX-PIN: 0000\r\n\r\n"
+                                          : "GET /api/problems HTTP/1.1\r\nX-PIN: 4821\r\n\r\n";
+        fds[i] = connect_panel();
+        CHECK(fds[i] >= 0 && write(fds[i], r, strlen(r)) == (ssize_t)strlen(r));
+    }
+    pid_t pid = fork();
+    if (pid == 0) {
+        for (int i = 0; i <= PIN_MAX_FAILS; i++)
+            web_serve(listen_fd);
+        _exit(0);
+    }
+    for (int i = 0; i <= PIN_MAX_FAILS; i++) {
+        size_t len = 0;
+        ssize_t r;
+        while (len + 1 < sizeof(resp) && (r = read(fds[i], resp + len, sizeof(resp) - 1 - len)) > 0)
+            len += (size_t)r;
+        resp[len] = 0;
+        close(fds[i]);
+        if (i == PIN_MAX_FAILS - 1)
+            CHECK(strstr(resp, "401") != NULL);
+    }
+    waitpid(pid, NULL, 0);
+    CHECK(strstr(resp, "429") != NULL && strstr(resp, "pin-locked") != NULL);
+    test_pin = "";
+    request(listen_fd, "GET /api/problems HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "{\"problems\":[]}") != NULL);
+}
+
 int main(void) {
     signal(SIGPIPE, SIG_IGN);
     int listen_fd = web_listen();
@@ -162,6 +213,7 @@ int main(void) {
     if (listen_fd >= 0) {
         test_diag(listen_fd);
         test_update_choice(listen_fd);
+        test_pin_guard(listen_fd);
         test_stalled_reader(listen_fd);
         test_silent_client(listen_fd);
         close(listen_fd);

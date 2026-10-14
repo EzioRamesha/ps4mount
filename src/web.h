@@ -34,6 +34,12 @@ void app_problems_json(buf_t *out);
 int app_set_update(const char *tid, const char *ver, char *msg, size_t cap);
 /* Plain text report for bug reports: version, firmware, settings, drives, failures, log tail. */
 void app_diag(buf_t *out);
+/* Panel PIN (4 to 8 digits), "" when the panel is open to everyone on the network. */
+const char *app_pin(void);
+
+/* Wrong PINs in a row before every /api/ request is refused for PIN_LOCK_SECONDS. */
+#define PIN_MAX_FAILS 5
+#define PIN_LOCK_SECONDS 60
 
 int web_listen(void);
 /* Serves one connection on the listening socket. */

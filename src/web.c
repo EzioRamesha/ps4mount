@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <time.h>
@@ -127,6 +128,58 @@ static void reply_text_json(int fd, const char *key, const buf_t *b) {
     buf_free(&j);
 }
 
+/* Value of header name (lower case, with the colon) in the head of the request, trimmed. */
+static void header_value(const char *req, const char *end, const char *name, char *out, size_t n) {
+    size_t nl = strlen(name);
+    out[0] = 0;
+    for (const char *p = strstr(req, "\r\n"); p && p + 2 < end; p = strstr(p + 2, "\r\n")) {
+        if (strncasecmp(p + 2, name, nl))
+            continue;
+        const char *v = p + 2 + nl;
+        while (*v == ' ')
+            v++;
+        size_t l = strcspn(v, "\r\n");
+        while (l && v[l - 1] == ' ')
+            l--;
+        if (l < n)
+            snprintf(out, n, "%.*s", (int)l, v);
+        return;
+    }
+}
+
+static int pin_fails;
+static time_t pin_locked_until;
+
+/* 0 when the request may use /api/: no PIN is set, or X-PIN matches. Else replies 401/429. */
+static int pin_guard(int fd, const char *req, const char *end) {
+    static const char locked[] = "{\"ok\":false,\"error\":\"pin-locked\"}", wrong[] = "{\"ok\":false,\"error\":\"pin\"}";
+    const char *pin = app_pin();
+    if (!pin[0])
+        return 0;
+    time_t now = time(NULL);
+    if (now < pin_locked_until) {
+        reply(fd, "429 Too Many Requests", "application/json; charset=utf-8", locked, sizeof(locked) - 1);
+        return -1;
+    }
+    char got[16];
+    header_value(req, end, "x-pin:", got, sizeof(got));
+    size_t pl = strlen(pin), gl = strlen(got);
+    unsigned diff = (unsigned)(pl ^ gl);
+    for (size_t i = 0; i < pl; i++)
+        diff |= (unsigned char)pin[i] ^ (unsigned char)(i < gl ? got[i] : 0);
+    if (!diff) {
+        pin_fails = 0;
+        return 0;
+    }
+    if (got[0] && ++pin_fails >= PIN_MAX_FAILS) {
+        pin_fails = 0;
+        pin_locked_until = now + PIN_LOCK_SECONDS;
+        printf("[web] %d wrong PINs: panel locked for %d s\n", PIN_MAX_FAILS, PIN_LOCK_SECONDS);
+    }
+    reply(fd, "401 Unauthorized", "application/json; charset=utf-8", wrong, sizeof(wrong) - 1);
+    return -1;
+}
+
 static void send_log(int fd) {
     buf_t b = {0};
     int f = open(LOG_PATH, O_RDONLY);
@@ -171,11 +224,16 @@ void web_serve(int listen_fd) {
         req[n] = 0;
         body = strstr(req, "\r\n\r\n");
     }
+    const char *head_end = body ? body : req + n;
     body = body ? body + 4 : req + n;
     char method[8] = "", path[256] = "", tid[10], msg[256];
     sscanf(req, "%7s %255s", method, path);
     int post = !strcmp(method, "POST");
 
+    if (!strncmp(path, "/api/", 5) && pin_guard(fd, req, head_end)) {
+        close(fd);
+        return;
+    }
     if (!strcmp(path, "/") || !strcmp(path, "/index.html")) {
         reply(fd, "200 OK", "text/html; charset=utf-8", index_html, sizeof(index_html));
     } else if (!strcmp(path, "/api/games")) {
