@@ -295,6 +295,10 @@ static void test_fm_api(int listen_fd) {
     CHECK(strstr(resp, "move[/mnt/usb0/a.pkg -> /mnt/usb0/games]") != NULL);
     request(listen_fd, "GET /api/fm/delete?path=/mnt/usb0/a.pkg HTTP/1.1\r\n\r\n", resp, sizeof(resp));
     CHECK(strstr(resp, "404") != NULL); /* mutations are POST only */
+    request(listen_fd, "POST /api/fm/mkdir?path=/mnt/usb0/name=x&name=real HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "mkdir[/mnt/usb0/name=x + real]") != NULL); /* name param not spoofed by path value */
+    request(listen_fd, "POST /api/fm/move?src=/mnt/usb0/dst=a&dst=/mnt/usb0/games HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "move[/mnt/usb0/dst=a -> /mnt/usb0/games]") != NULL); /* dst param not spoofed by src value */
 }
 
 static void test_pin_guard(int listen_fd) {

@@ -102,26 +102,36 @@ static int title_param(const char *path, char *tid) {
 static int fm_param(const char *path, const char *key, char *out, size_t cap) {
     char pat[16];
     snprintf(pat, sizeof(pat), "%s=", key);
-    const char *p = strstr(path, pat);
-    if (!p)
-        return -1;
-    p += strlen(pat);
-    size_t o = 0;
-    while (*p && *p != '&' && *p != ' ') {
-        char c = *p++;
-        if (c == '%' && isxdigit((unsigned char)p[0]) && isxdigit((unsigned char)p[1])) {
-            char h[3] = {p[0], p[1], 0};
-            c = (char)strtol(h, NULL, 16);
-            p += 2;
-        } else if (c == '+') {
-            c = ' ';
+    size_t plen = strlen(pat);
+
+    const char *p = path;
+    while ((p = strstr(p, pat)) != NULL) {
+        /* Check if this match is properly anchored (after ? or &). */
+        if (p > path && p[-1] != '?' && p[-1] != '&') {
+            p++; /* Not anchored, try next occurrence. */
+            continue;
         }
-        if (o + 1 >= cap)
-            return -1;
-        out[o++] = c;
+
+        /* Found a properly anchored match. */
+        p += plen;
+        size_t o = 0;
+        while (*p && *p != '&' && *p != ' ') {
+            char c = *p++;
+            if (c == '%' && isxdigit((unsigned char)p[0]) && isxdigit((unsigned char)p[1])) {
+                char h[3] = {p[0], p[1], 0};
+                c = (char)strtol(h, NULL, 16);
+                p += 2;
+            } else if (c == '+') {
+                c = ' ';
+            }
+            if (o + 1 >= cap)
+                return -1;
+            out[o++] = c;
+        }
+        out[o] = 0;
+        return o ? 0 : -1;
     }
-    out[o] = 0;
-    return o ? 0 : -1;
+    return -1;
 }
 
 /* content_id= of the query, an add-on ID like UP0001-CUSA00001_00-ADDON00000000001. 0 when valid. */
