@@ -53,6 +53,23 @@ jobs:
       - name: Unit tests with sanitizers
         run: CC="clang-18 -fsanitize=address,undefined -fno-sanitize-recover=all" bash test/run.sh
 
+      - name: Fuzz the pkg and sfo parsers
+        run: |
+          mkdir -p build/corpus
+          cc -O1 -g -Wall -Wextra -o build/fuzz_seed test/fuzz_seed.c
+          build/fuzz_seed build/corpus
+          clang-18 -O1 -g -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all \
+            -Isrc -o build/fuzz test/fuzz.c src/pkg.c src/crypto.c
+          build/fuzz -max_total_time=45 -max_len=65536 build/corpus
+
+      - name: Keep what made the fuzzer crash
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash
+          path: crash-*
+          if-no-files-found: ignore
+
       - name: Build
         run: PS5_PAYLOAD_SDK="$HOME/ps5-payload-sdk" bash build.sh
 
