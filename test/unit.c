@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "build.h"
+#include "catalog.h"
 #include "crypto.h"
 #include "logfile.h"
 #include "origin.h"
@@ -393,6 +394,119 @@ static void test_origin(void) {
     CHECK(system(cmd) == 0);
 }
 
+static cat_pkg_t *cat_add(catalog_t *c, const char *path, const char *cat, const char *cid, const char *ver) {
+    cat_pkg_t *p = &c->pkgs[c->npkgs++];
+    memset(p, 0, sizeof(*p));
+    snprintf(p->path, sizeof(p->path), "%s", path);
+    p->state = CAT_OK;
+    snprintf(p->category, sizeof(p->category), "%s", cat);
+    snprintf(p->content_id, sizeof(p->content_id), "%s", cid);
+    snprintf(p->title_id, sizeof(p->title_id), "%.9s", cid + 7);
+    snprintf(p->app_ver, sizeof(p->app_ver), "%s", ver);
+    return p;
+}
+
+static void test_catalog_group(void) {
+    printf("catalog: games, updates and add-ons in any folder\n");
+    catalog_t c = {0};
+    c.cap = 16;
+    c.pkgs = calloc((size_t)c.cap, sizeof(*c.pkgs));
+    /* sorted by path, as the walk leaves them */
+    cat_add(&c, "/u/Persona/DLC/costume.pkg", "ac", "EP0001-CUSA00001_00-COSTUME000000000", "01.00");
+    cat_add(&c, "/u/Persona/DLC/eu-pack.pkg", "ac", "EP0001-CUSA00009_00-EUPACK0000000000", "01.00");
+    cat_add(&c, "/u/Persona/Update/v105.pkg", "gp", "EP0001-CUSA00001_00-PERSONA000000000", "01.05");
+    cat_add(&c, "/u/Persona/Update/v110.pkg", "gp", "EP0001-CUSA00001_00-PERSONA000000000", "01.10");
+    cat_add(&c, "/u/Persona/Update/v108.pkg", "gp", "EP0001-CUSA00001_00-PERSONA000000000", "01.08");
+    cat_pkg_t *g = cat_add(&c, "/u/Persona/game.pkg", "gd", "EP0001-CUSA00001_00-PERSONA000000000", "01.00");
+    snprintf(g->services[g->nservices++], 20, "EP0001-CUSA00009_00"); /* add-ons of another region */
+    cat_add(&c, "/u/Racing/base.pkg", "gd", "EP0001-CUSA00002_00-RACING0000000000", "01.00");
+    cat_add(&c, "/u/backup/Persona.pkg", "gd", "EP0001-CUSA00001_00-PERSONA000000000", "01.00");
+    cat_add(&c, "/u/loose/other-dlc.pkg", "ac", "EP0001-CUSA00777_00-NOGAME0000000000", "01.00");
+    cat_add(&c, "/u/loose/broken.pkg", "gd", "EP0001-CUSA00003_00-BROKEN0000000000", "01.00")->state = CAT_BAD;
+
+    catalog_group(&c);
+    CHECK(c.ngames == 2);
+    const cat_game_t *p = catalog_game(&c, "CUSA00001"), *r = catalog_game(&c, "CUSA00002");
+    CHECK(p && !strcmp(c.pkgs[p->app].path, "/u/Persona/game.pkg")); /* the backup copy comes later */
+    CHECK(p && p->patch >= 0 && !strcmp(c.pkgs[p->patch].app_ver, "01.10"));
+    CHECK(p && p->ndlc == 2);
+    CHECK(r && r->patch == -1 && r->ndlc == 0);
+    CHECK(!catalog_game(&c, "CUSA00003"));
+    CHECK(c.dupes == 1 && c.orphans == 1);
+
+    catalog_group(&c); /* grouping again gives the same result */
+    CHECK(c.ngames == 2 && c.dupes == 1 && c.orphans == 1);
+    catalog_free(&c);
+}
+
+static void put_file(const char *root, const char *rel, const char *data) {
+    char p[PATH_MAX], d[PATH_MAX];
+    snprintf(p, sizeof(p), "%s/%s", root, rel);
+    snprintf(d, sizeof(d), "%s", p);
+    for (char *s = d + strlen(root) + 1; *s; s++)
+        if (*s == '/') {
+            *s = 0;
+            mkdir(d, 0777);
+            *s = '/';
+        }
+    FILE *f = fopen(p, "wb");
+    if (f) {
+        fputs(data, f);
+        fclose(f);
+    }
+}
+
+static int skip_named(const char *path, uint64_t size) {
+    (void)size;
+    return strstr(path, "skip-me") != NULL;
+}
+
+static int cat_has(const catalog_t *c, const char *root, const char *rel) {
+    char p[PATH_MAX];
+    snprintf(p, sizeof(p), "%s/%s", root, rel);
+    for (int i = 0; i < c->npkgs; i++)
+        if (!strcmp(c->pkgs[i].path, p))
+            return 1;
+    return 0;
+}
+
+static void test_catalog_walk(void) {
+    printf("catalog: walk of the drive\n");
+    char root[] = "/tmp/ps4mount-drive-XXXXXX";
+    CHECK(mkdtemp(root) != NULL);
+    put_file(root, "root.pkg", "x");
+    put_file(root, "Games/RPG/Persona/Update/u.PKG", "x");
+    put_file(root, "ps4/CUSA00001/app.pkg", "x");
+    put_file(root, "ps4/CUSA00001/replaced/patch-1.pkg", "x");
+    put_file(root, ".Trashes/old.pkg", "x");
+    put_file(root, "System Volume Information/s.pkg", "x");
+    put_file(root, "Games/skip-me.pkg", "x");
+    put_file(root, "Games/readme.txt", "x");
+
+    catalog_t c = {0};
+    CHECK(catalog_walk(&c, root, skip_named) == 3);
+    CHECK(c.npkgs == 3 && cat_has(&c, root, "root.pkg") && cat_has(&c, root, "Games/RPG/Persona/Update/u.PKG") &&
+          cat_has(&c, root, "ps4/CUSA00001/app.pkg"));
+    for (int i = 1; i < c.npkgs; i++)
+        CHECK(strcmp(c.pkgs[i - 1].path, c.pkgs[i].path) < 0);
+
+    CHECK(catalog_read(&c) == 3); /* not real pkgs */
+    CHECK(c.pkgs[0].state == CAT_BAD);
+    CHECK(catalog_walk(&c, root, skip_named) == 0); /* nothing new: nothing to read again */
+
+    char p[PATH_MAX];
+    snprintf(p, sizeof(p), "%s/root.pkg", root);
+    unlink(p);
+    put_file(root, "Games/RPG/Persona/Update/u.PKG", "changed");
+    CHECK(catalog_walk(&c, root, skip_named) == 1);
+    CHECK(c.npkgs == 2 && !cat_has(&c, root, "root.pkg"));
+    catalog_free(&c);
+
+    char cmd[PATH_MAX + 16];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
+    CHECK(system(cmd) == 0);
+}
+
 int main(void) {
     test_crypto();
     test_app_json();
@@ -403,6 +517,8 @@ int main(void) {
     test_pkg_entry();
     test_log_trim();
     test_origin();
+    test_catalog_group();
+    test_catalog_walk();
     printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;
 }
