@@ -4,6 +4,7 @@
 /* Minimal HTTP server for the PS4Mount panel (one request per connection). */
 #include "web.h"
 
+#include <ctype.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <stdio.h>
@@ -15,6 +16,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "fm.h"
 #include "page_data.h"
 
 #define LOG_PATH "/data/ps4mount/log.txt"
@@ -94,6 +96,32 @@ static int title_param(const char *path, char *tid) {
     }
     tid[9] = 0;
     return strncmp(tid, "CUSA", 4) ? -1 : 0;
+}
+
+/* Copies the percent-decoded value of key= from the query into out. -1 when missing/too long. */
+static int fm_param(const char *path, const char *key, char *out, size_t cap) {
+    char pat[16];
+    snprintf(pat, sizeof(pat), "%s=", key);
+    const char *p = strstr(path, pat);
+    if (!p)
+        return -1;
+    p += strlen(pat);
+    size_t o = 0;
+    while (*p && *p != '&' && *p != ' ') {
+        char c = *p++;
+        if (c == '%' && isxdigit((unsigned char)p[0]) && isxdigit((unsigned char)p[1])) {
+            char h[3] = {p[0], p[1], 0};
+            c = (char)strtol(h, NULL, 16);
+            p += 2;
+        } else if (c == '+') {
+            c = ' ';
+        }
+        if (o + 1 >= cap)
+            return -1;
+        out[o++] = c;
+    }
+    out[o] = 0;
+    return o ? 0 : -1;
 }
 
 /* content_id= of the query, an add-on ID like UP0001-CUSA00001_00-ADDON00000000001. 0 when valid. */
@@ -327,6 +355,55 @@ void web_serve(int listen_fd) {
             json_msg(fd, 0, "invalid title_id");
         else {
             int rc = app_launch(tid, msg, sizeof(msg));
+            json_msg(fd, !rc, msg);
+        }
+    } else if (!post && !strncmp(path, "/api/fm/list", 12)) {
+        char p[1024];
+        if (fm_param(path, "path", p, sizeof(p)) || !fm_path_ok(p))
+            json_msg(fd, 0, "invalid path");
+        else {
+            buf_t b = {0};
+            if (!app_fm_list(p, &b, msg, sizeof(msg)))
+                reply(fd, "200 OK", "application/json; charset=utf-8", b.data, b.len);
+            else
+                json_msg(fd, 0, msg);
+            buf_free(&b);
+        }
+    } else if (post && !strncmp(path, "/api/fm/mkdir", 13)) {
+        char p[1024], name[256];
+        if (fm_param(path, "path", p, sizeof(p)) || !fm_path_ok(p))
+            json_msg(fd, 0, "invalid path");
+        else if (fm_param(path, "name", name, sizeof(name)) || !fm_name_ok(name))
+            json_msg(fd, 0, "invalid name");
+        else {
+            int rc = app_fm_mkdir(p, name, msg, sizeof(msg));
+            json_msg(fd, !rc, msg);
+        }
+    } else if (post && !strncmp(path, "/api/fm/rename", 14)) {
+        char p[1024], name[256];
+        if (fm_param(path, "path", p, sizeof(p)) || !fm_path_ok(p) || fm_is_drive_root(p))
+            json_msg(fd, 0, "invalid path");
+        else if (fm_param(path, "name", name, sizeof(name)) || !fm_name_ok(name))
+            json_msg(fd, 0, "invalid name");
+        else {
+            int rc = app_fm_rename(p, name, msg, sizeof(msg));
+            json_msg(fd, !rc, msg);
+        }
+    } else if (post && !strncmp(path, "/api/fm/delete", 14)) {
+        char p[1024];
+        if (fm_param(path, "path", p, sizeof(p)) || !fm_path_ok(p) || fm_is_drive_root(p))
+            json_msg(fd, 0, "invalid path");
+        else {
+            int rc = app_fm_delete(p, msg, sizeof(msg));
+            json_msg(fd, !rc, msg);
+        }
+    } else if (post && !strncmp(path, "/api/fm/move", 12)) {
+        char s[1024], d[1024];
+        if (fm_param(path, "src", s, sizeof(s)) || !fm_path_ok(s) || fm_is_drive_root(s) ||
+            fm_param(path, "dst", d, sizeof(d)) || !fm_path_ok(d))
+            json_msg(fd, 0, "invalid path");
+        else {
+            int rc = app_fm_move(s, d, msg, sizeof(msg));
             json_msg(fd, !rc, msg);
         }
     } else if (post && (!strncmp(path, "/api/exclude", 12) || !strncmp(path, "/api/include", 12))) {

@@ -66,6 +66,23 @@ int app_restored_forget(char *msg, size_t cap) { return snprintf(msg, cap, "forg
 void app_config_json(buf_t *out) { buf_printf(out, "{}"); }
 int app_config_set(const char *body, char *msg, size_t cap) { return snprintf(msg, cap, "%s", body) < 0; }
 int app_icon(const char *tid, buf_t *out) { return tid && out ? -1 : -1; }
+int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap) {
+    (void)msg; (void)cap;
+    buf_printf(out, "{\"path\":\"%s\",\"entries\":[]}", path);
+    return 0;
+}
+int app_fm_mkdir(const char *dir, const char *name, char *msg, size_t cap) {
+    return snprintf(msg, cap, "mkdir[%s + %s]", dir, name) < 0;
+}
+int app_fm_rename(const char *path, const char *name, char *msg, size_t cap) {
+    return snprintf(msg, cap, "rename[%s -> %s]", path, name) < 0;
+}
+int app_fm_delete(const char *path, char *msg, size_t cap) {
+    return snprintf(msg, cap, "delete[%s]", path) < 0;
+}
+int app_fm_move(const char *src, const char *dst, char *msg, size_t cap) {
+    return snprintf(msg, cap, "move[%s -> %s]", src, dst) < 0;
+}
 
 static int connect_panel(void) {
     int c = socket(AF_INET, SOCK_STREAM, 0);
@@ -255,6 +272,31 @@ static void test_addon(int listen_fd) {
     }
 }
 
+static void test_fm_api(int listen_fd) {
+    printf("file manager parameters\n");
+    char resp[4096];
+    request(listen_fd, "GET /api/fm/list?path=/mnt/usb0/my%20games HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "\"path\":\"/mnt/usb0/my games\"") != NULL); /* %20 decoded */
+    request(listen_fd, "GET /api/fm/list?path=/data/ps4mount HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "invalid path") != NULL);
+    request(listen_fd, "GET /api/fm/list?path=/mnt/usb0/../usb1 HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "invalid path") != NULL);
+    request(listen_fd, "POST /api/fm/mkdir?path=/mnt/usb0&name=new%20folder HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "mkdir[/mnt/usb0 + new folder]") != NULL);
+    request(listen_fd, "POST /api/fm/mkdir?path=/mnt/usb0&name=a/b HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "invalid name") != NULL);
+    request(listen_fd, "POST /api/fm/rename?path=/mnt/usb0/a.pkg&name=b.pkg HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "rename[/mnt/usb0/a.pkg -> b.pkg]") != NULL);
+    request(listen_fd, "POST /api/fm/delete?path=/mnt/usb0/a.pkg HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "delete[/mnt/usb0/a.pkg]") != NULL);
+    request(listen_fd, "POST /api/fm/delete?path=/mnt/usb0 HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "invalid path") != NULL); /* a drive root is never deleted */
+    request(listen_fd, "POST /api/fm/move?src=/mnt/usb0/a.pkg&dst=/mnt/usb0/games HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "move[/mnt/usb0/a.pkg -> /mnt/usb0/games]") != NULL);
+    request(listen_fd, "GET /api/fm/delete?path=/mnt/usb0/a.pkg HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "404") != NULL); /* mutations are POST only */
+}
+
 static void test_pin_guard(int listen_fd) {
     printf("panel PIN\n");
     char resp[2048];
@@ -312,6 +354,7 @@ int main(void) {
         test_diag(listen_fd);
         test_update_choice(listen_fd);
         test_launch(listen_fd);
+        test_fm_api(listen_fd);
         test_rescan(listen_fd);
         test_speedtest(listen_fd);
         test_log_download(listen_fd);

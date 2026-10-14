@@ -10,7 +10,7 @@ mkdir -p build/test
 } | sed 's/^unsigned/static const unsigned/' > build/test/pdb_template.h  # included by build.c and unit.c
 (cd web && xxd -i -n index_html index.html) > build/test/page_data.h
 ${CC:-cc} -O1 -g -Wall -Wextra -Ibuild/test -Isrc -o build/test/unit test/unit.c src/build.c src/crypto.c src/pkg.c src/origin.c src/logfile.c src/catalog.c src/safety.c src/policy.c src/speed.c src/fm.c
-${CC:-cc} -O1 -g -Wall -Wextra -Ibuild/test -Isrc -DWEB_PORT=18770 -o build/test/web_unit test/web_unit.c src/web.c src/build.c src/crypto.c src/pkg.c
+${CC:-cc} -O1 -g -Wall -Wextra -Ibuild/test -Isrc -DWEB_PORT=18770 -o build/test/web_unit test/web_unit.c src/web.c src/build.c src/crypto.c src/pkg.c src/fm.c
 build/test/unit
 build/test/web_unit
 if command -v node >/dev/null; then node test/i18n_check.js; else echo "i18n: node not installed, translation check skipped"; fi
