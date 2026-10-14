@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 gasb07
- * Minimal HTTP server for the PS4Mount panel. */
-/* Minimal HTTP server for the PS4Mount panel (one request per connection). */
+ * Minimal HTTP server for the PS4Mount panel (one request per connection). */
 #include "web.h"
 
 #include <ctype.h>
@@ -323,8 +322,22 @@ void web_serve(int listen_fd) {
     }
     const char *head_end = body ? body : req + n;
     body = body ? body + 4 : req + n;
-    char method[8] = "", path[256] = "", tid[10], msg[256];
-    sscanf(req, "%7s %255s", method, path);
+    /* path is sized for the fm API's worst case: /api/fm/move?src=<enc>&dst=<enc> with each
+     * path up to 1023 bytes percent-encoded (up to x3) plus the literal parts. req itself is
+     * already an 8192-byte stack buffer above, so this one keeps the same style. */
+    char method[8] = "", path[8192] = "", tid[10], msg[256];
+    int consumed = 0;
+    sscanf(req, "%7s %8191s%n", method, path, &consumed);
+    /* %8191s stops at the field width even when the real request target is longer, which
+     * would otherwise let a truncated-but-syntactically-valid path (e.g. naming the parent
+     * of the intended file) slip through and be dispatched. Refuse instead of guessing: the
+     * character right after the token we scanned must be request-line whitespace, or the
+     * target did not fit and we must not proceed. */
+    if (consumed > 0 && path[0] && req[consumed] != ' ' && req[consumed] != '\r' && req[consumed] != '\n') {
+        reply(fd, "414 URI Too Long", "text/plain", "uri too long\n", 13);
+        close(fd);
+        return;
+    }
     int post = !strcmp(method, "POST");
 
     if (!strncmp(path, "/api/", 5) && pin_guard(fd, req, head_end)) {
