@@ -723,6 +723,7 @@ typedef struct {
 
 static managed_t g_managed[MAX_TITLES];
 static int g_manual_scan; /* "Scan for games" in the panel */
+static int g_scan_only = -1; /* index of the only drive to walk in the next scan, -1 for all */
 static int g_deleting; /* a delete screen is open: game folders are unmounted */
 static time_t g_deleting_since;
 static time_t g_deleting_close_at; /* set when the uninstall finished */
@@ -2033,7 +2034,9 @@ static void release_stale(void) {
 
 static void scan_all(void) {
     static int seen[NUM_DRIVES], first = 1;
-    int ready[NUM_DRIVES] = {0}, present[NUM_DRIVES] = {0};
+    int ready[NUM_DRIVES] = {0}, present[NUM_DRIVES] = {0}, manual[NUM_DRIVES] = {0};
+    int only = g_scan_only;
+    g_scan_only = -1;
     release_stale();
     /* pkgs of a drive move when it is walked: drop what points to other drives first */
     catalog_unlink(g_cat, NUM_DRIVES);
@@ -2041,8 +2044,13 @@ static void scan_all(void) {
     for (int i = 0; i < NUM_DRIVES; i++) {
         drive_root(i, root, sizeof(root));
         present[i] = is_mountpoint(root);
-        if (present[i])
-            ready[i] = scan_prepare(root, !seen[i] || g_manual_scan, !seen[i] && !first);
+        manual[i] = g_manual_scan && (only < 0 || i == only);
+        if (present[i] && only >= 0 && i != only && seen[i])
+            /* scan of one drive: the others keep their catalog; their games are checked
+             * again only when they may use pkgs of the scanned drive */
+            ready[i] = g_cfg.cross && g_cat[i].ngames;
+        else if (present[i])
+            ready[i] = scan_prepare(root, !seen[i] || manual[i], !seen[i] && !first);
         else if (g_cat_loaded[i]) {
             catalog_free(&g_cat[i]); /* checked again when the drive is back: it may have changed */
             g_cat_loaded[i] = 0;
@@ -2053,7 +2061,7 @@ static void scan_all(void) {
     for (int i = 0; i < NUM_DRIVES; i++) {
         drive_root(i, root, sizeof(root));
         if (ready[i])
-            scan_root(root, !seen[i] || g_manual_scan, !seen[i] && !first);
+            scan_root(root, !seen[i] || manual[i], !seen[i] && !first);
         unsigned long long avail, total;
         int low = present[i] && !drive_space(root, &avail, &total) && policy_space_low(avail, total);
         if (low && !low_warned[i]) {
@@ -2235,10 +2243,29 @@ static void handle_klog_line(const char *line) {
 static time_t g_next_scan;
 static int g_stop;
 
-void app_rescan(void) {
+int app_rescan(const char *drive, char *msg, size_t cap) {
+    int only = -1;
+    if (drive) {
+        char root[32];
+        for (int i = 0; i < NUM_DRIVES && only < 0; i++) {
+            drive_root(i, root, sizeof(root));
+            if (!strcmp(root + 5, drive))
+                only = i;
+        }
+        if (only < 0 || !is_mountpoint(root)) {
+            snprintf(msg, cap, "%s is not connected", drive);
+            return -1;
+        }
+    }
+    g_scan_only = only;
     g_next_scan = 0;
     g_manual_scan = 1;
     retry_clear_given_up(&g_retry);
+    if (drive)
+        snprintf(msg, cap, "Scanning %s for games", drive);
+    else
+        snprintf(msg, cap, "Scanning USB drives for games");
+    return 0;
 }
 
 int app_resume(char *msg, size_t cap) {
@@ -3467,6 +3494,7 @@ int main(void) {
             else if (g_manual_scan)
                 notify("Firmware %s is not supported yet: no games are added", g_fw_text);
             g_manual_scan = 0;
+            g_scan_only = -1;
             log_limit();
             g_next_scan = time(NULL) + g_cfg.interval;
         }

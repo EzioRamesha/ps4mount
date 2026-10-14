@@ -326,6 +326,7 @@ function drivelist() {
   drives.forEach(function (d) { h += '<option value="' + esc(d.name) + '">' + esc(d.name) + ' (' + d.games + ' games)</option>'; });
   sel.innerHTML = h;
   sel.value = drives.some(function (d) { return d.name === cur; }) ? cur : '';
+  rescanLabel();
 }
 
 function load() {
@@ -419,13 +420,19 @@ $('probbtn').onclick = function () {
 };
 $('q').addEventListener('input', render);
 $('sort').onchange = render;
-$('drive').onchange = render;
+$('drive').onchange = function () { rescanLabel(); render(); };
 $('resume').onclick = function () {
   if (!confirm('Resume adding games? Do this only after restarting the console, once the database message is gone.')) return;
   api('/api/resume', 'POST').then(function (j) { toast(j.message); load(); })
     .catch(function (err) { toast('Error: ' + err.message); });
 };
-$('rescan').onclick = function () { api('/api/rescan', 'POST').then(function (j) { toast(j.message); setTimeout(load, 3000); }); };
+$('rescan').onclick = function () {
+  var dv = $('drive').value;
+  api('/api/rescan' + (dv ? '?drive=' + encodeURIComponent(dv) : ''), 'POST')
+    .then(function (j) { toast(j.message); setTimeout(load, 3000); })
+    .catch(function (err) { toast('Error: ' + err.message); });
+};
+function rescanLabel() { $('rescan').textContent = $('drive').value ? 'Scan ' + $('drive').value : 'Scan for games'; }
 $('logbtn').onclick = function () { api('/api/log').then(function (j) { $('log').textContent = j.log; $('logdlg').showModal(); }); };
 $('diagbtn').onclick = function () {
   api('/api/diag').then(function (j) { $('diag').value = j.text; $('diagdlg').showModal(); })
