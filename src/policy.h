@@ -27,10 +27,11 @@ int policy_decide(const game_facts_t *f, const char **why);
 
 /* What the panel shows. */
 typedef struct {
-    int internal, elsewhere, removed, excluded, running, mounted, registered, given_up;
+    int internal, elsewhere, removed, excluded, running, mounted, registered, given_up, retrying;
 } panel_facts_t;
 
-/* "internal", "duplicate", "excluded", "removed", "running", "ready", "failed" or "pending". */
+/* "internal", "duplicate", "excluded", "removed", "running", "ready", "failed",
+ * "retrying" (failed, waiting to be tried again) or "pending". */
 const char *policy_panel_state(const panel_facts_t *f);
 
 /* A drive is low on space under SPACE_LOW_PERCENT of its size or SPACE_LOW_BYTES free. */

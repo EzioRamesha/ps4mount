@@ -2596,6 +2596,7 @@ void app_games_json(buf_t *out) {
                 mount = sf.f_flags & MNT_RDONLY ? "ro" : "rw";
             }
             managed_t *m = managed_by(tid, NULL);
+            long retry_in = retry_remaining(&g_retry, tid, time(NULL));
             panel_facts_t pf = {0};
             pf.internal = installed_internally(tid);
             pf.elsewhere = !pf.internal && served_elsewhere(tid, dir);
@@ -2605,6 +2606,7 @@ void app_games_json(buf_t *out) {
             pf.mounted = mounted;
             pf.registered = db_is_registered(tid);
             pf.given_up = retry_given_up(&g_retry, tid);
+            pf.retrying = retry_in > 0;
             state = policy_panel_state(&pf);
             buf_printf(out, "%s{\"title_id\":\"%s\",\"name\":", first ? "" : ",", tid);
             json_str(out, in->name);
@@ -2615,7 +2617,7 @@ void app_games_json(buf_t *out) {
             json_str(out, in->dir);
             buf_printf(out, ",\"dlc\":%d,\"update_issue\":", in->ndlc);
             json_str(out, in->update_issue);
-            buf_printf(out, ",\"retry_in\":%ld", retry_remaining(&g_retry, tid, time(NULL)));
+            buf_printf(out, ",\"retry_in\":%ld", retry_in);
             const cat_game_t *g = &cat->games[gi];
             const char *choice = update_choice(tid);
             buf_printf(out, ",\"drive\":\"%s\",\"update_choice\":", root + 5);

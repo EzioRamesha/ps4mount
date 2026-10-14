@@ -898,7 +898,9 @@ static void test_policy(void) {
     p.internal = 1;
     CHECK(!strcmp(policy_panel_state(&p), "internal"));
     panel_facts_t q = {0};
-    q.given_up = 1;
+    q.retrying = 1;
+    CHECK(!strcmp(policy_panel_state(&q), "retrying"));
+    q.given_up = 1; /* given up wins over a pending retry */
     CHECK(!strcmp(policy_panel_state(&q), "failed"));
     q.mounted = q.registered = 1; /* added after all */
     CHECK(!strcmp(policy_panel_state(&q), "ready"));

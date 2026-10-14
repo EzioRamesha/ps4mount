@@ -42,7 +42,9 @@ const char *policy_panel_state(const panel_facts_t *f) {
         return "running";
     if (f->mounted && f->registered)
         return "ready";
-    return f->given_up ? "failed" : "pending";
+    if (f->given_up)
+        return "failed";
+    return f->retrying ? "retrying" : "pending";
 }
 
 int policy_space_low(unsigned long long free_bytes, unsigned long long total_bytes) {
