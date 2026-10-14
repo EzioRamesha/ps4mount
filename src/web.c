@@ -89,6 +89,23 @@ static int title_param(const char *path, char *tid) {
     return strncmp(tid, "CUSA", 4) ? -1 : 0;
 }
 
+/* content_id= of the query, an add-on ID like UP0001-CUSA00001_00-ADDON00000000001. 0 when valid. */
+static int content_param(const char *path, char *cid) {
+    const char *p = strstr(path, "content_id=");
+    if (!p)
+        return -1;
+    p += 11;
+    for (int i = 0; i < 36; i++) {
+        char c = p[i];
+        int alnum = (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+        if (i == 6 || i == 19 ? c != '-' : i == 16 ? c != '_' : !alnum)
+            return -1;
+        cid[i] = c;
+    }
+    cid[36] = 0;
+    return (p[36] && p[36] != '&') || strncmp(cid + 7, "CUSA", 4) ? -1 : 0;
+}
+
 /* version= of the query: "" (the highest), "none" or an APP_VER like 01.05. 0 when valid. */
 static int version_param(const char *path, char *ver, size_t n) {
     const char *p = strstr(path, "version=");
@@ -308,6 +325,15 @@ void web_serve(int listen_fd) {
             json_msg(fd, 0, "invalid title_id or version");
         else {
             int rc = app_set_update(tid, ver, msg, sizeof(msg));
+            json_msg(fd, !rc, msg);
+        }
+    } else if (post && !strncmp(path, "/api/addon?", 11)) {
+        char cid[37];
+        const char *on = strstr(path, "on=");
+        if (content_param(path, cid) || !on || (on[3] != '0' && on[3] != '1') || (on[4] && on[4] != '&'))
+            json_msg(fd, 0, "invalid content_id or on");
+        else {
+            int rc = app_addon(cid, on[3] == '1', msg, sizeof(msg));
             json_msg(fd, !rc, msg);
         }
     } else if (!strcmp(path, "/api/diag")) {

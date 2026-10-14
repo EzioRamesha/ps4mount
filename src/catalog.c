@@ -194,6 +194,20 @@ static int read_one(cat_pkg_t *p, pkg_t *pkg, sfo_t *sfo) {
     p->app_ver[0] = 0;
     if (av && !av->is_int)
         snprintf(p->app_ver, sizeof(p->app_ver), "%s", av->sval);
+    p->name[0] = 0;
+    const sfo_item_t *title = sfo_get(sfo, "TITLE");
+    if (!strcmp(p->category, "ac") && title && !title->is_int) {
+        size_t l = strlen(title->sval);
+        if (l >= sizeof(p->name)) {
+            l = sizeof(p->name) - 1;
+            while (l && ((unsigned char)title->sval[l] & 0xc0) == 0x80) /* not inside a UTF-8 character */
+                l--;
+        }
+        snprintf(p->name, sizeof(p->name), "%.*s", (int)l, title->sval);
+        for (char *s = p->name; *s; s++)
+            if (*s == '\t' || *s == '\r' || *s == '\n')
+                *s = ' ';
+    }
     p->nservices = 0;
     for (int i = 1; i <= CAT_MAX_SERVICES; i++) {
         char key[32];
@@ -330,7 +344,8 @@ const cat_game_t *catalog_game(const catalog_t *c, const char *title_id) {
 }
 
 /* One line per read pkg, fields separated by tabs, the path last:
- * state size mtime category title_id content_id app_ver nservices services... path */
+ * state size mtime category title_id content_id app_ver nservices services... name path
+ * (lines saved before 0.6 have no name: add-ons among them are read again). */
 int catalog_save(const catalog_t *c, const char *path) {
     char tmp[PATH_MAX];
     snprintf(tmp, sizeof(tmp), "%s.tmp", path);
@@ -346,7 +361,7 @@ int catalog_save(const catalog_t *c, const char *path) {
                 p->content_id[0] ? p->content_id : "-", p->app_ver[0] ? p->app_ver : "-", p->nservices);
         for (int k = 0; k < p->nservices; k++)
             fprintf(f, "\t%s", p->services[k]);
-        fprintf(f, "\t%s\n", p->path);
+        fprintf(f, "\t%s\t%s\n", p->name[0] ? p->name : "-", p->path);
     }
     int rc = ferror(f) ? -1 : 0;
     if (fclose(f))
@@ -362,7 +377,7 @@ static void field(char *out, size_t n, const char *s) { snprintf(out, n, "%s", s
 
 /* Parses one saved line into p. 0 when it is complete. */
 static int parse_line(char *line, cat_pkg_t *p) {
-    char *f[8 + CAT_MAX_SERVICES + 1];
+    char *f[8 + CAT_MAX_SERVICES + 2];
     int nf = 0;
     for (char *s = line; nf < (int)(sizeof(f) / sizeof(f[0]));) {
         f[nf++] = s;
@@ -375,8 +390,9 @@ static int parse_line(char *line, cat_pkg_t *p) {
     if (nf < 9)
         return -1;
     int ns = atoi(f[7]);
-    if (ns < 0 || ns > CAT_MAX_SERVICES || nf != 9 + ns)
+    if (ns < 0 || ns > CAT_MAX_SERVICES || (nf != 9 + ns && nf != 10 + ns))
         return -1;
+    int named = nf == 10 + ns;
     memset(p, 0, sizeof(*p));
     p->state = atoi(f[0]);
     if (p->state != CAT_OK && p->state != CAT_BAD)
@@ -390,9 +406,14 @@ static int parse_line(char *line, cat_pkg_t *p) {
     for (int k = 0; k < ns; k++)
         snprintf(p->services[k], sizeof(p->services[k]), "%s", f[8 + k]);
     p->nservices = ns;
-    if (f[8 + ns][0] != '/')
+    if (named)
+        field(p->name, sizeof(p->name), f[8 + ns]);
+    const char *path = f[8 + ns + named];
+    if (path[0] != '/')
         return -1;
-    snprintf(p->path, sizeof(p->path), "%s", f[8 + ns]);
+    snprintf(p->path, sizeof(p->path), "%s", path);
+    if (!named && p->state == CAT_OK && !strcmp(p->category, "ac"))
+        p->state = CAT_UNREAD; /* read again for its name */
     return 0;
 }
 

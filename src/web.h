@@ -32,6 +32,8 @@ int app_icon(const char *tid, buf_t *out);
 void app_problems_json(buf_t *out);
 /* Update used for tid: an APP_VER, "none", or "" for the highest. 0 on success. */
 int app_set_update(const char *tid, const char *ver, char *msg, size_t cap);
+/* Turns an add-on (content ID) on or off for its game. 0 on success. */
+int app_addon(const char *content_id, int on, char *msg, size_t cap);
 /* Plain text report for bug reports: version, firmware, settings, drives, failures, log tail. */
 void app_diag(buf_t *out);
 /* Panel PIN (4 to 8 digits), "" when the panel is open to everyone on the network. */
