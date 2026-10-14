@@ -49,6 +49,7 @@ form.settings .hint{color:var(--muted);font-size:13px}
 form.settings .row{display:flex;gap:8px;justify-content:flex-end}
 select{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit}
 .paused{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;background:#3a1f1d;border:1px solid #5c2c28;border-radius:10px;padding:12px 16px;margin-bottom:18px}
+.newver{font-size:12px;font-weight:600;color:#fff;background:var(--ok);border-radius:999px;padding:3px 10px;margin-left:6px;text-decoration:none;vertical-align:middle}
 .pick{position:absolute;right:10px;top:10px;width:22px;height:22px}
 .card.sel{border-color:var(--accent)}
 .selbar{position:sticky;bottom:0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--panel);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;margin-top:18px}
@@ -60,7 +61,7 @@ td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-b
 </head>
 <body>
 <header>
-  <h1>PS4Mount <small id="ver"></small></h1>
+  <h1>PS4Mount <small id="ver"></small> <a id="newver" class="newver" target="_blank" rel="noopener" hidden></a></h1>
   <div class="bar">
     <input id="q" type="search" placeholder="Search game or CUSA">
     <select id="sort" aria-label="Sort"><option value="name">Sort by name</option><option value="state">Sort by state</option><option value="source">Sort by location</option></select>
@@ -178,6 +179,38 @@ function pinAsk(wrong) {
   return pinAsking;
 }
 
+/* New release notice: asked by this browser to GitHub (not by the console), at most every
+   12 hours; any failure (no internet, rate limit, old browser) shows nothing. */
+var RELEASES = 'https://api.github.com/repos/gasb07/ps4mount/releases/latest';
+function verNums(s) { var m = /(\d+)\.(\d+)\.(\d+)/.exec(s || ''); return m ? [+m[1], +m[2], +m[3]] : null; }
+function verNewer(a, b) { for (var i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i]; return false; }
+function checkRelease(current) {
+  if (checkRelease.done || !window.fetch || !window.Promise) return;
+  checkRelease.done = true;
+  var mine = verNums(current);
+  if (!mine) return;
+  function show(r) {
+    var latest = verNums(r.tag);
+    if (!latest || !verNewer(latest, mine) || !/^https:\/\/github\.com\//.test(r.url)) return;
+    var a = $('newver');
+    a.textContent = 'New: ' + r.tag;
+    a.href = r.url;
+    a.title = 'A newer PS4Mount is available';
+    a.hidden = false;
+  }
+  var cached = null;
+  try { cached = JSON.parse(localStorage.getItem('ps4mount-release') || 'null'); } catch (e) { cached = null; }
+  if (cached && Date.now() - cached.at < 12 * 3600 * 1000) { show(cached); return; }
+  fetch(RELEASES, {cache: 'no-store', headers: {Accept: 'application/vnd.github+json'}})
+    .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(function (j) {
+      var r = {at: Date.now(), tag: String(j.tag_name || ''), url: String(j.html_url || '')};
+      try { localStorage.setItem('ps4mount-release', JSON.stringify(r)); } catch (e) {}
+      show(r);
+    })
+    .catch(function () {});
+}
+
 function api(path, method, body, retried) {
   var h = {}, pin = pinGet();
   if (pin) h['X-PIN'] = pin;
@@ -268,6 +301,7 @@ function drivelist() {
 function load() {
   api('/api/games').then(function (j) {
     games = j.games; drives = j.drives || []; $('ver').textContent = j.version;
+    checkRelease(j.version);
     var live = {};
     games.forEach(function (g) { if (g.state !== 'internal' && g.state !== 'running') live[g.title_id] = 1; });
     for (var t in selected) if (!live[t]) delete selected[t];
