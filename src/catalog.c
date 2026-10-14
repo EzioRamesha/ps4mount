@@ -206,12 +206,31 @@ static int serves(const cat_pkg_t *p, const cat_pkg_t *dlc) {
     return 0;
 }
 
-void catalog_group(catalog_t *c) {
+/* The update of g to use: the chosen version when it is there, else the highest. */
+static int pick_update(const catalog_t *c, const cat_game_t *g, cat_choose_fn choose) {
+    const char *want = choose ? choose(g->title_id) : NULL;
+    if (want && !strcmp(want, CAT_NO_UPDATE))
+        return -1;
+    int best = -1;
+    for (int k = 0; k < g->nupdates; k++) {
+        const cat_pkg_t *u = &c->pkgs[g->updates[k]];
+        if (want && !strcmp(u->app_ver, want))
+            return g->updates[k];
+        if (best < 0 || strcmp(u->app_ver, c->pkgs[best].app_ver) > 0)
+            best = g->updates[k];
+    }
+    return best;
+}
+
+void catalog_group(catalog_t *c, cat_choose_fn choose) {
     c->ngames = c->dupes = c->orphans = 0;
+    for (int i = 0; i < c->npkgs; i++)
+        c->pkgs[i].role = CAT_ROLE_NONE;
     for (int i = 0; i < c->npkgs; i++) {
         if (!is_kind(&c->pkgs[i], "gd"))
             continue;
         if (game_find(c, c->pkgs[i].title_id)) {
+            c->pkgs[i].role = CAT_ROLE_DUPE;
             c->dupes++;
             continue;
         }
@@ -228,14 +247,22 @@ void catalog_group(catalog_t *c) {
         snprintf(g->title_id, sizeof(g->title_id), "%s", c->pkgs[i].title_id);
         g->app = i;
         g->patch = -1;
+        c->pkgs[i].role = CAT_ROLE_APP;
     }
     for (int i = 0; i < c->npkgs; i++) {
-        const cat_pkg_t *p = &c->pkgs[i];
+        cat_pkg_t *p = &c->pkgs[i];
         if (!is_kind(p, "gp"))
             continue;
         cat_game_t *g = game_find(c, p->title_id);
-        if (g && (g->patch < 0 || strcmp(p->app_ver, c->pkgs[g->patch].app_ver) > 0))
-            g->patch = i;
+        p->role = g ? CAT_ROLE_SPARE : CAT_ROLE_NOGAME;
+        if (g && g->nupdates < CAT_MAX_UPDATES)
+            g->updates[g->nupdates++] = i;
+    }
+    for (int k = 0; k < c->ngames; k++) {
+        cat_game_t *g = &c->games[k];
+        g->patch = pick_update(c, g, choose);
+        if (g->patch >= 0)
+            c->pkgs[g->patch].role = CAT_ROLE_PATCH;
     }
     for (int i = 0; i < c->npkgs; i++) {
         const cat_pkg_t *p = &c->pkgs[i];
@@ -247,10 +274,13 @@ void catalog_group(catalog_t *c) {
             if (serves(&c->pkgs[o->app], p) || (o->patch >= 0 && serves(&c->pkgs[o->patch], p)))
                 g = o;
         }
-        if (!g)
+        if (!g) {
             c->orphans++;
-        else if (g->ndlc < CAT_MAX_DLC)
+            c->pkgs[i].role = CAT_ROLE_ORPHAN;
+        } else if (g->ndlc < CAT_MAX_DLC) {
             g->dlc[g->ndlc++] = i;
+            c->pkgs[i].role = CAT_ROLE_DLC;
+        }
     }
 }
 

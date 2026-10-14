@@ -49,6 +49,12 @@ form.settings .hint{color:var(--muted);font-size:13px}
 form.settings .row{display:flex;gap:8px;justify-content:flex-end}
 select{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit}
 .paused{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;background:#3a1f1d;border:1px solid #5c2c28;border-radius:10px;padding:12px 16px;margin-bottom:18px}
+.pick{position:absolute;right:10px;top:10px;width:22px;height:22px}
+.card.sel{border-color:var(--accent)}
+.selbar{position:sticky;bottom:0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--panel);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;margin-top:18px}
+.info select{font-size:13px;padding:4px 8px;margin-top:4px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-break:break-all}
 #toast{position:fixed;right:20px;bottom:20px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 16px;display:none;max-width:420px}
 </style>
 </head>
@@ -58,7 +64,9 @@ select{background:var(--panel);color:var(--fg);border:1px solid var(--line);bord
   <div class="bar">
     <input id="q" type="search" placeholder="Search game or CUSA">
     <select id="sort" aria-label="Sort"><option value="name">Sort by name</option><option value="state">Sort by state</option><option value="source">Sort by location</option></select>
+    <select id="drive" aria-label="Drive"><option value="">All drives</option></select>
     <button id="rescan" class="primary">Scan for games</button>
+    <button id="probbtn">Problems</button>
     <button id="settingsbtn">Settings</button>
     <button id="logbtn">Log</button>
     <button id="diagbtn">Diagnostics</button>
@@ -70,6 +78,11 @@ select{background:var(--panel);color:var(--fg);border:1px solid var(--line);bord
   <div class="summary" id="summary"></div>
   <div class="grid" id="grid"></div>
   <div class="empty" id="empty" hidden>No PS4 games found. Copy the .pkg files (game, update and add-ons) to a USB drive, in any folder.</div>
+  <div class="selbar" id="selbar" hidden><span id="selcount"></span>
+    <button class="primary" data-bulk="mount">Add selected</button>
+    <button class="danger" data-bulk="unmount">Remove selected</button>
+    <button data-bulk="exclude">Never add selected</button>
+    <button id="selclear">Clear selection</button></div>
 </main>
 <dialog id="setdlg"><h3>Settings</h3>
 <form class="settings" id="setform">
@@ -105,9 +118,15 @@ select{background:var(--panel);color:var(--fg);border:1px solid var(--line);bord
 <p class="meta">Paste this into a GitHub issue when something goes wrong. It holds no password and no network address.</p>
 <textarea id="diag" readonly spellcheck="false" style="width:100%;min-height:50vh;background:#0b0d11;color:var(--fg);border:1px solid var(--line);border-radius:8px;font:12px ui-monospace,Consolas,monospace"></textarea>
 <div class="actions" style="padding:10px 0 0"><button class="primary" id="diagcopy">Copy</button><form method="dialog"><button>Close</button></form></div></dialog>
+<dialog id="probdlg"><h3>Problems</h3>
+<p style="color:var(--muted);font-size:13px">Pkgs that are found but not used. Nothing here is deleted or changed by PS4Mount.</p>
+<div id="problems" style="max-height:60vh;overflow:auto"></div>
+<div class="actions" style="padding:10px 0 0"><form method="dialog"><button>Close</button></form></div></dialog>
 <div id="toast"></div>
 <script>
-var games = [], busy = {};
+var games = [], busy = {}, drives = [], selected = {};
+var kinds = {duplicate: 'Same game on more than one place (this copy is not used)', 'addon-without-game': 'Add-on without its game',
+  'update-without-game': 'Update without its game', unusable: 'Cannot be read (damaged, not a PS4 pkg, or not game/update/add-on)'};
 var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', duplicate: 'On another drive', failed: 'Failed', excluded: 'Never added'};
 var order = {running: 0, ready: 1, pending: 2, failed: 3, removed: 4, excluded: 5, duplicate: 6, internal: 7};
 
@@ -143,7 +162,7 @@ function api(path, method) {
 }
 
 function render() {
-  var q = $('q').value.toLowerCase(), html = '', shown = 0, counts = {}, by = $('sort').value;
+  var q = $('q').value.toLowerCase(), html = '', shown = 0, counts = {}, by = $('sort').value, dv = $('drive').value;
   var list = games.slice().sort(function (a, b) {
     var k = by === 'state' ? (order[a.state] || 9) - (order[b.state] || 9) : by === 'source' ? (a.source < b.source ? -1 : a.source > b.source ? 1 : 0) : 0;
     return k || a.name.toLowerCase().localeCompare(b.name.toLowerCase());
@@ -151,24 +170,36 @@ function render() {
   list.forEach(function (g) {
     counts[g.state] = (counts[g.state] || 0) + 1;
     if (q && (g.name + ' ' + g.title_id).toLowerCase().indexOf(q) < 0) return;
+    if (dv && g.drive !== dv) return;
     shown++;
-    var act = '';
-    if (g.state === 'removed') act = '<button class="primary" data-a="mount" data-t="' + g.title_id + '">Add to library</button>';
-    else if (g.state === 'failed') act = '<button class="primary" data-a="mount" data-t="' + g.title_id + '">Try again</button>';
-    else if (g.state === 'excluded') act = '<button class="primary" data-a="include" data-t="' + g.title_id + '">Allow</button>';
-    if (g.state !== 'excluded' && g.state !== 'internal' && g.state !== 'running')
-      act += '<button data-a="exclude" data-t="' + g.title_id + '">Never add</button>';
-    else if (g.state === 'ready') act = '<button class="danger" data-a="unmount" data-t="' + g.title_id + '">Remove from library</button>';
+    var tid = g.title_id, act = '';
+    if (g.state === 'removed') act = '<button class="primary" data-a="mount" data-t="' + tid + '">Add to library</button>';
+    else if (g.state === 'failed') act = '<button class="primary" data-a="mount" data-t="' + tid + '">Try again</button>';
+    else if (g.state === 'excluded') act = '<button class="primary" data-a="include" data-t="' + tid + '">Allow</button>';
+    else if (g.state === 'ready') act = '<button class="danger" data-a="unmount" data-t="' + tid + '">Remove from library</button>';
     else if (g.state === 'running') act = '<button disabled>Close the game to remove it</button>';
+    if (g.state !== 'excluded' && g.state !== 'internal' && g.state !== 'running')
+      act += '<button data-a="exclude" data-t="' + tid + '">Never add</button>';
     if (g.state !== 'running' && g.state !== 'internal' && !/\.pkg$/i.test(g.source))
-      act += '<button data-a="restore" data-t="' + g.title_id + '">Move pkgs back</button>';
-    if (busy[g.title_id]) act = '<button disabled>Please wait…</button>';
-    html += '<div class="card"><div class="art" style="background-image:url(/icon/' + g.title_id + ')">' +
-      '<span class="badge b-' + g.state + '">' + esc(labels[g.state] || g.state) + '</span></div>' +
+      act += '<button data-a="restore" data-t="' + tid + '">Move pkgs back</button>';
+    if (busy[tid]) act = '<button disabled>Please wait…</button>';
+    var upd = '';
+    if (g.updates && g.updates.length && g.state !== 'internal') {
+      upd = '<select data-upd="' + tid + '" aria-label="Update to use"' + (g.state === 'running' ? ' disabled' : '') + '>' +
+        '<option value="">Update: highest</option><option value="none"' + (g.update_choice === 'none' ? ' selected' : '') + '>No update</option>';
+      g.updates.forEach(function (v) {
+        upd += '<option value="' + esc(v) + '"' + (g.update_choice === v ? ' selected' : '') + '>Update ' + esc(v) + '</option>';
+      });
+      upd += '</select>';
+    }
+    var pick = g.state !== 'internal' && g.state !== 'running';
+    html += '<div class="card' + (selected[tid] ? ' sel' : '') + '"><div class="art" style="background-image:url(/icon/' + tid + ')">' +
+      '<span class="badge b-' + g.state + '">' + esc(labels[g.state] || g.state) + '</span>' +
+      (pick ? '<input type="checkbox" class="pick" data-sel="' + tid + '" aria-label="Select"' + (selected[tid] ? ' checked' : '') + '>' : '') + '</div>' +
       '<div class="info"><div class="name">' + esc(g.name) + '</div>' +
-      '<div class="meta">' + g.title_id + ' · v' + esc(g.version) + (g.has_patch ? ' (with update)' : '') +
+      '<div class="meta">' + tid + ' · v' + esc(g.version) + (g.has_patch ? ' (with update)' : '') +
         (g.dlc ? ' · ' + g.dlc + ' add-on' + (g.dlc > 1 ? 's' : '') : '') + ' · ' + gb(g.size) + '</div>' +
-      '<div class="meta">' + esc(g.source) + (g.mount ? ' · mounted ' + g.mount : '') + '</div>' +
+      '<div class="meta">' + esc(g.source) + (g.mount ? ' · mounted ' + g.mount : '') + '</div>' + upd +
       (g.update_issue ? '<div class="warn">' + esc(g.update_issue) + '</div>' : '') + '</div>' +
       '<div class="actions">' + act + '</div></div>';
   });
@@ -176,12 +207,33 @@ function render() {
   $('empty').hidden = games.length > 0;
   var s = '<span>' + games.length + ' game(s)</span>';
   for (var k in counts) s += '<span>' + esc(labels[k] || k) + ': ' + counts[k] + '</span>';
+  drives.forEach(function (d) {
+    if (!dv || d.name === dv) s += '<span>' + esc(d.name) + ': ' + gb(d.free) + ' free of ' + gb(d.total) + '</span>';
+  });
   $('summary').innerHTML = s;
+  selbar();
+}
+
+function selbar() {
+  var n = Object.keys(selected).length;
+  $('selbar').hidden = !n;
+  $('selcount').textContent = n + ' selected';
+}
+
+function drivelist() {
+  var sel = $('drive'), cur = sel.value, h = '<option value="">All drives</option>';
+  drives.forEach(function (d) { h += '<option value="' + esc(d.name) + '">' + esc(d.name) + ' (' + d.games + ' games)</option>'; });
+  sel.innerHTML = h;
+  sel.value = drives.some(function (d) { return d.name === cur; }) ? cur : '';
 }
 
 function load() {
   api('/api/games').then(function (j) {
-    games = j.games; $('ver').textContent = j.version;
+    games = j.games; drives = j.drives || []; $('ver').textContent = j.version;
+    var live = {};
+    games.forEach(function (g) { if (g.state !== 'internal' && g.state !== 'running') live[g.title_id] = 1; });
+    for (var t in selected) if (!live[t]) delete selected[t];
+    drivelist();
     $('paused').hidden = !j.paused;
     $('paused-msg').textContent = j.paused ? 'Adding games is paused: ' + j.paused + '. Games already added still work. Restart the console before resuming.' : '';
     render();
@@ -202,8 +254,56 @@ $('grid').addEventListener('click', function (e) {
     .catch(function (err) { toast('Error: ' + err.message); })
     .then(function () { delete busy[tid]; load(); });
 });
+$('grid').addEventListener('change', function (e) {
+  var t = e.target, tid;
+  if ((tid = t.getAttribute('data-sel'))) {
+    if (t.checked) selected[tid] = 1; else delete selected[tid];
+    t.closest('.card').classList.toggle('sel', t.checked);
+    selbar();
+  } else if ((tid = t.getAttribute('data-upd'))) {
+    busy[tid] = 1; render();
+    api('/api/update?title_id=' + tid + '&version=' + encodeURIComponent(t.value), 'POST').then(function (j) { toast(j.message); })
+      .catch(function (err) { toast('Error: ' + err.message); })
+      .then(function () { delete busy[tid]; load(); });
+  }
+});
+$('selbar').addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-bulk]');
+  if (!b) return;
+  var a = b.getAttribute('data-bulk'), list = Object.keys(selected);
+  var what = {mount: 'Add', unmount: 'Remove', exclude: 'Never add'}[a];
+  if (!list.length || !confirm(what + ' ' + list.length + ' game(s)?' + (a === 'unmount' ? ' The pkgs stay on the drive.' : ''))) return;
+  var ok = 0, failed = 0;
+  list.forEach(function (t) { busy[t] = 1; });
+  render();
+  /* one at a time: the console handles one install or mount request at a time */
+  (function next(i) {
+    if (i >= list.length) {
+      selected = {};
+      toast(what + ': ' + ok + ' done' + (failed ? ', ' + failed + ' failed (see Log)' : ''));
+      load();
+      return;
+    }
+    api('/api/' + a + '?title_id=' + list[i], 'POST').then(function (j) { if (j.ok === false) failed++; else ok++; })
+      .catch(function () { failed++; })
+      .then(function () { delete busy[list[i]]; next(i + 1); });
+  })(0);
+});
+$('selclear').onclick = function () { selected = {}; render(); };
+$('probbtn').onclick = function () {
+  api('/api/problems').then(function (j) {
+    var h = '';
+    j.problems.forEach(function (p) {
+      h += '<tr><td>' + esc(kinds[p.kind] || p.kind) + '</td><td>' + esc(p.title_id || '-') + '</td><td>' + esc(p.path) + '</td></tr>';
+    });
+    $('problems').innerHTML = h ? '<table><tr><th>Problem</th><th>Title</th><th>Pkg</th></tr>' + h + '</table>' :
+      '<p>No problems found in the last scan.</p>';
+    $('probdlg').showModal();
+  }).catch(function (e) { toast('Could not read the problems: ' + e.message); });
+};
 $('q').addEventListener('input', render);
 $('sort').onchange = render;
+$('drive').onchange = render;
 $('resume').onclick = function () {
   if (!confirm('Resume adding games? Do this only after restarting the console, once the database message is gone.')) return;
   api('/api/resume', 'POST').then(function (j) { toast(j.message); load(); })

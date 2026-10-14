@@ -457,6 +457,10 @@ static cat_pkg_t *cat_add(catalog_t *c, const char *path, const char *cat, const
     return p;
 }
 
+static const char *choose_105(const char *tid) { return !strcmp(tid, "CUSA00001") ? "01.05" : NULL; }
+static const char *choose_none(const char *tid) { return !strcmp(tid, "CUSA00001") ? CAT_NO_UPDATE : NULL; }
+static const char *choose_missing(const char *tid) { return !strcmp(tid, "CUSA00001") ? "09.99" : NULL; }
+
 static void test_catalog_group(void) {
     printf("catalog: games, updates and add-ons in any folder\n");
     catalog_t c = {0};
@@ -475,7 +479,7 @@ static void test_catalog_group(void) {
     cat_add(&c, "/u/loose/other-dlc.pkg", "ac", "EP0001-CUSA00777_00-NOGAME0000000000", "01.00");
     cat_add(&c, "/u/loose/broken.pkg", "gd", "EP0001-CUSA00003_00-BROKEN0000000000", "01.00")->state = CAT_BAD;
 
-    catalog_group(&c);
+    catalog_group(&c, NULL);
     CHECK(c.ngames == 2);
     const cat_game_t *p = catalog_game(&c, "CUSA00001"), *r = catalog_game(&c, "CUSA00002");
     CHECK(p && !strcmp(c.pkgs[p->app].path, "/u/Persona/game.pkg")); /* the backup copy comes later */
@@ -485,8 +489,32 @@ static void test_catalog_group(void) {
     CHECK(!catalog_game(&c, "CUSA00003"));
     CHECK(c.dupes == 1 && c.orphans == 1);
 
-    catalog_group(&c); /* grouping again gives the same result */
+    catalog_group(&c, NULL); /* grouping again gives the same result */
     CHECK(c.ngames == 2 && c.dupes == 1 && c.orphans == 1);
+
+    printf("catalog: what each pkg is used for\n");
+    CHECK(p && p->nupdates == 3);
+    int roles[CAT_ROLE_NOGAME + 1] = {0};
+    for (int i = 0; i < c.npkgs; i++)
+        roles[c.pkgs[i].role]++;
+    CHECK(roles[CAT_ROLE_APP] == 2 && roles[CAT_ROLE_PATCH] == 1 && roles[CAT_ROLE_SPARE] == 2);
+    CHECK(roles[CAT_ROLE_DLC] == 2 && roles[CAT_ROLE_DUPE] == 1 && roles[CAT_ROLE_ORPHAN] == 1);
+    CHECK(roles[CAT_ROLE_NONE] == 1); /* the unreadable pkg */
+    cat_add(&c, "/u/zz/lost-update.pkg", "gp", "EP0001-CUSA00888_00-LOST000000000000", "01.02");
+    catalog_group(&c, NULL);
+    CHECK(c.pkgs[c.npkgs - 1].role == CAT_ROLE_NOGAME);
+
+    printf("catalog: update chosen by the user\n");
+    catalog_group(&c, choose_105);
+    p = catalog_game(&c, "CUSA00001");
+    CHECK(p && p->patch >= 0 && !strcmp(c.pkgs[p->patch].app_ver, "01.05"));
+    CHECK(!strcmp(c.pkgs[p->patch].path, "/u/Persona/Update/v105.pkg"));
+    catalog_group(&c, choose_none);
+    p = catalog_game(&c, "CUSA00001");
+    CHECK(p && p->patch == -1 && p->nupdates == 3);
+    catalog_group(&c, choose_missing); /* a version that is not on the drive: the highest */
+    p = catalog_game(&c, "CUSA00001");
+    CHECK(p && p->patch >= 0 && !strcmp(c.pkgs[p->patch].app_ver, "01.10"));
     catalog_free(&c);
 }
 
@@ -612,7 +640,7 @@ static void test_catalog_cache(void) {
     CHECK(a && !strcmp(a->content_id, "EP0001-CUSA00001_00-PERSONA000000000"));
     CHECK(a && a->nservices == 2 && !strcmp(a->services[1], "UP0001-CUSA00010_00"));
     CHECK(bad && bad->state == CAT_BAD);
-    catalog_group(&d);
+    catalog_group(&d, NULL);
     CHECK(d.ngames == 1 && d.games[0].patch >= 0);
 
     CHECK(catalog_load(&d, "/tmp/ps4mount-no-such-file") == -1);

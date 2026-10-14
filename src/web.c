@@ -88,6 +88,26 @@ static int title_param(const char *path, char *tid) {
     return strncmp(tid, "CUSA", 4) ? -1 : 0;
 }
 
+/* version= of the query: "" (the highest), "none" or an APP_VER like 01.05. 0 when valid. */
+static int version_param(const char *path, char *ver, size_t n) {
+    const char *p = strstr(path, "version=");
+    if (!p || n < 8)
+        return -1;
+    p += 8;
+    size_t l = strcspn(p, "&");
+    if (l == 4 && !strncmp(p, "none", 4)) {
+        snprintf(ver, n, "none");
+        return 0;
+    }
+    if (l && (l != 5 || p[2] != '.'))
+        return -1;
+    for (size_t i = 0; i < l; i++)
+        if (i != 2 && (p[i] < '0' || p[i] > '9'))
+            return -1;
+    snprintf(ver, n, "%.*s", (int)l, p);
+    return 0;
+}
+
 /* Replies {"<key>":"<text>"} with the text escaped for JSON. */
 static void reply_text_json(int fd, const char *key, const buf_t *b) {
     buf_t j = {0};
@@ -219,6 +239,19 @@ void web_serve(int listen_fd) {
         json_msg(fd, !rc, msg);
     } else if (!strcmp(path, "/api/log")) {
         send_log(fd);
+    } else if (!strcmp(path, "/api/problems")) {
+        buf_t b = {0};
+        app_problems_json(&b);
+        reply(fd, "200 OK", "application/json; charset=utf-8", b.data, b.len);
+        buf_free(&b);
+    } else if (post && !strncmp(path, "/api/update?", 12)) {
+        char ver[8];
+        if (title_param(path, tid) || version_param(path, ver, sizeof(ver)))
+            json_msg(fd, 0, "invalid title_id or version");
+        else {
+            int rc = app_set_update(tid, ver, msg, sizeof(msg));
+            json_msg(fd, !rc, msg);
+        }
     } else if (!strcmp(path, "/api/diag")) {
         buf_t b = {0};
         app_diag(&b);

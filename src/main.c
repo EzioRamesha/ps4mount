@@ -963,6 +963,36 @@ static int excluded(const char *tid) {
 
 static retry_table_t g_retry;
 
+/* Update chosen in the panel per title (APP_VER or CAT_NO_UPDATE); others use the highest. */
+#define UPDATES_FILE STATE_DIR "/updates.txt"
+
+static struct {
+    char tid[10], ver[8];
+} g_upd[MAX_TITLES];
+static int g_nupd;
+
+static int updates_add(const char *key, const char *value, void *arg) {
+    (void)arg;
+    if (g_nupd == MAX_TITLES)
+        return 1;
+    snprintf(g_upd[g_nupd].tid, sizeof(g_upd[0].tid), "%s", key);
+    snprintf(g_upd[g_nupd].ver, sizeof(g_upd[0].ver), "%s", value);
+    g_nupd++;
+    return 0;
+}
+
+static void updates_load(void) {
+    g_nupd = 0;
+    kv_each(UPDATES_FILE, updates_add, NULL);
+}
+
+static const char *update_choice(const char *tid) {
+    for (int i = 0; i < g_nupd; i++)
+        if (!strcmp(g_upd[i].tid, tid))
+            return g_upd[i].ver;
+    return NULL;
+}
+
 /* POLICY_ADD, POLICY_KEEP or POLICY_SKIP (see policy_decide); why gets the reason of a skip. */
 static int title_state(title_src_t *t, const char **why) {
     const char *tid = t->app.title_id;
@@ -1757,7 +1787,7 @@ static int catalog_update(catalog_t *cat, const char *root, int fresh) {
         printf("[scan] %s: could not save %s: %s\n", root, file, strerror(errno));
     if (!cat->npkgs)
         return 0;
-    catalog_group(cat);
+    catalog_group(cat, update_choice);
     for (int i = 0; i < cat->npkgs; i++)
         if (cat->pkgs[i].state == CAT_BAD && first_time(cat->pkgs[i].path))
             printf("[scan] skip %s (not a fake PS4 game, update or add-on pkg)\n", cat->pkgs[i].path);
@@ -2251,11 +2281,86 @@ void app_games_json(buf_t *out) {
             json_str(out, in->dir);
             buf_printf(out, ",\"dlc\":%d,\"update_issue\":", in->ndlc);
             json_str(out, in->update_issue);
-            buf_printf(out, "}");
+            const cat_game_t *g = &cat->games[gi];
+            const char *choice = update_choice(tid);
+            buf_printf(out, ",\"drive\":\"%s\",\"update_choice\":", root + 5);
+            json_str(out, choice ? choice : "");
+            buf_printf(out, ",\"updates\":[");
+            for (int k = 0; k < g->nupdates; k++) {
+                buf_printf(out, "%s", k ? "," : "");
+                json_str(out, cat->pkgs[g->updates[k]].app_ver);
+            }
+            buf_printf(out, "]}");
             first = 0;
         }
     }
+    buf_printf(out, "],\"drives\":[");
+    first = 1;
+    for (int i = 0; i < NUM_DRIVES; i++) {
+        char root[32];
+        drive_root(i, root, sizeof(root));
+        struct statfs sf;
+        if (!is_mountpoint(root) || statfs(root, &sf))
+            continue;
+        buf_printf(out, "%s{\"name\":\"%s\",\"games\":%d,\"pkgs\":%d,\"free\":%llu,\"total\":%llu}",
+                   first ? "" : ",", root + 5, g_cat[i].ngames, g_cat[i].npkgs,
+                   (unsigned long long)sf.f_bavail * sf.f_bsize, (unsigned long long)sf.f_blocks * sf.f_bsize);
+        first = 0;
+    }
     buf_printf(out, "]}");
+}
+
+#define MAX_PROBLEMS 500
+
+void app_problems_json(buf_t *out) {
+    static const struct {
+        int role;
+        const char *kind;
+    } kinds[] = {{CAT_ROLE_DUPE, "duplicate"}, {CAT_ROLE_ORPHAN, "addon-without-game"},
+                 {CAT_ROLE_NOGAME, "update-without-game"}};
+    buf_printf(out, "{\"problems\":[");
+    int n = 0;
+    for (int i = 0; i < NUM_DRIVES && n < MAX_PROBLEMS; i++) {
+        char root[32];
+        drive_root(i, root, sizeof(root));
+        const catalog_t *c = &g_cat[i];
+        if (!c->npkgs || !is_mountpoint(root))
+            continue;
+        for (int k = 0; k < c->npkgs && n < MAX_PROBLEMS; k++) {
+            const cat_pkg_t *p = &c->pkgs[k];
+            const char *kind = p->state == CAT_BAD ? "unusable" : NULL;
+            for (size_t j = 0; !kind && j < sizeof(kinds) / sizeof(kinds[0]); j++)
+                if (p->role == kinds[j].role)
+                    kind = kinds[j].kind;
+            if (!kind)
+                continue;
+            buf_printf(out, "%s{\"drive\":\"%s\",\"kind\":\"%s\",\"title_id\":", n ? "," : "", root + 5, kind);
+            json_str(out, p->title_id);
+            buf_printf(out, ",\"path\":");
+            json_str(out, p->path);
+            buf_printf(out, "}");
+            n++;
+        }
+    }
+    buf_printf(out, "]}");
+}
+
+int app_set_update(const char *tid, const char *ver, char *msg, size_t cap) {
+    if (kv_set(UPDATES_FILE, tid, ver[0] ? ver : NULL)) {
+        snprintf(msg, cap, "Could not save the update choice");
+        return -1;
+    }
+    updates_load();
+    retry_clear(&g_retry, tid);
+    g_next_scan = 0;
+    printf("[web] %s: update %s\n", tid, ver[0] ? ver : "highest");
+    if (!ver[0])
+        snprintf(msg, cap, "%s will use its highest update", tid);
+    else if (!strcmp(ver, CAT_NO_UPDATE))
+        snprintf(msg, cap, "%s will run without update", tid);
+    else
+        snprintf(msg, cap, "%s will use update %s", tid, ver);
+    return 0;
 }
 
 int app_icon(const char *tid, buf_t *out) {
@@ -3116,6 +3221,7 @@ int main(void) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     config_load();
     halt_load();
+    updates_load();
     signal(SIGPIPE, SIG_IGN);
     check_firmware();
     if (g_reg_mode != REG_NONE && !g_halt[0])

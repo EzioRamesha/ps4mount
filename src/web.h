@@ -28,6 +28,10 @@ void app_config_json(buf_t *out);
 int app_config_set(const char *body, char *msg, size_t cap);
 /* Fills an icon0.png for tid; 0 on success. */
 int app_icon(const char *tid, buf_t *out);
+/* {"problems":[{drive, kind, title_id, path}]}: unusable pkgs, duplicates, add-ons and updates without game. */
+void app_problems_json(buf_t *out);
+/* Update used for tid: an APP_VER, "none", or "" for the highest. 0 on success. */
+int app_set_update(const char *tid, const char *ver, char *msg, size_t cap);
 /* Plain text report for bug reports: version, firmware, settings, drives, failures, log tail. */
 void app_diag(buf_t *out);
 
