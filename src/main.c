@@ -1789,9 +1789,14 @@ static int catalog_update(catalog_t *cat, const char *root, int fresh) {
     if (!cat->npkgs)
         return 0;
     catalog_group(cat, update_choice);
-    for (int i = 0; i < cat->npkgs; i++)
-        if (cat->pkgs[i].state == CAT_BAD && first_time(cat->pkgs[i].path))
-            printf("[scan] skip %s (not a fake PS4 game, update or add-on pkg)\n", cat->pkgs[i].path);
+    for (int i = 0; i < cat->npkgs; i++) {
+        const cat_pkg_t *p = &cat->pkgs[i];
+        if (p->state == CAT_BAD && first_time(p->path))
+            printf("[scan] skip %s (not a fake PS4 game, update or add-on pkg)\n", p->path);
+        else if (p->state == CAT_SHORT && first_time(p->path))
+            printf("[scan] wait %s: incomplete, %llu of %llu bytes (still copying or cut off)\n", p->path,
+                   (unsigned long long)p->size, (unsigned long long)p->full_size);
+    }
     if (fresh && cat->orphans)
         notify("%s: %d add-on(s) have no game on this drive", root + 5, cat->orphans);
     if (fresh && cat->dupes)
@@ -2329,7 +2334,7 @@ void app_problems_json(buf_t *out) {
             continue;
         for (int k = 0; k < c->npkgs && n < MAX_PROBLEMS; k++) {
             const cat_pkg_t *p = &c->pkgs[k];
-            const char *kind = p->state == CAT_BAD ? "unusable" : NULL;
+            const char *kind = p->state == CAT_BAD ? "unusable" : p->state == CAT_SHORT ? "incomplete" : NULL;
             for (size_t j = 0; !kind && j < sizeof(kinds) / sizeof(kinds[0]); j++)
                 if (p->role == kinds[j].role)
                     kind = kinds[j].kind;
@@ -2339,7 +2344,8 @@ void app_problems_json(buf_t *out) {
             json_str(out, p->title_id);
             buf_printf(out, ",\"path\":");
             json_str(out, p->path);
-            buf_printf(out, "}");
+            buf_printf(out, ",\"size\":%llu,\"full_size\":%llu}", (unsigned long long)p->size,
+                       (unsigned long long)p->full_size);
             n++;
         }
     }
@@ -3199,9 +3205,11 @@ void app_diag(buf_t *out) {
         if (!is_mountpoint(root))
             continue;
         const catalog_t *c = &g_cat[i];
-        int bad = 0;
-        for (int k = 0; k < c->npkgs; k++)
+        int bad = 0, partial = 0;
+        for (int k = 0; k < c->npkgs; k++) {
             bad += c->pkgs[k].state == CAT_BAD;
+            partial += c->pkgs[k].state == CAT_SHORT;
+        }
         struct statfs sf;
         memset(&sf, 0, sizeof(sf));
         unsigned long long total = 0, avail = 0;
@@ -3209,10 +3217,11 @@ void app_diag(buf_t *out) {
             total = (unsigned long long)sf.f_blocks * sf.f_bsize;
             avail = (unsigned long long)sf.f_bavail * sf.f_bsize;
         }
-        buf_printf(out, "Drive %s (%s): %d pkg(s), %d game(s), %d unusable, %d add-on(s) without game, %d duplicate(s), "
-                        "%.1f of %.1f GB free\n",
-                   root + 5, sf.f_fstypename, c->npkgs, c->ngames, bad, c->orphans, c->dupes, avail / 1073741824.0,
-                   total / 1073741824.0);
+        buf_printf(out,
+                   "Drive %s (%s): %d pkg(s), %d game(s), %d unusable, %d incomplete, %d add-on(s) without game, "
+                   "%d duplicate(s), %.1f of %.1f GB free\n",
+                   root + 5, sf.f_fstypename, c->npkgs, c->ngames, bad, partial, c->orphans, c->dupes,
+                   avail / 1073741824.0, total / 1073741824.0);
     }
     buf_printf(out, "Failed:");
     for (int i = 0; i < g_retry.n; i++)

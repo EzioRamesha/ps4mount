@@ -12,7 +12,9 @@
 
 #define CAT_MAX_UPDATES 8
 
-enum { CAT_UNREAD, CAT_BAD, CAT_OK };
+/* CAT_SHORT: a PS4 pkg smaller than its header says, still being copied or cut off. It is
+ * read again when its size or time changes, and never saved in the cache. */
+enum { CAT_UNREAD, CAT_BAD, CAT_OK, CAT_SHORT };
 
 /* What a pkg is used for, set by catalog_group. */
 enum {
@@ -30,8 +32,9 @@ enum {
 typedef struct {
     char path[PATH_MAX];
     uint64_t size;
+    uint64_t full_size;                   /* CAT_SHORT: the size the header gives */
     int64_t mtime;
-    int state;                            /* CAT_UNREAD, CAT_BAD (not a fake PS4 pkg) or CAT_OK */
+    int state;                            /* CAT_UNREAD, CAT_BAD (not a fake PS4 pkg), CAT_OK or CAT_SHORT */
     char category[4];                     /* gd game, gp update, ac add-on */
     char title_id[10], content_id[37], app_ver[8];
     char services[CAT_MAX_SERVICES][20];  /* add-on content ID prefixes a game or update lists */

@@ -133,7 +133,8 @@ td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-b
 <script>
 var games = [], busy = {}, drives = [], selected = {};
 var kinds = {duplicate: 'Same game on more than one place (this copy is not used)', 'addon-without-game': 'Add-on without its game',
-  'update-without-game': 'Update without its game', unusable: 'Cannot be read (damaged, not a PS4 pkg, or not game/update/add-on)'};
+  'update-without-game': 'Update without its game', unusable: 'Cannot be read (damaged, not a PS4 pkg, or not game/update/add-on)',
+  incomplete: 'Incomplete: still copying or cut off; used once complete'};
 var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', duplicate: 'On another drive', failed: 'Failed', excluded: 'Never added'};
 var order = {running: 0, ready: 1, pending: 2, failed: 3, removed: 4, excluded: 5, duplicate: 6, internal: 7};
 
@@ -366,7 +367,9 @@ $('probbtn').onclick = function () {
   api('/api/problems').then(function (j) {
     var h = '';
     j.problems.forEach(function (p) {
-      h += '<tr><td>' + esc(kinds[p.kind] || p.kind) + '</td><td>' + esc(p.title_id || '-') + '</td><td>' + esc(p.path) + '</td></tr>';
+      var what = kinds[p.kind] || p.kind;
+      if (p.kind === 'incomplete' && p.full_size) what += ' (' + gb(p.size) + ' of ' + gb(p.full_size) + ')';
+      h += '<tr><td>' + esc(what) + '</td><td>' + esc(p.title_id || '-') + '</td><td>' + esc(p.path) + '</td></tr>';
     });
     $('problems').innerHTML = h ? '<table><tr><th>Problem</th><th>Title</th><th>Pkg</th></tr>' + h + '</table>' :
       '<p>No problems found in the last scan.</p>';
