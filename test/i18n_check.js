@@ -53,7 +53,7 @@ while ((m = call.exec(code))) {
   lits.forEach(function (l) { needed.add(new Function('return ' + l)()); });
 }
 /* Texts kept in tables and translated where they are shown. */
-['labels', 'kinds', 'addonLabels', 'ask'].forEach(function (name) {
+['labels', 'kinds', 'addonLabels', 'ask', 'roleNames'].forEach(function (name) {
   const r = new RegExp('var ' + name + ' = (\\{[\\s\\S]*?\\})(;|\\[)');
   const found = r.exec(script);
   if (!found) { fail('table ' + name + ' not found'); return; }
