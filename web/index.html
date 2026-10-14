@@ -780,8 +780,8 @@ $('diagbtn').onclick = function () {
     .catch(function (e) { toast(t('Could not read the diagnostics: {e}', {e: e.message})); });
 };
 $('diagcopy').onclick = function () {
-  var t = $('diag');
-  t.focus(); t.select();
+  var ta = $('diag');
+  ta.focus(); ta.select();
   var ok = false;
   try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
   toast(t(ok ? 'Copied' : 'Select the text and copy it'));
