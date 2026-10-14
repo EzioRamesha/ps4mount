@@ -43,6 +43,8 @@ The web panel, opened from the **Media** tab:
   add-on can be turned off and on again in the panel.
 - Optionally uses an update or add-ons from another drive than the game.
 - Waits for pkgs that are still being copied (or were cut off) instead of failing on them.
+- Tests the read speed of each drive when it is connected, and warns when it is much slower than
+  usual, which usually means a loose or bad cable, or a USB 2 port.
 - Adds many games in groups, so a drive with dozens of games does not overload the console.
 - Stops adding games as soon as the system reports a corrupted database, and stops retrying a game
   that failed 3 times, so a problem never turns into an endless loop (see [Safety](#safety)).
@@ -147,6 +149,24 @@ The summary shows the free and total space of each drive. A drive with less than
 marked **almost full**, and a notification says so once (again only after space was freed and ran low
 again).
 
+**Drive speed.** A cable that is not pushed in well, a worn cable or a USB 2 port can make a fast drive
+fall back to USB 2 speed (about 40 MB/s instead of 300 or more). The drive still works, so this
+otherwise only shows as games loading slowly or stuttering. PS4Mount checks it:
+
+- After a drive is connected (and once after PS4Mount starts), it reads 64 MB of the drive's largest
+  pkg. When the speed is under half of that drive's best earlier result, a notification says so, for
+  example `usb0 reads at 38 MB/s, usually 410 MB/s: check the cable or port`.
+- Pick a drive in the drive filter and click **Test speed** for a longer test (256 MB, at most 20
+  seconds). The result shows next to the drive in the summary, in orange when it is slower than usual.
+  The first test of a drive under 45 MB/s is marked "USB 2 speed": normal for a USB stick, low for an
+  SSD.
+
+A test only reads; nothing is written to the drive. It does not run while a PS4Mount game is open or
+games are being added, so it never slows a game down; the check after connecting waits until then.
+The best speed of each drive is kept in `/data/ps4mount/speed.txt`, by the drive's exact size (two
+drives of exactly the same size share it). The test needs a pkg of at least 64 MB on the drive. It
+finds a drive that is slow when tested; a cable that only drops out now and then can still pass.
+
 A game with update pkgs has an **Update** list: **highest** (the default), **No update**, or a
 specific version. The game is added again with the chosen update; the choice is kept in
 `/data/ps4mount/updates.txt`. "with update from another drive" next to the version means the update
@@ -183,6 +203,7 @@ Buttons:
 - **Add to library**: adds a removed game back.
 - **Scan for games**: checks the drives now and shows how many games were found on each one. With a
   drive picked in the drive filter, the button becomes **Scan usbN** and checks that drive only.
+- **Test speed**: with a drive picked in the drive filter, measures its read speed (see above).
 - **Settings**: see below.
 - **Problems**: lists the pkgs found but not used (see [Usage](#usage)).
 - **Log**: shows the end of the PS4Mount log; **Download the whole log** saves it as
@@ -377,6 +398,7 @@ release with `ps4mount.elf` and its SHA-256 checksum attached.
 | `src/pkg.c` | PKG reader and fake-key entry decryption |
 | `src/catalog.c` | Finds the `.pkg` files in every folder of a drive, groups them per game and keeps what was read in `/data/ps4mount/catalog-<drive>.txt` |
 | `src/safety.c` | Database corruption reports and the limit on retries |
+| `src/speed.c` | Read speed test of a drive, on one of its pkgs |
 | `src/build.c` | Generators for the install files (app/patch metadata, PlayGo records, license) |
 | `src/db.c` | Library rows (`app.db`, `appinfo.db`) |
 | `src/crypto.c` | SHA-256, AES-128-CBC, CRC32C, RSA-2048 |
