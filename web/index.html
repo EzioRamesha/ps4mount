@@ -69,6 +69,22 @@ select{background:var(--panel);color:var(--fg);border:1px solid var(--line);bord
 .addons summary{cursor:pointer;color:var(--muted)}
 .addons label{display:flex;gap:8px;align-items:flex-start;padding:4px 0}
 .addons small{display:block;color:var(--muted);word-break:break-all}
+.fmbar{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-bottom:10px;color:var(--muted);font-size:13px}
+.fmbar button{min-height:32px;padding:2px 10px;font-size:13px}
+.fmlist{max-height:60vh;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.fmrow{display:flex;gap:10px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);cursor:pointer}
+.fmrow:last-child{border-bottom:none}
+.fmrow:hover{background:#1d222b}
+.fmrow .fmicon{width:36px;height:36px;border-radius:6px;background:#0b0d11 center/cover no-repeat;flex:none;display:flex;align-items:center;justify-content:center;font-size:18px}
+.fmrow .fmname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fmrow small{display:block;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fmrow .fmsize{color:var(--muted);font-size:12px;flex:none}
+/* #fmnew sits beside a Close wrapped in a display:contents form for the "method=dialog"
+   close pattern used everywhere else; that Close button is still the form's only child, so
+   the shared button:only-child{grid-column:1/-1} rule above would wrongly give it the whole
+   row. Put it back in the normal flow here so the two sit side by side like other dialogs
+   with two plain actions. */
+#fmdlg .actions button:only-child{grid-column:auto}
 table{width:100%;border-collapse:collapse;font-size:13px}
 td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-break:break-all}
 #toast{position:fixed;right:20px;bottom:20px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 16px;display:none;max-width:420px}
@@ -84,6 +100,7 @@ td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-b
     <button id="rescan" class="primary">Scan for games</button>
     <button id="speedbtn" hidden>Test speed</button>
     <button id="probbtn">Problems</button>
+    <button id="filesbtn">Files</button>
     <button id="settingsbtn">Settings</button>
     <button id="logbtn">Log</button>
     <button id="diagbtn">Diagnostics</button>
@@ -153,6 +170,13 @@ td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-b
 <p style="color:var(--muted);font-size:13px">Pkgs that are found but not used. Nothing here is deleted or changed by PS4Mount.</p>
 <div id="problems" style="max-height:60vh;overflow:auto"></div>
 <div class="actions" style="padding:10px 0 0"><form method="dialog"><button>Close</button></form></div></dialog>
+<dialog id="fmdlg"><h3>Files</h3>
+<div class="fmbar"><span id="fmcrumbs"></span></div>
+<div id="fmlist" class="fmlist"></div>
+<div class="actions" style="padding:10px 0 0">
+  <button id="fmnew">New folder</button>
+  <form method="dialog" style="display:contents"><button>Close</button></form>
+</div></dialog>
 <div id="toast" role="status" aria-live="polite"></div>
 <script>
 var games = [], busy = {}, drives = [], selected = {}, openAddons = {}, stateFilter = '';
@@ -740,6 +764,76 @@ $('probbtn').onclick = function () {
     $('probdlg').showModal();
   }).catch(function (e) { toast(t('Could not read the problems: {e}', {e: e.message})); });
 };
+
+/* Files dialog: browse a drive's folders. sel and moving are state for Task 6 (the file
+   sheet and move/rename/delete), not used yet. */
+var fm = {path: '', entries: [], sel: {}, moving: null};
+/* CAT_ROLE_* in src/catalog.h: NONE, APP, PATCH, DLC, DUPE, ORPHAN, SPARE, NOGAME. */
+var roleNames = {1: 'Game', 2: 'Update', 3: 'Add-on', 4: 'Duplicate', 5: 'Orphan add-on', 6: 'Spare update', 7: 'Orphan update'};
+
+/* A pkg's display name: add-ons carry their own title; a game or update pkg has no title
+   in the catalog, so look its game up by title_id in the games list already loaded for the
+   grid, and fall back to the file name when the title is not known there either (not yet
+   scanned, or a pkg catalog_group left ungrouped). */
+function fmPkgName(pkg, fallback) {
+  if (pkg.title) return pkg.title;
+  for (var i = 0; i < games.length; i++)
+    if (games[i].title_id === pkg.title_id) return games[i].name;
+  return fallback;
+}
+
+function fmOpen(path) {
+  api('/api/fm/list?path=' + encodeURIComponent(path)).then(function (j) {
+    fm.path = j.path; fm.entries = j.entries; fm.sel = {};
+    fmRender();
+  }).catch(function (e) { toast(t('Error: {e}', {e: e.message})); });
+}
+
+function fmRender() {
+  var parts = fm.path.split('/').filter(Boolean); /* mnt usb0 games ... */
+  var html = '', acc = '';
+  for (var i = 1; i < parts.length; i++) { /* skip "mnt": crumbs start at the drive */
+    acc = i === 1 ? '/mnt/' + parts[1] : acc + '/' + parts[i];
+    html += (i > 1 ? ' / ' : '') + '<button type="button" data-crumb="' + esc(acc) + '">' + esc(parts[i]) + '</button>';
+  }
+  $('fmcrumbs').innerHTML = html;
+  var rows = fm.entries.slice().sort(function (a, b) {
+    return (b.dir - a.dir) || a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+  }).map(function (e) {
+    var icon = e.dir ? '📁' : (e.pkg ? '' : '📄');
+    var iconStyle = e.pkg ? ' style="background-image:url(/icon/' + esc(e.pkg.title_id) + ')"' : '';
+    var label = e.pkg ? fmPkgName(e.pkg, e.name) : e.name;
+    var meta = e.dir ? '' : gb(e.size);
+    var sub = e.pkg ? t(roleNames[e.pkg.role] || 'Pkg') + (e.pkg.version ? ' v' + esc(e.pkg.version) : '') +
+      (e.pkg.protected ? ' · ' + t('in use') : '') : '';
+    return '<div class="fmrow" data-name="' + esc(e.name) + '"><span class="fmicon"' + iconStyle + '>' + icon + '</span>' +
+      '<span class="fmname">' + esc(label) + (sub || e.pkg ? '<small>' + esc(e.name) + (sub ? ' · ' + sub : '') + '</small>' : '') + '</span>' +
+      '<span class="fmsize">' + meta + '</span></div>';
+  }).join('');
+  $('fmlist').innerHTML = rows || '<div class="fmrow">' + t('Empty folder') + '</div>';
+}
+
+/* The sheet of actions for a file row (rename, delete, move) is Task 6; a click on a file
+   does nothing until then. */
+function fmSheet(entry) {}
+
+$('filesbtn').addEventListener('click', function () {
+  var start = drives.length ? '/mnt/' + drives[0].name : '/mnt/usb0';
+  fmOpen($('drive').value ? '/mnt/' + $('drive').value : start);
+  $('fmdlg').showModal();
+});
+$('fmcrumbs').addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-crumb]');
+  if (b) fmOpen(b.getAttribute('data-crumb'));
+});
+$('fmlist').addEventListener('click', function (e) {
+  var row = e.target.closest('.fmrow[data-name]');
+  if (!row) return;
+  var entry = fm.entries.filter(function (x) { return x.name === row.getAttribute('data-name'); })[0];
+  if (!entry) return;
+  if (entry.dir) fmOpen(fm.path + '/' + entry.name);
+  else fmSheet(entry); /* Task 6 */
+});
 $('summary').addEventListener('click', function (e) {
   var st = e.target.getAttribute && e.target.getAttribute('data-state');
   if (!st) return;
