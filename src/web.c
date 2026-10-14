@@ -38,6 +38,8 @@ int web_listen(void) {
 /* The panel is served from the daemon's main loop: a client that stops reading
  * (each write may block SO_SNDTIMEO) is dropped after SEND_LIMIT seconds. */
 #define SEND_LIMIT 10
+/* a client that drips the request line is dropped after READ_LIMIT seconds */
+#define READ_LIMIT 3
 
 static void send_all(int fd, const void *p, size_t n) {
     const char *c = p;
@@ -311,8 +313,13 @@ void web_serve(int listen_fd) {
      * is fully buffered. Parsing method/path against a half-arrived line would make the 414
      * guard below misread a merely-not-yet-received target as too long. Keep reading (bounded
      * by the same SO_RCVTIMEO as a stalled client) until a newline shows the line is complete,
-     * or the buffer is full (a genuinely over-long target, which the 414 guard then catches). */
-    while (!memchr(req, '\n', (size_t)n) && (size_t)n < sizeof(req) - 1) {
+     * or the buffer is full (a genuinely over-long target, which the 414 guard then catches).
+     * The per-read SO_RCVTIMEO alone is not enough: a client that drips one byte every couple
+     * of seconds would keep every read() succeeding and stall the daemon's single-threaded
+     * main loop for as long as it likes, so this also enforces a READ_LIMIT cumulative deadline,
+     * exactly like send_all's SEND_LIMIT above. */
+    time_t read_start = time(NULL);
+    while (!memchr(req, '\n', (size_t)n) && (size_t)n < sizeof(req) - 1 && time(NULL) - read_start < READ_LIMIT) {
         ssize_t m = read(fd, req + n, sizeof(req) - 1 - (size_t)n);
         if (m <= 0)
             break;

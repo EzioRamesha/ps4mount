@@ -138,6 +138,29 @@ static void test_silent_client(int listen_fd) {
     close(c);
 }
 
+/* A client that sends a few bytes of a request line and then nothing -- no newline ever
+ * arrives -- must not stall the daemon's single-threaded main loop: web_serve's own
+ * READ_LIMIT (3s) cumulative deadline on top of the per-read SO_RCVTIMEO (2s) must still
+ * close it out quickly, well under the 15 s used for test_stalled_reader above. */
+static void test_drip_client(int listen_fd) {
+    printf("client that drips the request line\n");
+    int c = connect_panel();
+    CHECK(c >= 0);
+    const char partial[] = "GET /x";
+    CHECK(write(c, partial, sizeof(partial) - 1) == (ssize_t)(sizeof(partial) - 1));
+    int s = serve_seconds(listen_fd, 10);
+    printf("  served in %d s\n", s);
+    CHECK(s >= 0 && s <= 5);
+    char resp[256] = {0};
+    size_t len = 0;
+    ssize_t r;
+    while (len + 1 < sizeof(resp) && (r = read(c, resp + len, sizeof(resp) - 1 - len)) > 0)
+        len += (size_t)r;
+    resp[len] = 0;
+    CHECK(strstr(resp, "414") != NULL); /* never silently dispatched with a partial path */
+    close(c);
+}
+
 /* Sends req and returns the whole response in out (served by a child process). */
 static void request(int listen_fd, const char *req, char *out, size_t n) {
     out[0] = 0;
@@ -464,6 +487,7 @@ int main(void) {
         test_pin_guard(listen_fd);
         test_stalled_reader(listen_fd);
         test_silent_client(listen_fd);
+        test_drip_client(listen_fd);
         close(listen_fd);
     }
     printf("%d checks, %d failed\n", g_checks, g_failed);
