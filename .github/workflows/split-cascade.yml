@@ -1,0 +1,118 @@
+name: PR #12 split cascade
+
+# Advances the sequential split of the old PR #12 (gasb07/ps4mount) into five smaller,
+# independently reviewable PRs: split/1-stability .. split/5-file-manager. A cross-fork
+# PR's base can only be gasb07/ps4mount:main (GitHub does not let a PR base on another
+# fork's branch), so each slice can only be opened once the one before it has merged into
+# main - otherwise its diff would show every earlier slice's commits too. This workflow
+# polls on a schedule, and the moment it finds the current slice merged, rebases the next
+# branch onto the fresh main, runs the full test suite, pushes, and opens the next PR.
+#
+# Safe to delete once all five PRs have merged.
+
+on:
+  schedule:
+    - cron: '13 */6 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  advance:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+    steps:
+      - name: Install xxd
+        run: sudo apt-get update && sudo apt-get install -y xxd
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ secrets.GH_PAT }}
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/gasb07/ps4mount.git
+          git fetch upstream main
+
+      - name: Advance the cascade by at most one PR
+        run: |
+          set -e
+          SLICES=(1-stability 2-pkgs-in-place 3-panel-tools 4-speed-launch-polish 5-file-manager)
+          TITLES=(
+            "Stability fixes"
+            "Pkgs in place: use pkgs without moving them"
+            "Panel: diagnostics, problems, PIN, translations and tools"
+            "Speed test, launch from the panel and panel polish"
+            "File manager: browse, rename, move and delete pkgs"
+          )
+
+          for i in "${!SLICES[@]}"; do
+            n=$((i + 1))
+            branch="split/${SLICES[$i]}"
+            pr_json=$(gh pr list -R gasb07/ps4mount --head "${branch}" --state all \
+              --json number,state,url --jq '.[0] // empty')
+
+            if [ -z "$pr_json" ]; then
+              # No PR yet for this slice.
+              if [ "$n" -eq 1 ]; then
+                echo "PR1 somehow missing; not opening it automatically (should already exist)."
+                exit 0
+              fi
+              prev_branch="split/${SLICES[$((i - 1))]}"
+              prev_json=$(gh pr list -R gasb07/ps4mount --head "${prev_branch}" --state all \
+                --json number,state --jq '.[0] // empty')
+              prev_state=$(echo "$prev_json" | jq -r '.state // "NONE"')
+
+              if [ "$prev_state" != "MERGED" ]; then
+                echo "Slice $((n - 1)) ($prev_branch) is '$prev_state', not MERGED yet. Nothing to do."
+                exit 0
+              fi
+
+              echo "Slice $((n - 1)) is merged. Rebasing $branch onto the fresh upstream/main and opening PR $n."
+              git checkout "$branch"
+              if ! git rebase upstream/main; then
+                git rebase --abort
+                echo "::error::Rebasing $branch onto upstream/main hit conflicts. Needs a human to resolve by hand."
+                exit 1
+              fi
+
+              if ! bash test/run.sh; then
+                echo "::error::test/run.sh failed on $branch after rebasing onto upstream/main. Not opening a PR."
+                exit 1
+              fi
+
+              git push origin "$branch" --force-with-lease
+
+              prev_num=$(echo "$prev_json" | jq -r '.number')
+              body="Slice $n of 5 in the split of #12 (see that PR's history for context). Follows
+          now that slice $((n - 1)) (#$prev_num) has merged.
+
+          Part of the sequence: split/1-stability, split/2-pkgs-in-place,
+          split/3-panel-tools, split/4-speed-launch-polish, split/5-file-manager — each
+          opened once the one before it lands, so every diff here is only this slice's
+          own commits."
+              url=$(gh pr create -R gasb07/ps4mount \
+                --base main --head "${branch}" \
+                --title "${TITLES[$i]} (${n}/5 of the #12 split)" \
+                --body "$body")
+              echo "::notice::Opened PR $n: $url"
+              exit 0
+            fi
+
+            state=$(echo "$pr_json" | jq -r '.state')
+            if [ "$state" = "OPEN" ]; then
+              echo "Slice $n ($branch) PR is still OPEN. Nothing to do."
+              exit 0
+            elif [ "$state" = "CLOSED" ]; then
+              echo "::error::Slice $n ($branch) PR was closed without merging. The cascade is stuck; needs a human decision."
+              exit 1
+            fi
+            # MERGED: fall through to check the next slice.
+          done
+
+          echo "All five slices are merged. The split cascade is complete."
