@@ -21,6 +21,9 @@ static int record(const char *call, const char *arg, char *msg, size_t cap) {
 void app_games_json(buf_t *out) { buf_printf(out, "{\"version\":\"test\",\"games\":[]}"); }
 int app_add(const char *tid, char *msg, size_t cap) { return record("add", tid, msg, cap); }
 int app_remove(const char *tid, char *msg, size_t cap) { return record("remove", tid, msg, cap); }
+int app_exclude(const char *tid, int on, char *msg, size_t cap) {
+    return record(on ? "exclude" : "include", tid, msg, cap);
+}
 void app_rescan(void) {
     char m[8];
     record("rescan", NULL, m, sizeof(m));

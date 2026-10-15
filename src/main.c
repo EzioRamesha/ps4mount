@@ -46,6 +46,7 @@
 #include "logts.h"
 #include "origin.h"
 #include "pkg.h"
+#include "policy.h"
 #include "safety.h"
 #include "web.h"
 #include "icon_data.h"
@@ -77,11 +78,21 @@ typedef struct {
     int npaths;
     int organize; /* pkgs are moved into <root>/ps4/<TID>/; off: they are used where they are */
     int restore_batch; /* games removed from the library per group when moving pkgs back */
+    char ignore[MAX_SCAN_PATHS][128]; /* folders the scan never enters, relative to each drive */
+    int nignore;
+    int interval; /* seconds between scans */
 } config_t;
 
 #define MAX_RESTORE_BATCH 10
+#define MIN_INTERVAL 10
+#define MAX_INTERVAL 300
 
-static config_t g_cfg = {1, 5, 1, {""}, 1, 0, 5};
+static config_t g_cfg = {1, 5, 1, {""}, 1, 0, 5, {""}, 0, SCAN_SECONDS};
+
+/* Set when the system log reports a corrupted system database: no game is added until
+ * the user resumes in the panel. Kept in HALT_FILE across restarts. */
+#define HALT_FILE STATE_DIR "/halted.txt"
+static char g_halt[256];
 
 /* --- drives and the pkgs found on them --- */
 
@@ -954,21 +965,38 @@ static int served_elsewhere(const char *tid, const char *dir) {
     return exists(pkg);
 }
 
-static int title_state(title_src_t *t) {
+/* Games the user chose never to add (panel): one title ID per line. */
+#define EXCLUDED_FILE STATE_DIR "/excluded.txt"
+
+static int excluded(const char *tid) {
+    char v[8];
+    return !kv_get(EXCLUDED_FILE, tid, v, sizeof(v));
+}
+
+static retry_table_t g_retry;
+
+/* POLICY_ADD, POLICY_KEEP or POLICY_SKIP (see policy_decide); why gets the reason of a skip. */
+static int title_state(title_src_t *t, const char **why) {
     const char *tid = t->app.title_id;
-    if (installed_internally(tid) || removed(tid))
-        return -1;
-    if (served_elsewhere(tid, t->dir)) {
-        if (first_time(t->app_path))
-            printf("[scan] %s: %s is already served from another drive, this copy is not used\n", t->dir, tid);
-        return -1;
+    game_facts_t f = {0};
+    f.internal = installed_internally(tid);
+    f.removed = removed(tid);
+    f.excluded = excluded(tid);
+    f.elsewhere = !f.internal && served_elsewhere(tid, t->dir);
+    f.halted = g_halt[0] != 0;
+    f.retry_wait = retry_waiting(&g_retry, tid, time(NULL));
+    f.registered = db_is_registered(tid);
+    if (f.registered) {
+        char pdb[PATH_MAX];
+        snprintf(pdb, sizeof(pdb), "/user/playgo/app/%s/00/d0.pdb", t->app.content_id);
+        /* folders set up by 0.3.1 and older lack the internal folder: registered again */
+        f.installed = exists(pdb) && marker_matches(tid, t->marker) && hold_ready("app", tid, "app.pkg") &&
+                      (!t->has_patch || hold_ready("patch", tid, "patch.pkg")) && dlc_ready(t);
     }
-    char pdb[PATH_MAX];
-    snprintf(pdb, sizeof(pdb), "/user/playgo/app/%s/00/d0.pdb", t->app.content_id);
-    /* folders set up by 0.3.1 and older lack the internal folder: registered again */
-    return !db_is_registered(tid) || !exists(pdb) || !marker_matches(tid, t->marker) ||
-           !hold_ready("app", tid, "app.pkg") || (t->has_patch && !hold_ready("patch", tid, "patch.pkg")) ||
-           !dlc_ready(t);
+    int d = policy_decide(&f, why);
+    if (d == POLICY_SKIP && f.elsewhere && first_time(t->app_path))
+        printf("[scan] %s: %s is already served from another drive, this copy is not used\n", t->dir, tid);
+    return d;
 }
 
 static void pump_events(int ms);
@@ -1002,11 +1030,6 @@ static void enforce_patch_sfo(title_src_t *t) {
 typedef int (*title_dir_fn)(const char *title_id, const char *dir, void *reserved);
 
 static int g_reg_mode = REG_ALL;
-
-/* Set when the system log reports a corrupted system database: no game is added until
- * the user resumes in the panel. Kept in HALT_FILE across restarts. */
-#define HALT_FILE STATE_DIR "/halted.txt"
-static char g_halt[256];
 static title_dir_fn g_title_dir;
 static char g_fw_text[16] = "unknown";
 
@@ -1702,7 +1725,10 @@ static int catalog_update(catalog_t *cat, const char *root, int fresh) {
     int before = cat->npkgs;
     g_walk_root = root;
     g_walk_restored = exists(RESTORED_LIST);
-    int unread = catalog_walk(cat, root, walk_skip);
+    const char *ignore[MAX_SCAN_PATHS];
+    for (int i = 0; i < g_cfg.nignore; i++)
+        ignore[i] = g_cfg.ignore[i];
+    int unread = catalog_walk(cat, root, walk_skip, ignore, g_cfg.nignore);
     if (fresh && cat->npkgs)
         notify("Scanning %s for PS4 games...", root + 5);
     if (unread) {
@@ -1742,7 +1768,7 @@ static void scan_root(const char *root, int fresh, int reconnected) {
         return;
     }
     static title_t titles[MAX_TITLES];
-    int count = 0, pending = 0;
+    int count = 0, pending = 0, paused = 0;
     for (int gi = 0; gi < cat->ngames && count < MAX_TITLES; gi++) {
         const char *tid = cat->games[gi].title_id;
         title_src_t src;
@@ -1758,10 +1784,10 @@ static void scan_root(const char *root, int fresh, int reconnected) {
         snprintf(t->name, sizeof(t->name), "%s", src.name);
         t->ndlc = src.ndlc;
         t->has_patch = src.has_patch;
-        t->state = title_state(&src);
-        if (t->state == 1 && retry_waiting(&g_retry, t->tid, time(NULL)))
-            t->state = -1; /* failed recently (tried again later) or given up */
-        pending += t->state == 1;
+        const char *why;
+        t->state = title_state(&src, &why);
+        paused += t->state == POLICY_SKIP && !strcmp(why, POLICY_WHY_PAUSED);
+        pending += t->state == POLICY_ADD;
         if (t->state == 0)
             keep_mounted(&src); /* while its pkgs are open: they are not read again */
         write_name_file(&src);
@@ -1774,14 +1800,11 @@ static void scan_root(const char *root, int fresh, int reconnected) {
         notify("%s: %d PS4 game(s) found, %d new or updated", label, count, pending);
     else if (pending)
         notify("%s: %d new or updated PS4 game(s)", label, pending);
+    if (paused && fresh)
+        notify("%s: %d game(s) not added: adding games is paused (%s). Resume in the PS4Mount panel", label, paused,
+               g_halt);
     if (!pending)
         return;
-    if (g_halt[0]) {
-        if (fresh)
-            notify("%s: %d game(s) not added: adding games is paused (%s). Resume in the PS4Mount panel", label,
-                   pending, g_halt);
-        return;
-    }
 
     /* New or changed games, in groups: one AppInstallAll per group and a quiet
      * period between groups, so the system is never flooded with registrations. */
@@ -2217,20 +2240,16 @@ void app_games_json(buf_t *out) {
                 mount = sf.f_flags & MNT_RDONLY ? "ro" : "rw";
             }
             managed_t *m = managed_by(tid, NULL);
-            if (installed_internally(tid))
-                state = "internal";
-            else if (served_elsewhere(tid, dir))
-                state = "duplicate";
-            else if (removed(tid))
-                state = "removed";
-            else if (m && m->running)
-                state = "running";
-            else if (mounted && db_is_registered(tid))
-                state = "ready";
-            else if (retry_given_up(&g_retry, tid))
-                state = "failed";
-            else
-                state = "pending";
+            panel_facts_t pf = {0};
+            pf.internal = installed_internally(tid);
+            pf.elsewhere = !pf.internal && served_elsewhere(tid, dir);
+            pf.removed = removed(tid);
+            pf.excluded = excluded(tid);
+            pf.running = m && m->running;
+            pf.mounted = mounted;
+            pf.registered = db_is_registered(tid);
+            pf.given_up = retry_given_up(&g_retry, tid);
+            state = policy_panel_state(&pf);
             buf_printf(out, "%s{\"title_id\":\"%s\",\"name\":", first ? "" : ",", tid);
             json_str(out, in->name);
             buf_printf(out, ",\"version\":");
@@ -2377,6 +2396,34 @@ static void readd_title(const char *tid) {
     if (!rc)
         wait_db_quiet(3, 30);
     app_add(tid, msg, sizeof(msg));
+}
+
+int app_exclude(const char *tid, int on, char *msg, size_t cap) {
+    char rm[64];
+    snprintf(rm, sizeof(rm), STATE_DIR "/%s.removed", tid);
+    if (!on) {
+        if (kv_set(EXCLUDED_FILE, tid, NULL)) {
+            snprintf(msg, cap, "Could not update the list of games never added");
+            return -1;
+        }
+        unlink(rm);
+        retry_clear(&g_retry, tid);
+        g_next_scan = 0;
+        printf("[web] %s allowed again\n", tid);
+        snprintf(msg, cap, "%s will be added on the next scan", tid);
+        return 0;
+    }
+    char app[64];
+    snprintf(app, sizeof(app), "/user/app/%s", tid);
+    if ((db_is_registered(tid) || mounted_from(app, NULL, 0)) && !exists(rm) && app_remove(tid, msg, cap))
+        return -1;
+    if (kv_set(EXCLUDED_FILE, tid, "1")) {
+        snprintf(msg, cap, "Could not update the list of games never added");
+        return -1;
+    }
+    printf("[web] %s set to never be added\n", tid);
+    snprintf(msg, cap, "%s will not be added again. The pkgs stay on the drive.", tid);
+    return 0;
 }
 
 /* --- moving pkgs back where they came from --- */
@@ -2810,10 +2857,12 @@ static int clean_scan_path(const char *in, char *out, size_t n, char *why, size_
 
 static void config_save(void) {
     buf_t b = {0};
-    buf_printf(&b, "batch=%d\nbatch_size=%d\ndlc=%d\norganize=%d\nrestore_batch=%d\n", g_cfg.batch,
-               g_cfg.batch_size, g_cfg.dlc, g_cfg.organize, g_cfg.restore_batch);
+    buf_printf(&b, "batch=%d\nbatch_size=%d\ndlc=%d\norganize=%d\nrestore_batch=%d\ninterval=%d\n", g_cfg.batch,
+               g_cfg.batch_size, g_cfg.dlc, g_cfg.organize, g_cfg.restore_batch, g_cfg.interval);
     for (int i = 0; i < g_cfg.npaths; i++)
         buf_printf(&b, "path=%s\n", g_cfg.paths[i]);
+    for (int i = 0; i < g_cfg.nignore; i++)
+        buf_printf(&b, "ignore=%s\n", g_cfg.ignore[i]);
     if (b.failed)
         printf("[config] out of memory: settings not saved\n");
     else
@@ -2826,7 +2875,7 @@ static void config_load(void) {
     if (!f)
         return;
     config_t c = g_cfg;
-    c.npaths = 0;
+    c.npaths = c.nignore = 0;
     char line[256], why[160], path[128];
     while (fgets(line, sizeof(line), f)) {
         line[strcspn(line, "\r\n")] = 0;
@@ -2840,6 +2889,11 @@ static void config_load(void) {
             c.organize = atoi(line + 9) != 0;
         else if (!strncmp(line, "restore_batch=", 14))
             c.restore_batch = atoi(line + 14);
+        else if (!strncmp(line, "interval=", 9))
+            c.interval = atoi(line + 9);
+        else if (!strncmp(line, "ignore=", 7) && c.nignore < MAX_SCAN_PATHS &&
+                 !clean_scan_path(line + 7, path, sizeof(path), why, sizeof(why)) && path[0])
+            snprintf(c.ignore[c.nignore++], sizeof(c.ignore[0]), "%s", path);
         else if (!strncmp(line, "path=", 5) && c.npaths < MAX_SCAN_PATHS &&
                  !clean_scan_path(line + 5, path, sizeof(path), why, sizeof(why)))
             snprintf(c.paths[c.npaths++], sizeof(c.paths[0]), "%s", path);
@@ -2849,21 +2903,31 @@ static void config_load(void) {
         c.batch_size = 5;
     if (c.restore_batch < 1 || c.restore_batch > MAX_RESTORE_BATCH)
         c.restore_batch = 5;
+    if (c.interval < MIN_INTERVAL || c.interval > MAX_INTERVAL)
+        c.interval = SCAN_SECONDS;
     if (!c.npaths)
         c.npaths = 1; /* the root */
     g_cfg = c;
-    printf("[config] batch=%d batch_size=%d dlc=%d organize=%d restore_batch=%d folders=%d\n", g_cfg.batch,
-           g_cfg.batch_size, g_cfg.dlc, g_cfg.organize, g_cfg.restore_batch, g_cfg.npaths);
+    printf("[config] batch=%d batch_size=%d dlc=%d organize=%d restore_batch=%d folders=%d ignored=%d interval=%d\n",
+           g_cfg.batch, g_cfg.batch_size, g_cfg.dlc, g_cfg.organize, g_cfg.restore_batch, g_cfg.npaths,
+           g_cfg.nignore, g_cfg.interval);
 }
 
 void app_config_json(buf_t *out) {
     buf_printf(out, "{\"batch\":%s,\"batch_size\":%d,\"dlc\":%s,\"organize\":%s,\"restore_batch\":%d,"
-                    "\"max_restore_batch\":%d,\"paths\":[",
+                    "\"max_restore_batch\":%d,\"interval\":%d,\"paths\":[",
                g_cfg.batch ? "true" : "false", g_cfg.batch_size, g_cfg.dlc ? "true" : "false",
-               g_cfg.organize ? "true" : "false", g_cfg.restore_batch, MAX_RESTORE_BATCH);
+               g_cfg.organize ? "true" : "false", g_cfg.restore_batch, MAX_RESTORE_BATCH, g_cfg.interval);
     for (int i = 0; i < g_cfg.npaths; i++) {
         char shown[130];
         snprintf(shown, sizeof(shown), "/%s", g_cfg.paths[i]);
+        buf_printf(out, "%s", i ? "," : "");
+        json_str(out, shown);
+    }
+    buf_printf(out, "],\"ignore\":[");
+    for (int i = 0; i < g_cfg.nignore; i++) {
+        char shown[130];
+        snprintf(shown, sizeof(shown), "/%s", g_cfg.ignore[i]);
         buf_printf(out, "%s", i ? "," : "");
         json_str(out, shown);
     }
@@ -2885,8 +2949,8 @@ static void url_decode(const char *in, size_t len, char *out, size_t n) {
     out[o] = 0;
 }
 
-/* body: batch=0|1&batch_size=N&dlc=0|1&organize=0|1&restore_batch=N&paths=<folders, one per
- * line> (form encoded); keys left out keep their value. */
+/* body: batch=0|1&batch_size=N&dlc=0|1&organize=0|1&restore_batch=N&interval=N&paths=<folders, one
+ * per line>&ignore=<folders, one per line> (form encoded); keys left out keep their value. */
 int app_config_set(const char *body, char *msg, size_t cap) {
     config_t c = g_cfg;
     char value[1200], why[160] = "";
@@ -2908,7 +2972,29 @@ int app_config_set(const char *body, char *msg, size_t cap) {
                 char *end;
                 long v = strtol(value, &end, 10);
                 c.restore_batch = *value && !*end ? (int)v : 0;
-            } else if (k == 5 && !strncmp(p, "paths", 5)) {
+            }
+            else if (k == 8 && !strncmp(p, "interval", 8))
+                c.interval = atoi(value);
+            else if (k == 6 && !strncmp(p, "ignore", 6)) {
+                c.nignore = 0;
+                for (char *line = strtok(value, "\n"); line; line = strtok(NULL, "\n")) {
+                    char path[128];
+                    if (clean_scan_path(line, path, sizeof(path), why, sizeof(why))) {
+                        snprintf(msg, cap, "Not saved: %s", why);
+                        return -1;
+                    }
+                    if (!path[0]) {
+                        snprintf(msg, cap, "Not saved: the drive root cannot be ignored");
+                        return -1;
+                    }
+                    if (c.nignore == MAX_SCAN_PATHS) {
+                        snprintf(msg, cap, "Not saved: at most %d folders to ignore", MAX_SCAN_PATHS);
+                        return -1;
+                    }
+                    snprintf(c.ignore[c.nignore++], sizeof(c.ignore[0]), "%s", path);
+                }
+            }
+            else if (k == 5 && !strncmp(p, "paths", 5)) {
                 c.npaths = 0;
                 for (char *line = strtok(value, "\n"); line; line = strtok(NULL, "\n")) {
                     char path[128];
@@ -2938,6 +3024,11 @@ int app_config_set(const char *body, char *msg, size_t cap) {
     if (c.restore_batch < 1 || c.restore_batch > MAX_RESTORE_BATCH) {
         snprintf(msg, cap, "Not saved: games per group when moving back must be a number from 1 to %d",
                  MAX_RESTORE_BATCH);
+        return -1;
+    }
+    if (c.interval < MIN_INTERVAL || c.interval > MAX_INTERVAL) {
+        snprintf(msg, cap, "Not saved: the time between scans must be between %d and %d seconds", MIN_INTERVAL,
+                 MAX_INTERVAL);
         return -1;
     }
     if (!c.npaths) {
@@ -3198,7 +3289,7 @@ int main(void) {
                 notify("Firmware %s is not supported yet: no games are added", g_fw_text);
             g_manual_scan = 0;
             log_limit();
-            g_next_scan = time(NULL) + SCAN_SECONDS;
+            g_next_scan = time(NULL) + g_cfg.interval;
         }
         pump_events(1000);
     }

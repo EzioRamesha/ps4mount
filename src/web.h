@@ -13,6 +13,8 @@
 void app_games_json(buf_t *out);
 int app_add(const char *tid, char *msg, size_t cap);
 int app_remove(const char *tid, char *msg, size_t cap);
+/* on: removes the game from the library and never adds it again; off: allows it again. 0 on success. */
+int app_exclude(const char *tid, int on, char *msg, size_t cap);
 void app_rescan(void);
 /* Lets games be added again after a database corruption report paused it. 0 on success. */
 int app_resume(char *msg, size_t cap);

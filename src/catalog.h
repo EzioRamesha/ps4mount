@@ -45,9 +45,10 @@ typedef struct {
 typedef int (*cat_skip_fn)(const char *path, uint64_t size);
 
 /* Finds every .pkg under root (any depth up to CAT_MAX_DEPTH), skipping hidden and system
- * folders and the old updates PS4Mount keeps in ps4/<TID>/replaced. Pkgs that are gone are
- * dropped; new or changed ones become CAT_UNREAD. Returns how many are unread. */
-int catalog_walk(catalog_t *c, const char *root, cat_skip_fn skip);
+ * folders, the old updates PS4Mount keeps in ps4/<TID>/replaced and the nignore folders of
+ * ignore (paths below root, any case). Pkgs that are gone are dropped; new or changed ones
+ * become CAT_UNREAD. Returns how many are unread. */
+int catalog_walk(catalog_t *c, const char *root, cat_skip_fn skip, const char *const *ignore, int nignore);
 /* Reads the details of the unread pkgs. Returns how many were read. */
 int catalog_read(catalog_t *c);
 /* Groups the readable pkgs into games: the first game pkg of a title (by path), its update

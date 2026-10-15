@@ -15,6 +15,7 @@
 #include "logfile.h"
 #include "pkg.h"
 #include "pdb_template.h"
+#include "policy.h"
 #include "safety.h"
 
 static int g_failed, g_checks;
@@ -527,7 +528,7 @@ static void test_catalog_walk(void) {
     put_file(root, "Games/readme.txt", "x");
 
     catalog_t c = {0};
-    CHECK(catalog_walk(&c, root, skip_named) == 3);
+    CHECK(catalog_walk(&c, root, skip_named, NULL, 0) == 3);
     CHECK(c.npkgs == 3 && cat_has(&c, root, "root.pkg") && cat_has(&c, root, "Games/RPG/Persona/Update/u.PKG") &&
           cat_has(&c, root, "ps4/CUSA00001/app.pkg"));
     for (int i = 1; i < c.npkgs; i++)
@@ -535,15 +536,25 @@ static void test_catalog_walk(void) {
 
     CHECK(catalog_read(&c) == 3); /* not real pkgs */
     CHECK(c.pkgs[0].state == CAT_BAD);
-    CHECK(catalog_walk(&c, root, skip_named) == 0); /* nothing new: nothing to read again */
+    CHECK(catalog_walk(&c, root, skip_named, NULL, 0) == 0); /* nothing new: nothing to read again */
 
     char p[PATH_MAX];
     snprintf(p, sizeof(p), "%s/root.pkg", root);
     unlink(p);
     put_file(root, "Games/RPG/Persona/Update/u.PKG", "changed");
-    CHECK(catalog_walk(&c, root, skip_named) == 1);
+    CHECK(catalog_walk(&c, root, skip_named, NULL, 0) == 1);
     CHECK(c.npkgs == 2 && !cat_has(&c, root, "root.pkg"));
     catalog_free(&c);
+
+    printf("catalog: folders to ignore\n");
+    put_file(root, "Backup/old/game.pkg", "x");
+    put_file(root, "Games/Backup/kept.pkg", "x"); /* only Backup at the root is ignored */
+    static const char *const ignore[] = {"backup", "Games/RPG"};
+    catalog_t g = {0};
+    CHECK(catalog_walk(&g, root, NULL, ignore, 2) == 3); /* with Games/skip-me.pkg: no skip function */
+    CHECK(cat_has(&g, root, "ps4/CUSA00001/app.pkg") && cat_has(&g, root, "Games/Backup/kept.pkg"));
+    CHECK(!cat_has(&g, root, "Backup/old/game.pkg") && !cat_has(&g, root, "Games/RPG/Persona/Update/u.PKG"));
+    catalog_free(&g);
 
     char cmd[PATH_MAX + 16];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
@@ -603,6 +614,85 @@ static void test_catalog_cache(void) {
     unlink(path);
 }
 
+static int kv_count(const char *key, const char *value, void *arg) {
+    (void)key;
+    (void)value;
+    (*(int *)arg)++;
+    return 0;
+}
+
+static void test_policy(void) {
+    printf("policy: what to do with a game\n");
+    const char *why;
+    game_facts_t f = {0};
+    CHECK(policy_decide(&f, &why) == POLICY_ADD && !why[0]); /* new game */
+    f.registered = f.installed = 1;
+    CHECK(policy_decide(&f, &why) == POLICY_KEEP);
+    f.installed = 0; /* update or add-ons changed */
+    CHECK(policy_decide(&f, &why) == POLICY_ADD);
+    f.retry_wait = 1;
+    CHECK(policy_decide(&f, &why) == POLICY_SKIP && why[0]);
+    f.retry_wait = 0;
+    f.halted = 1;
+    CHECK(policy_decide(&f, &why) == POLICY_SKIP);
+    f.registered = f.installed = 1; /* paused: games already added stay mounted */
+    CHECK(policy_decide(&f, &why) == POLICY_KEEP);
+    f.halted = 0;
+    game_facts_t base = f;
+    int *flags[] = {&f.internal, &f.removed, &f.excluded, &f.elsewhere};
+    for (int i = 0; i < 4; i++) {
+        f = base;
+        *flags[i] = 1;
+        CHECK(policy_decide(&f, &why) == POLICY_SKIP && why[0]);
+    }
+
+    panel_facts_t p = {0};
+    CHECK(!strcmp(policy_panel_state(&p), "pending"));
+    p.mounted = p.registered = 1;
+    CHECK(!strcmp(policy_panel_state(&p), "ready"));
+    p.running = 1;
+    CHECK(!strcmp(policy_panel_state(&p), "running"));
+    p.removed = 1;
+    CHECK(!strcmp(policy_panel_state(&p), "removed"));
+    p.excluded = 1;
+    CHECK(!strcmp(policy_panel_state(&p), "excluded"));
+    p.elsewhere = 1;
+    CHECK(!strcmp(policy_panel_state(&p), "duplicate"));
+    p.internal = 1;
+    CHECK(!strcmp(policy_panel_state(&p), "internal"));
+    panel_facts_t q = {0};
+    q.given_up = 1;
+    CHECK(!strcmp(policy_panel_state(&q), "failed"));
+    q.mounted = q.registered = 1; /* added after all */
+    CHECK(!strcmp(policy_panel_state(&q), "ready"));
+
+    printf("policy: state files\n");
+    char path[] = "/tmp/ps4mount-kv-XXXXXX", v[32];
+    int fd = mkstemp(path);
+    CHECK(fd >= 0);
+    close(fd);
+    CHECK(kv_get(path, "CUSA00001", v, sizeof(v)) == -1);
+    CHECK(kv_set(path, "CUSA00001", "1") == 0 && kv_set(path, "CUSA00002", "01.05") == 0);
+    CHECK(kv_get(path, "CUSA00001", v, sizeof(v)) == 0 && !strcmp(v, "1"));
+    CHECK(kv_set(path, "CUSA00002", "01.10") == 0); /* replaced, not added twice */
+    CHECK(kv_get(path, "CUSA00002", v, sizeof(v)) == 0 && !strcmp(v, "01.10"));
+    CHECK(kv_set(path, "CUSA00001", NULL) == 0);
+    CHECK(kv_get(path, "CUSA00001", v, sizeof(v)) == -1);
+    CHECK(kv_get(path, "CUSA0000", v, sizeof(v)) == -1); /* whole keys only */
+    CHECK(kv_set(path, "bad\tkey", "1") == -1 && kv_set(path, "k", "bad\nvalue") == -1);
+    FILE *f2 = fopen(path, "a");
+    if (f2) {
+        fputs("CUSA00003\n", f2); /* a key alone */
+        fclose(f2);
+    }
+    CHECK(kv_get(path, "CUSA00003", v, sizeof(v)) == 0 && !strcmp(v, "1"));
+    int count = 0;
+    CHECK(kv_each(path, kv_count, &count) == 0 && count == 2);
+    CHECK(kv_each("/tmp/ps4mount-no-such-file", kv_count, &count) == -1);
+    CHECK(kv_set("/tmp/ps4mount-no-dir/x/kv.txt", "a", "1") == -1);
+    unlink(path);
+}
+
 static void test_safety(void) {
     printf("safety: database corruption in the system log\n");
     char db[64];
@@ -654,6 +744,7 @@ int main(void) {
     test_catalog_walk();
     test_catalog_cache();
     test_safety();
+    test_policy();
     printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;
 }
