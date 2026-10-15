@@ -25,6 +25,7 @@ int app_exclude(const char *tid, int on, char *msg, size_t cap) {
     return record(on ? "exclude" : "include", tid, msg, cap);
 }
 int app_rescan(const char *drive, char *msg, size_t cap) { return record("rescan", drive, msg, cap); }
+int app_speedtest(const char *drive, char *msg, size_t cap) { return record("speedtest", drive, msg, cap); }
 int app_resume(char *msg, size_t cap) { return record("resume", NULL, msg, cap); }
 void app_stop(void) {
     char m[8];

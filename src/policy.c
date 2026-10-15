@@ -51,6 +51,16 @@ int policy_space_low(unsigned long long free_bytes, unsigned long long total_byt
     return free_bytes < SPACE_LOW_BYTES || free_bytes < total_bytes / 100 * SPACE_LOW_PERCENT;
 }
 
+int policy_speed_verdict(double mbps, double best) {
+    if (mbps >= SPEED_CACHE_MBPS)
+        return SPEED_CACHED;
+    if (best >= SPEED_FAST_MBPS && mbps < best / 2)
+        return SPEED_DROP;
+    if (best <= 0 && mbps < SPEED_USB2_MBPS)
+        return SPEED_USB2;
+    return SPEED_OK;
+}
+
 #define KV_LINE 1024
 
 /* Splits a line into key and value ("1" for a key alone). 0 for a usable line. */

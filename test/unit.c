@@ -17,6 +17,7 @@
 #include "pdb_template.h"
 #include "policy.h"
 #include "safety.h"
+#include "speed.h"
 
 static int g_failed, g_checks;
 
@@ -828,6 +829,50 @@ static void test_space_low(void) {
     CHECK(!policy_space_low(0, 0));                     /* unknown size */
 }
 
+static void test_speed_verdict(void) {
+    printf("policy: drive speed against its best\n");
+    CHECK(policy_speed_verdict(410, 0) == SPEED_OK);      /* first test, fast */
+    CHECK(policy_speed_verdict(38, 0) == SPEED_USB2);     /* first test, USB 2 speed */
+    CHECK(policy_speed_verdict(45, 0) == SPEED_OK);
+    CHECK(policy_speed_verdict(38, 410) == SPEED_DROP);   /* fast drive fell to USB 2 */
+    CHECK(policy_speed_verdict(204, 410) == SPEED_DROP);  /* under half */
+    CHECK(policy_speed_verdict(205, 410) == SPEED_OK);    /* half is still fine */
+    CHECK(policy_speed_verdict(300, 410) == SPEED_OK);    /* normal variation */
+    CHECK(policy_speed_verdict(20, 60) == SPEED_OK);      /* slow stick: no fast best to compare */
+    CHECK(policy_speed_verdict(30, 35) == SPEED_OK);      /* slow stick with history: no USB 2 note */
+    CHECK(policy_speed_verdict(2000, 410) == SPEED_CACHED);
+    CHECK(policy_speed_verdict(5000, 0) == SPEED_CACHED);
+}
+
+static void test_speed_measure(void) {
+    printf("speed: timed reads over a pkg\n");
+    char path[] = "/tmp/ps4mount-speed-XXXXXX";
+    int fd = mkstemp(path);
+    unsigned long long size = 20ULL * SPEED_CHUNK / 4 + 12345; /* 5 chunks and a bit */
+    CHECK(fd >= 0 && !ftruncate(fd, (off_t)size));
+    if (fd >= 0)
+        close(fd);
+    double mbps;
+    unsigned long long done;
+    CHECK(!speed_measure(path, size, 2 * SPEED_CHUNK, 20, 0, &mbps, &done) && done == 2 * SPEED_CHUNK && mbps > 0);
+    /* more than the file holds: one read per chunk that fits */
+    CHECK(!speed_measure(path, size, 64ULL << 20, 20, 1, &mbps, &done) && done == 5ULL * SPEED_CHUNK);
+    /* every seed keeps the reads inside the file */
+    int all = 1;
+    for (unsigned seed = 0; seed < 200; seed++)
+        all &= !speed_measure(path, size, 5ULL * SPEED_CHUNK, 20, seed, &mbps, &done) && done == 5ULL * SPEED_CHUNK;
+    CHECK(all);
+    /* time limit reached: stops after the read that passed it */
+    CHECK(!speed_measure(path, size, 5ULL * SPEED_CHUNK, 0, 3, &mbps, &done) && done == SPEED_CHUNK);
+    /* smaller than one chunk, or asked for less */
+    CHECK(speed_measure(path, SPEED_CHUNK - 1, 2 * SPEED_CHUNK, 20, 0, &mbps, &done) == -1 && !done && !mbps);
+    CHECK(speed_measure(path, size, SPEED_CHUNK - 1, 20, 0, &mbps, &done) == -1);
+    /* the file is shorter than the catalog says (cut off since): a read fails */
+    CHECK(speed_measure(path, 100ULL * SPEED_CHUNK, 50ULL * SPEED_CHUNK, 20, 0, &mbps, &done) == -1 && !mbps);
+    unlink(path);
+    CHECK(speed_measure(path, size, 2 * SPEED_CHUNK, 20, 0, &mbps, &done) == -1);
+}
+
 static void test_policy(void) {
     printf("policy: what to do with a game\n");
     const char *why;
@@ -956,6 +1001,8 @@ int main(void) {
     test_safety();
     test_policy();
     test_space_low();
+    test_speed_verdict();
+    test_speed_measure();
     printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;
 }

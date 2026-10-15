@@ -38,6 +38,13 @@ int app_remove(const char *tid, char *msg, size_t cap) { return snprintf(msg, ca
 int app_rescan(const char *drive, char *msg, size_t cap) {
     return snprintf(msg, cap, "rescan[%s]", drive ? drive : "all") < 0;
 }
+int app_speedtest(const char *drive, char *msg, size_t cap) {
+    if (!strcmp(drive, "usb2")) {
+        snprintf(msg, cap, "A speed test is already running");
+        return -1;
+    }
+    return snprintf(msg, cap, "speed[%s]", drive) < 0;
+}
 void app_diag(buf_t *out) { buf_printf(out, "diag \"line\"\n"); }
 void app_problems_json(buf_t *out) { buf_printf(out, "{\"problems\":[]}"); }
 int app_addon(const char *content_id, int on, char *msg, size_t cap) {
@@ -192,6 +199,24 @@ static void test_rescan(int listen_fd) {
     CHECK(strstr(resp, "404") != NULL);
 }
 
+static void test_speedtest(int listen_fd) {
+    printf("speed test of one drive\n");
+    char resp[2048];
+    request(listen_fd, "POST /api/speedtest?drive=usb1 HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "\"ok\":true") != NULL && strstr(resp, "speed[usb1]") != NULL);
+    request(listen_fd, "POST /api/speedtest?drive=usb2 HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "\"ok\":false") != NULL && strstr(resp, "already running") != NULL);
+    static const char *const bad[] = {"POST /api/speedtest HTTP/1.1\r\n\r\n",
+                                      "POST /api/speedtest?drive=usb9 HTTP/1.1\r\n\r\n",
+                                      "POST /api/speedtest?drive=../x HTTP/1.1\r\n\r\n"};
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        request(listen_fd, bad[i], resp, sizeof(resp));
+        CHECK(strstr(resp, "invalid drive") != NULL);
+    }
+    request(listen_fd, "GET /api/speedtest?drive=usb1 HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "speed[usb1]") == NULL);
+}
+
 static void test_addon(int listen_fd) {
     printf("add-on on/off parameters\n");
     char resp[2048];
@@ -273,6 +298,7 @@ int main(void) {
         test_diag(listen_fd);
         test_update_choice(listen_fd);
         test_rescan(listen_fd);
+        test_speedtest(listen_fd);
         test_log_download(listen_fd);
         test_addon(listen_fd);
         test_pin_guard(listen_fd);

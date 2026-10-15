@@ -38,6 +38,16 @@ const char *policy_panel_state(const panel_facts_t *f);
 #define SPACE_LOW_BYTES (2ULL << 30)
 int policy_space_low(unsigned long long free_bytes, unsigned long long total_bytes);
 
+/* Read speed (MB/s) of a drive against its best earlier result (0: none yet).
+ * SPEED_DROP: under half of a best of at least SPEED_FAST_MBPS (cable or port gone bad).
+ * SPEED_USB2: first result, under SPEED_USB2_MBPS (fine for a USB stick, low for an SSD).
+ * SPEED_CACHED: SPEED_CACHE_MBPS or more, read from the system cache, not the drive. */
+#define SPEED_FAST_MBPS 80
+#define SPEED_USB2_MBPS 45
+#define SPEED_CACHE_MBPS 2000
+enum { SPEED_OK, SPEED_DROP, SPEED_USB2, SPEED_CACHED };
+int policy_speed_verdict(double mbps, double best);
+
 /* State files: one "<key>\t<value>" line per key (a key alone means value "1").
  * kv_get returns 0 and fills value when the key is there; kv_set with value NULL removes
  * the key. Keys and values have no tab or line break. 0 on success. */
