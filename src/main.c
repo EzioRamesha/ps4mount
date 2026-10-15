@@ -190,6 +190,20 @@ static int write_file(const char *path, const void *data, size_t len, mode_t mod
     return 0;
 }
 
+/* Reads up to cap-1 bytes of path into out, 0-terminated; returns the byte count (0 on
+ * failure, which callers treat as "nothing to parse" rather than an error). */
+static size_t read_file(const char *path, char *out, size_t cap) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return 0;
+    ssize_t n = read(fd, out, cap - 1);
+    close(fd);
+    if (n < 0)
+        n = 0;
+    out[n] = 0;
+    return (size_t)n;
+}
+
 static int mounted_from(const char *mountpoint, char *from, size_t n) {
     struct statfs sf;
     if (statfs(mountpoint, &sf) || strcmp(sf.f_mntonname, mountpoint) || strcmp(sf.f_fstypename, "nullfs"))
@@ -2192,6 +2206,9 @@ static void speed_poll(const int present[NUM_DRIVES], const int fresh[NUM_DRIVES
         }
 }
 
+/* defined near log_limit() below, with trash_purge_old */
+static void trash_reclaim(const char *root, unsigned long long *avail, unsigned long long total);
+
 static void scan_all(void) {
     static int seen[NUM_DRIVES], first = 1;
     int ready[NUM_DRIVES] = {0}, present[NUM_DRIVES] = {0}, manual[NUM_DRIVES] = {0}, fresh[NUM_DRIVES] = {0};
@@ -2222,8 +2239,11 @@ static void scan_all(void) {
         drive_root(i, root, sizeof(root));
         if (ready[i])
             scan_root(root, !seen[i] || manual[i], !seen[i] && !first);
-        unsigned long long avail, total;
-        int low = present[i] && !drive_space(root, &avail, &total) && policy_space_low(avail, total);
+        unsigned long long avail = 0, total = 0;
+        int have_space = present[i] && !drive_space(root, &avail, &total);
+        if (have_space && policy_space_low(avail, total))
+            trash_reclaim(root, &avail, total);
+        int low = have_space && policy_space_low(avail, total);
         if (low && !low_warned[i]) {
             notify("%s is almost full: %.1f GB free", root + 5, avail / 1073741824.0);
             printf("[scan] %s low on space: %llu of %llu bytes free\n", root, avail, total);
@@ -4068,6 +4088,83 @@ static void pump_events(int ms) {
     }
 }
 
+#define TRASH_KEEP_DAYS 14
+
+/* Really deletes anything in every drive's .trash older than TRASH_KEEP_DAYS, reading each
+ * item's deleted-at time from its .trashmeta sidecar (an item with no sidecar is left alone:
+ * never silently delete something we cannot confirm the age of). */
+static void trash_purge_old(void) {
+    time_t now = time(NULL);
+    for (int i = 0; i < NUM_DRIVES; i++) {
+        char root[32], trash_dir[64];
+        drive_root(i, root, sizeof(root));
+        if (!is_mountpoint(root))
+            continue;
+        snprintf(trash_dir, sizeof(trash_dir), "%s/" TRASH_DIR_NAME, root);
+        DIR *d = opendir(trash_dir);
+        if (!d)
+            continue;
+        struct dirent *e;
+        while ((e = readdir(d))) {
+            size_t l = strlen(e->d_name);
+            if (l < 10 || strcmp(e->d_name + l - 10, ".trashmeta"))
+                continue;
+            char meta[PATH_MAX], item[PATH_MAX];
+            snprintf(meta, sizeof(meta), "%s/%s", trash_dir, e->d_name);
+            snprintf(item, sizeof(item), "%.*s", (int)(l - 10), meta); /* meta minus ".trashmeta" */
+            char buf[PATH_MAX + 64];
+            read_file(meta, buf, sizeof(buf));
+            char *nl = strchr(buf, '\n');
+            long long deleted_at = nl ? atoll(nl + 1) : 0;
+            if (deleted_at && now - (time_t)deleted_at >= TRASH_KEEP_DAYS * 86400) {
+                fm_rm_tree(item);
+                unlink(meta);
+            }
+        }
+        closedir(d);
+    }
+}
+
+/* Really deletes the oldest items in root's .trash, one at a time, until drive_space(root)
+ * reports avail/total no longer policy_space_low(), or .trash is empty. avail is updated
+ * in place so the caller's low-space decision uses the post-reclaim figure. */
+static void trash_reclaim(const char *root, unsigned long long *avail, unsigned long long total) {
+    char trash_dir[64];
+    snprintf(trash_dir, sizeof(trash_dir), "%s/" TRASH_DIR_NAME, root);
+    for (int guard = 0; guard < 10000 && policy_space_low(*avail, total); guard++) {
+        DIR *d = opendir(trash_dir);
+        if (!d)
+            return;
+        char oldest_item[PATH_MAX] = "", oldest_meta[PATH_MAX] = "";
+        long long oldest_ts = -1;
+        struct dirent *e;
+        while ((e = readdir(d))) {
+            size_t l = strlen(e->d_name);
+            if (l < 10 || strcmp(e->d_name + l - 10, ".trashmeta"))
+                continue;
+            char meta[PATH_MAX], buf[256];
+            snprintf(meta, sizeof(meta), "%s/%s", trash_dir, e->d_name);
+            read_file(meta, buf, sizeof(buf));
+            char *nl = strchr(buf, '\n');
+            long long ts = nl ? atoll(nl + 1) : -1;
+            if (ts >= 0 && (oldest_ts < 0 || ts < oldest_ts)) {
+                oldest_ts = ts;
+                snprintf(oldest_meta, sizeof(oldest_meta), "%s", meta);
+                snprintf(oldest_item, sizeof(oldest_item), "%.*s", (int)(l - 10), meta);
+            }
+        }
+        closedir(d);
+        if (!oldest_item[0])
+            return; /* trash is empty (or every item lost its sidecar): nothing left to reclaim */
+        printf("[fm] reclaiming trash on %s: %s\n", root, oldest_item);
+        fm_rm_tree(oldest_item);
+        unlink(oldest_meta);
+        unsigned long long total2;
+        if (drive_space(root, avail, &total2))
+            return;
+    }
+}
+
 #define LOG_FILE STATE_DIR "/log.txt"
 #define LOG_MAX (1 << 20)   /* log.txt is cut back to its last LOG_KEEP bytes past this size */
 #define LOG_KEEP (256 << 10)
@@ -4231,6 +4328,7 @@ int main(void) {
             g_manual_scan = 0;
             g_scan_only = -1;
             log_limit();
+            trash_purge_old();
             if (g_next_scan)
                 g_next_scan = time(NULL) + g_cfg.interval;
         }
