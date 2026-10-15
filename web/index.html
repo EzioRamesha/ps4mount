@@ -199,6 +199,7 @@ form.settings input.num{width:6em}
 <div class="actions" style="padding:10px 0 0"><form method="dialog"><button>Close</button></form></div></dialog>
 <dialog id="fmdlg"><h3>Files</h3>
 <div class="fmbar"><span id="fmcrumbs"></span><div class="warn" id="fmmovebar" style="flex-basis:100%" hidden></div></div>
+<div class="warn" id="fmerr" hidden></div>
 <div id="fmlist" class="fmlist"></div>
 <div class="actions" style="padding:10px 0 0">
   <button id="fmnew">New folder</button>
@@ -209,6 +210,7 @@ form.settings input.num{width:6em}
   <div class="fmicon" id="fms-icon" style="width:72px;height:72px;font-size:34px"></div>
   <div id="fms-meta" style="font-size:14px;color:var(--muted)"></div>
 </div>
+<div class="warn" id="fmserr" hidden></div>
 <div class="actions" style="padding:14px 0 0">
   <button id="fms-rename">Rename</button>
   <button id="fms-move">Move</button>
@@ -335,7 +337,10 @@ es: {
 'Each selected game is moved back with its update and all its add-ons (DLC). The open game is closed first.': 'Cada juego seleccionado se devuelve con su actualización y todos sus complementos (DLC). El juego abierto se cierra primero.',
 'Moved back': 'Qué se devuelve',
 'Select all': 'Seleccionar todo',
-'Move selected back': 'Devolver los seleccionados'
+'Move selected back': 'Devolver los seleccionados',
+'Could not refresh this folder: {e}. Open it again.': 'No se pudo actualizar esta carpeta: {e}. Ábrela otra vez.',
+'Moving {name}. It is already here: open another folder to move it.': 'Moviendo {name}. Ya está aquí: abre otra carpeta para moverlo.',
+'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Solo se muestran los primeros {n} elementos. Usa subcarpetas para ver el resto.'
 },
 pt: {
 'Search game or CUSA': 'Buscar jogo ou CUSA', 'Sort': 'Ordenar', 'Sort by name': 'Ordenar por nome',
@@ -440,7 +445,10 @@ pt: {
 'Each selected game is moved back with its update and all its add-ons (DLC). The open game is closed first.': 'Cada jogo selecionado é devolvido com sua atualização e todos os seus complementos (DLC). O jogo aberto é fechado primeiro.',
 'Moved back': 'O que é devolvido',
 'Select all': 'Selecionar tudo',
-'Move selected back': 'Devolver os selecionados'
+'Move selected back': 'Devolver os selecionados',
+'Could not refresh this folder: {e}. Open it again.': 'Não foi possível atualizar esta pasta: {e}. Abra-a de novo.',
+'Moving {name}. It is already here: open another folder to move it.': 'Movendo {name}. Já está aqui: abra outra pasta para movê-lo.',
+'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Só são mostrados os primeiros {n} itens. Use subpastas para ver o resto.'
 },
 fr: {
 'Search game or CUSA': 'Chercher un jeu ou CUSA', 'Sort': 'Trier', 'Sort by name': 'Trier par nom',
@@ -545,7 +553,10 @@ fr: {
 'Each selected game is moved back with its update and all its add-ons (DLC). The open game is closed first.': 'Chaque jeu sélectionné est remis avec sa mise à jour et toutes ses extensions (DLC). Le jeu ouvert est fermé d\'abord.',
 'Moved back': 'Ce qui est remis',
 'Select all': 'Tout sélectionner',
-'Move selected back': 'Remettre la sélection'
+'Move selected back': 'Remettre la sélection',
+'Could not refresh this folder: {e}. Open it again.': 'Impossible d’actualiser ce dossier : {e}. Ouvrez-le à nouveau.',
+'Moving {name}. It is already here: open another folder to move it.': 'Déplacement de {name}. Il est déjà ici : ouvrez un autre dossier pour le déplacer.',
+'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Seuls les {n} premiers éléments sont affichés ici. Utilisez des sous-dossiers pour voir le reste.'
 }
 };
 function langPicked() { try { return localStorage.getItem('ps4mount-lang') || ''; } catch (e) { return ''; } }
@@ -606,7 +617,14 @@ function gb(n) {
   if (n < 1073741824) return (n / 1048576).toFixed(n >= 10485760 ? 0 : 1) + ' MB';
   return (n / 1073741824).toFixed(n >= 10737418240 ? 0 : 1) + ' GB';
 }
-function toast(msg) { var t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(function () { t.style.display = 'none'; }, 4000); }
+/* While the Files dialog (or its file sheet) is open, it sits in the browser's top layer and
+   paints over #toast, which is a plain fixed div outside both dialogs. Route the message to an
+   error area inside whichever of the two is open instead, so it is not silently hidden. */
+function toast(msg) {
+  var box = $('fmsheet').open ? $('fmserr') : ($('fmdlg').open ? $('fmerr') : null);
+  if (box) { box.textContent = msg; box.hidden = false; return; }
+  var t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(function () { t.style.display = 'none'; }, 4000);
+}
 
 /* Panel PIN: sent as X-PIN, kept in this browser only. */
 var pinAsking = null, pinDeclined = false;
@@ -663,6 +681,9 @@ function api(path, method, body, retried) {
   if (body !== undefined) h['Content-Type'] = 'application/x-www-form-urlencoded';
   return fetch(path, {method: method || 'GET', cache: 'no-store', headers: h, body: body}).then(function (r) {
     return r.json().then(function (j) {
+      /* Locked out after too many wrong PINs: asking for the PIN again would not help until the
+         lock expires, so skip pinAsk() here. The thrown message still reaches the caller's
+         .catch, which toasts it through the same visible channel as any other error. */
       if (r.status === 429) throw new Error(t('too many wrong PINs, wait a minute'));
       if (r.status === 401 && j.error === 'pin') {
         if (retried > 2) throw new Error(t('wrong PIN'));
@@ -830,6 +851,9 @@ function load() {
     $('paused-msg').textContent = j.paused ?
       t('Adding games is paused: {why}. Games already added still work. Restart the console before resuming.', {why: j.paused}) : '';
     render();
+    /* The Files dialog's drive list is built from this same data but is not re-rendered by
+       render(): without this, an unplugged drive stays listed until the user clicks it. */
+    if ($('fmdlg').open && fm.path === '') fmOpen('');
   })
     .catch(function (e) { if (!pinDeclined) toast(t('Could not read the list: {e}', {e: e.message})); });
 }
@@ -926,16 +950,23 @@ function fmPkgName(pkg, fallback) {
 }
 
 function fmOpen(path) {
+  $('fmerr').hidden = true;
   if (!path) { /* root: the drive list, built from /api/games' drives, no API call */
-    fm.path = ''; fm.sel = {};
+    fm.path = ''; fm.sel = {}; fm.moving = null; fm.truncated = false;
     fm.entries = drives.map(function (d) { return {name: d.name, drive: true, dir: true, free: d.free, total: d.total}; });
     fmRender();
-    return;
+    return Promise.resolve();
   }
-  api('/api/fm/list?path=' + encodeURIComponent(path)).then(function (j) {
-    fm.path = j.path; fm.entries = j.entries; fm.sel = {};
+  return api('/api/fm/list?path=' + encodeURIComponent(path)).then(function (j) {
+    fm.path = j.path; fm.entries = j.entries; fm.sel = {}; fm.truncated = !!j.truncated;
     fmRender();
-  }).catch(function (e) { toast(t('Error: {e}', {e: e.message})); });
+  }).catch(function (e) {
+    /* A failed refresh must not leave the old listing on screen: that is what made a
+       successful delete/rename/move look like it silently did nothing (it left the deleted
+       entry in view). Replace the list with a clear "could not refresh" row instead. */
+    toast(t('Error: {e}', {e: e.message}));
+    $('fmlist').innerHTML = '<div class="fmrow">' + esc(t('Could not refresh this folder: {e}. Open it again.', {e: e.message})) + '</div>';
+  });
 }
 
 function fmRender() {
@@ -949,9 +980,15 @@ function fmRender() {
   $('fmnew').hidden = fm.path === ''; /* nothing to create a folder in at the drive list */
   $('fmmovebar').hidden = !fm.moving;
   if (fm.moving) {
-    $('fmmovebar').innerHTML = t('Moving {name}. Open the destination folder and press Move here.',
-      {name: esc(fm.moving.split('/').pop())}) +
-      (fm.path === '' ? '' : ' <button type="button" id="fmdo">' + t('Move here') + '</button>') +
+    /* The source's own parent folder is never a valid destination: "Move here" there always
+       fails with "already exists there". Tell the user to open another folder instead of
+       offering a button that cannot succeed. */
+    var fmSrcParent = fm.moving.slice(0, fm.moving.lastIndexOf('/'));
+    var fmSameFolder = fm.path !== '' && fm.path === fmSrcParent;
+    $('fmmovebar').innerHTML = (fmSameFolder ?
+      t('Moving {name}. It is already here: open another folder to move it.', {name: esc(fm.moving.split('/').pop())}) :
+      t('Moving {name}. Open the destination folder and press Move here.', {name: esc(fm.moving.split('/').pop())})) +
+      (fm.path === '' || fmSameFolder ? '' : ' <button type="button" id="fmdo">' + t('Move here') + '</button>') +
       ' <button type="button" id="fmcancel">' + t('Cancel') + '</button>';
   }
   var rows = fm.entries.slice().sort(function (a, b) {
@@ -971,7 +1008,11 @@ function fmRender() {
       '<span class="fmname">' + esc(label) + (sub || e.pkg ? '<small>' + esc(e.name) + (sub ? ' · ' + sub : '') + '</small>' : '') + '</span>' +
       '<span class="fmsize">' + meta + '</span></div>';
   }).join('');
-  $('fmlist').innerHTML = rows || '<div class="fmrow">' + (fm.path === '' ? t('No drives connected') : t('Empty folder')) + '</div>';
+  rows = rows || '<div class="fmrow">' + (fm.path === '' ? t('No drives connected') : t('Empty folder')) + '</div>';
+  /* The daemon caps a listing at 2000 entries; say so rather than silently showing a partial
+     folder with no sign anything is missing. */
+  if (fm.truncated) rows += '<div class="warn">' + esc(t('Only the first {n} items are shown here. Use subfolders to see the rest.', {n: 2000})) + '</div>';
+  $('fmlist').innerHTML = rows;
 }
 
 /* The sheet of actions for a file row: rename, move (via the "navigate then drop" bar
@@ -979,6 +1020,7 @@ function fmRender() {
    them anyway, so this just saves the round-trip. */
 function fmSheet(entry) {
   fm.sheet = entry;
+  $('fmserr').hidden = true;
   var label = entry.pkg ? fmPkgName(entry.pkg, entry.name) : entry.name;
   $('fms-title').textContent = label;
   $('fms-icon').style.backgroundImage = entry.pkg ? 'url(/icon/' + encodeURIComponent(entry.pkg.title_id) + ')' : '';
@@ -998,6 +1040,10 @@ $('filesbtn').addEventListener('click', function () {
   fmOpen(''); /* always start at the drive list: never guess which drive the user wants */
   $('fmdlg').showModal();
 });
+/* Closing the dialog (its native Close button, or Esc) does not go through fmOpen(''), so a
+   pending Move must be forgotten here too: otherwise it survives and the user can relocate a
+   file they have long forgotten about. */
+$('fmdlg').addEventListener('close', function () { fm.moving = null; fm.sheet = null; });
 $('fmcrumbs').addEventListener('click', function (e) {
   var b = e.target.closest('button[data-crumb]');
   if (b) fmOpen(b.getAttribute('data-crumb'));
@@ -1014,15 +1060,17 @@ $('fmlist').addEventListener('click', function (e) {
 $('fmnew').addEventListener('click', function () {
   var n = prompt(t('Folder name'), '');
   if (!n) return;
+  $('fmerr').hidden = true;
   api('/api/fm/mkdir?path=' + encodeURIComponent(fm.path) + '&name=' + encodeURIComponent(n), 'POST')
-    .then(function (j) { toast(j.message); fmOpen(fm.path); })
+    .then(function (j) { toast(j.message); return fmOpen(fm.path); })
     .catch(function (e) { toast(t('Error: {e}', {e: e.message})); });
 });
 $('fms-rename').addEventListener('click', function () {
   var n = prompt(t('New name'), fm.sheet.name);
   if (!n || n === fm.sheet.name) return;
+  $('fmserr').hidden = true;
   api('/api/fm/rename?path=' + encodeURIComponent(fm.path + '/' + fm.sheet.name) + '&name=' + encodeURIComponent(n), 'POST')
-    .then(function (j) { toast(j.message); $('fmsheet').close(); fmOpen(fm.path); })
+    .then(function (j) { toast(j.message); $('fmsheet').close(); return fmOpen(fm.path); })
     .catch(function (e) { toast(t('Error: {e}', {e: e.message})); });
 });
 $('fms-move').addEventListener('click', function () {
@@ -1034,17 +1082,24 @@ $('fms-delete').addEventListener('click', function () {
   var e = fm.sheet;
   var what = (e.pkg ? fmPkgName(e.pkg, e.name) + ' (' + e.name + ')' : e.name) + (e.dir ? '' : ' · ' + gb(e.size));
   if (!confirm(t('Delete {what}? It moves to Trash and is kept for {days} days.', {what: what, days: 14}))) return;
+  $('fmserr').hidden = true;
   api('/api/fm/delete?path=' + encodeURIComponent(fm.path + '/' + e.name), 'POST')
-    .then(function (j) { toast(j.message); $('fmsheet').close(); fmOpen(fm.path); })
+    .then(function (j) { toast(j.message); $('fmsheet').close(); return fmOpen(fm.path); })
     .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
 });
 /* The "Move here"/"Cancel" buttons are (re)created by fmRender each time the bar shows, so
    their clicks are delegated on the bar's own element rather than bound once per button. */
 $('fmmovebar').addEventListener('click', function (e) {
   if (e.target.id === 'fmdo') {
+    $('fmerr').hidden = true;
     api('/api/fm/move?src=' + encodeURIComponent(fm.moving) + '&dst=' + encodeURIComponent(fm.path), 'POST')
-      .then(function (j) { toast(j.message); fm.moving = null; fmOpen(fm.path); })
-      .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
+      .then(function (j) { toast(j.message); fm.moving = null; return fmOpen(fm.path); })
+      .catch(function (err) {
+        toast(t('Error: {e}', {e: err.message}));
+        /* A pending move that cannot complete should not linger as a half-forgotten state. */
+        fm.moving = null;
+        fmRender();
+      });
   } else if (e.target.id === 'fmcancel') {
     fm.moving = null;
     fmRender();
