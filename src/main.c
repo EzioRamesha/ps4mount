@@ -3386,6 +3386,7 @@ static void config_save(void) {
         printf("[config] out of memory: settings not saved\n");
     else
         write_file(CONFIG_PATH, b.data, b.len, 0600);
+    chmod(CONFIG_PATH, 0600); /* open() keeps the mode of a file that already exists */
     buf_free(&b);
 }
 
