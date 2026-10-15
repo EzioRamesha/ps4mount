@@ -45,6 +45,12 @@ const char *policy_panel_state(const panel_facts_t *f) {
     return f->given_up ? "failed" : "pending";
 }
 
+int policy_space_low(unsigned long long free_bytes, unsigned long long total_bytes) {
+    if (!total_bytes)
+        return 0;
+    return free_bytes < SPACE_LOW_BYTES || free_bytes < total_bytes / 100 * SPACE_LOW_PERCENT;
+}
+
 #define KV_LINE 1024
 
 /* Splits a line into key and value ("1" for a key alone). 0 for a usable line. */
