@@ -14,6 +14,8 @@ void app_games_json(buf_t *out);
 int app_add(const char *tid, char *msg, size_t cap);
 int app_remove(const char *tid, char *msg, size_t cap);
 void app_rescan(void);
+/* Lets games be added again after a database corruption report paused it. 0 on success. */
+int app_resume(char *msg, size_t cap);
 void app_stop(void);
 /* Closes the open game and moves the pkgs of the games in tids (comma separated title ids)
  * or of all games (NULL) back to where they came from. */

@@ -46,6 +46,7 @@
 #include "logts.h"
 #include "origin.h"
 #include "pkg.h"
+#include "safety.h"
 #include "web.h"
 #include "icon_data.h"
 
@@ -1000,6 +1001,11 @@ static void enforce_patch_sfo(title_src_t *t) {
 typedef int (*title_dir_fn)(const char *title_id, const char *dir, void *reserved);
 
 static int g_reg_mode = REG_ALL;
+
+/* Set when the system log reports a corrupted system database: no game is added until
+ * the user resumes in the panel. Kept in HALT_FILE across restarts. */
+#define HALT_FILE STATE_DIR "/halted.txt"
+static char g_halt[256];
 static title_dir_fn g_title_dir;
 static char g_fw_text[16] = "unknown";
 
@@ -1056,7 +1062,7 @@ static void *install_thread(void *arg) {
 
 /* Registers the titles of tids that are not registered yet. */
 static int install_all_start(char (*tids)[10], int n) {
-    if (g_reg_mode == REG_NONE)
+    if (g_reg_mode == REG_NONE || g_halt[0])
         return -1; /* never where it corrupts the database */
     if (g_install_busy) {
         printf("[reg] registration still running from an earlier call\n");
@@ -1506,50 +1512,49 @@ static int has_pkg(const char *dir) {
     return found;
 }
 
-/* Titles that failed to be added wait before the next try, and the failure is
- * notified once: when the system refuses registrations, every scan would retry. */
-#define RETRY_SECONDS 300
+/* Titles that failed to be added wait before the next try, and are given up after
+ * RETRY_MAX_TRIES failures in a row: when the system refuses registrations, every
+ * scan would otherwise try again, without end. */
+static retry_t g_retry_items[MAX_TITLES];
+static retry_table_t g_retry = {g_retry_items, MAX_TITLES};
 
-typedef struct {
-    char tid[10];
-    time_t until;
-} retry_t;
-
-static retry_t g_retry[MAX_TITLES];
-
-static retry_t *retry_entry(const char *tid, int create) {
-    retry_t *free_slot = NULL;
-    for (int i = 0; i < MAX_TITLES; i++) {
-        if (!strcmp(g_retry[i].tid, tid))
-            return &g_retry[i];
-        if (!free_slot && !g_retry[i].tid[0])
-            free_slot = &g_retry[i];
+/* Records a failed registration and tells the user the first and the last time. */
+static void title_failed(const char *tid, const char *name) {
+    int tries = retry_failed(&g_retry, tid, time(NULL));
+    if (tries >= RETRY_MAX_TRIES) {
+        printf("[reg] %s: failed %d times, given up\n", tid, tries);
+        notify("Failed to add %s (%s) %d times. It is not tried again until you use Add to library or Scan "
+               "for games in the panel",
+               name, tid, tries);
+    } else {
+        printf("[reg] %s: failure %d, next try in %d seconds\n", tid, tries, RETRY_SECONDS);
+        if (tries == 1)
+            notify("Failed to add %s (%s), it is tried again in a few minutes", name, tid);
     }
-    if (create && free_slot)
-        snprintf(free_slot->tid, sizeof(free_slot->tid), "%s", tid);
-    return create ? free_slot : NULL;
 }
 
-static int retry_waiting(const char *tid) {
-    retry_t *r = retry_entry(tid, 0);
-    return r && time(NULL) < r->until;
+static void halt_load(void) {
+    int fd = open(HALT_FILE, O_RDONLY);
+    if (fd < 0)
+        return;
+    ssize_t n = read(fd, g_halt, sizeof(g_halt) - 1);
+    close(fd);
+    g_halt[n > 0 ? n : 0] = 0;
+    g_halt[strcspn(g_halt, "\r\n")] = 0;
+    if (!g_halt[0])
+        snprintf(g_halt, sizeof(g_halt), "a system database was reported as corrupted");
+    printf("[safety] adding games is paused: %s\n", g_halt);
 }
 
-/* Returns 1 the first time a title fails (to notify it), 0 for repeated failures. */
-static int retry_failed(const char *tid) {
-    retry_t *r = retry_entry(tid, 1);
-    if (!r)
-        return 1;
-    int first = !r->until;
-    r->until = time(NULL) + RETRY_SECONDS;
-    printf("[reg] %s: next try in %d seconds\n", tid, RETRY_SECONDS);
-    return first;
-}
-
-static void retry_clear(const char *tid) {
-    retry_t *r = retry_entry(tid, 0);
-    if (r)
-        memset(r, 0, sizeof(*r));
+static void halt_set(const char *db) {
+    if (g_halt[0])
+        return;
+    snprintf(g_halt, sizeof(g_halt), "the system reported %s as corrupted", db[0] ? db : "a database");
+    write_file(HALT_FILE, g_halt, strlen(g_halt), 0666);
+    printf("[safety] adding games paused: %s\n", g_halt);
+    notify("PS4Mount stopped adding games: %s. Games already added still work. Restart the console, then "
+           "resume in the PS4Mount panel",
+           g_halt);
 }
 
 static int has_candidates(const char *root) {
@@ -1717,8 +1722,8 @@ static void scan_root(const char *root, int fresh, int reconnected) {
         t->ndlc = src.ndlc;
         t->has_patch = src.has_patch;
         t->state = title_state(&src);
-        if (t->state == 1 && retry_waiting(t->tid))
-            t->state = -1; /* failed recently: tried again later */
+        if (t->state == 1 && retry_waiting(&g_retry, t->tid, time(NULL)))
+            t->state = -1; /* failed recently (tried again later) or given up */
         pending += t->state == 1;
         if (t->state == 0)
             keep_mounted(&src); /* while its pkgs are open: they are not read again */
@@ -1733,6 +1738,12 @@ static void scan_root(const char *root, int fresh, int reconnected) {
         notify("%s: %d new or updated PS4 game(s)", label, pending);
     if (!pending)
         return;
+    if (g_halt[0]) {
+        if (fresh)
+            notify("%s: %d game(s) not added: adding games is paused (%s). Resume in the PS4Mount panel", label,
+                   pending, g_halt);
+        return;
+    }
 
     /* New or changed games, in groups: one AppInstallAll per group and a quiet
      * period between groups, so the system is never flooded with registrations. */
@@ -1754,7 +1765,7 @@ static void scan_root(const char *root, int fresh, int reconnected) {
         for (; i < count && n < size; i++)
             if (titles[i].state == 1)
                 members[n++] = i;
-        if (!n)
+        if (!n || g_halt[0])
             break;
         if (group++)
             wait_db_quiet(BATCH_QUIET, 120);
@@ -1779,8 +1790,7 @@ static void scan_root(const char *root, int fresh, int reconnected) {
                        t->has_patch ? " with update" : "", extra, t->tid);
             }
             if (src_open(&src, root, t->tid) || register_prepare(&src)) {
-                if (retry_failed(t->tid))
-                    notify("Failed to add %s (%s), it is tried again every few minutes", t->name, t->tid);
+                title_failed(t->tid, t->name);
             } else {
                 prepared[k] = 1;
                 snprintf(ids[np++], 10, "%s", t->tid);
@@ -1797,10 +1807,10 @@ static void scan_root(const char *root, int fresh, int reconnected) {
             if (!prepared[k] || src_open(&src, root, t->tid))
                 continue;
             if (register_finish(&src)) {
-                if (retry_failed(t->tid))
-                    notify("Failed to add %s (%s), it is tried again every few minutes", t->name, t->tid);
+                if (!g_halt[0]) /* paused: not the title's fault */
+                    title_failed(t->tid, t->name);
             } else {
-                retry_clear(t->tid);
+                retry_clear(&g_retry, t->tid);
                 ok++;
                 if (!grouped)
                     notify("%s ready to play", t->name);
@@ -1974,8 +1984,10 @@ static void disagree_seen(const char *tid) {
 
 static void handle_klog_line(const char *line) {
     const char *p;
-    char id[40];
+    char id[40], db[64];
     trace_klog(line);
+    if (safety_db_corrupt(line, db, sizeof(db)))
+        halt_set(db);
     if ((p = after(line, "OnFocusActiveSceneChanged ["))) {
         /* "[from : type] -> [to : type]": follow the delete screens */
         const char *to = strstr(p, "] -> [");
@@ -2061,6 +2073,21 @@ static int g_stop;
 void app_rescan(void) {
     g_next_scan = 0;
     g_manual_scan = 1;
+    retry_clear_given_up(&g_retry);
+}
+
+int app_resume(char *msg, size_t cap) {
+    if (!g_halt[0]) {
+        snprintf(msg, cap, "Adding games is not paused");
+        return -1;
+    }
+    unlink(HALT_FILE);
+    g_halt[0] = 0;
+    retry_clear_given_up(&g_retry);
+    g_next_scan = 0;
+    printf("[safety] adding games resumed from the panel\n");
+    snprintf(msg, cap, "Adding games resumed");
+    return 0;
 }
 void app_stop(void) { g_stop = 1; }
 
@@ -2124,6 +2151,8 @@ static const info_t *info_load(const char *root, const char *tid) {
 void app_games_json(buf_t *out) {
     buf_printf(out, "{\"version\":");
     json_str(out, VERSION);
+    buf_printf(out, ",\"paused\":");
+    json_str(out, g_halt);
     buf_printf(out, ",\"games\":[");
     int first = 1;
     for (int i = 0; i < NUM_DRIVES; i++) {
@@ -2158,6 +2187,8 @@ void app_games_json(buf_t *out) {
                 state = "running";
             else if (mounted && db_is_registered(tid))
                 state = "ready";
+            else if (retry_given_up(&g_retry, tid))
+                state = "failed";
             else
                 state = "pending";
             buf_printf(out, "%s{\"title_id\":\"%s\",\"name\":", first ? "" : ",", tid);
@@ -2212,6 +2243,7 @@ int app_add(const char *tid, char *msg, size_t cap) {
     snprintf(rm, sizeof(rm), STATE_DIR "/%s.removed", tid);
     unlink(rm);
     clear_removed_dlc();
+    retry_clear(&g_retry, tid);
     g_next_scan = 0;
     snprintf(msg, cap, "Adding %s to the library", tid);
     return 0;
@@ -2462,7 +2494,7 @@ static void restore_clear_state(const char *tid) {
     unlink(p);
     snprintf(p, sizeof(p), STATE_DIR "/%s.src", tid);
     unlink(p);
-    retry_clear(tid);
+    retry_clear(&g_retry, tid);
 }
 
 /* Requests from the panel, run by the main loop: some titles, or all of them. */
@@ -3055,9 +3087,10 @@ int main(void) {
         atexit(log_stop); /* the last lines reach the file before the payload exits */
     setvbuf(stdout, NULL, _IOLBF, 0);
     config_load();
+    halt_load();
     signal(SIGPIPE, SIG_IGN);
     check_firmware();
-    if (g_reg_mode != REG_NONE)
+    if (g_reg_mode != REG_NONE && !g_halt[0])
         install_panel_shortcut(); /* registered by the system like the games */
     g_web = web_listen();
     if (g_reg_mode == REG_ALL)
@@ -3070,6 +3103,8 @@ int main(void) {
     else
         notify(VERSION ": firmware %s is not supported yet. To protect the system database, no games are added.",
                g_fw_text);
+    if (g_halt[0])
+        notify("Adding games is paused: %s. Resume in the PS4Mount panel", g_halt);
     unlink(STATE_DIR "/stop");
     for (;;) {
         if (g_stop || exists(STATE_DIR "/stop")) {

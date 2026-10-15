@@ -25,6 +25,7 @@ void app_rescan(void) {
     char m[8];
     record("rescan", NULL, m, sizeof(m));
 }
+int app_resume(char *msg, size_t cap) { return record("resume", NULL, msg, cap); }
 void app_stop(void) {
     char m[8];
     record("stop", NULL, m, sizeof(m));
