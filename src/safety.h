@@ -31,6 +31,8 @@ typedef struct {
 int retry_waiting(const retry_table_t *t, const char *tid, time_t now);
 /* 1 when tid failed RETRY_MAX_TRIES times in a row. */
 int retry_given_up(const retry_table_t *t, const char *tid);
+/* Seconds until tid is tried again after a failure, 0 when none is pending or it was given up. */
+long retry_remaining(const retry_table_t *t, const char *tid, time_t now);
 /* Records a failure; returns how many in a row (0 when the table is full). */
 int retry_failed(retry_table_t *t, const char *tid, time_t now);
 void retry_clear(retry_table_t *t, const char *tid);

@@ -31,7 +31,7 @@ main{padding:20px;max-width:1400px;margin:0 auto}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
 .art{aspect-ratio:1/1;background:#0b0d11 center/cover no-repeat;position:relative}
 .badge{position:absolute;left:10px;top:10px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;background:#000a}
-.b-ready{background:var(--ok)}.b-running{background:var(--accent)}.b-removed{background:#555}.b-internal{background:var(--warn)}.b-pending{background:var(--warn)}.b-duplicate{background:#555}.b-failed{background:var(--bad)}.b-excluded{background:#555}
+.b-ready{background:var(--ok)}.b-running{background:var(--accent)}.b-removed{background:#555}.b-internal{background:var(--warn)}.b-pending{background:var(--warn)}.b-retrying{background:var(--warn)}.b-duplicate{background:#555}.b-failed{background:var(--bad)}.b-excluded{background:#555}
 .info{padding:12px 14px;display:flex;flex-direction:column;gap:4px;flex:1}
 .name{font-weight:600;font-size:16px}
 .meta{color:var(--muted);font-size:13px;word-break:break-all}
@@ -177,8 +177,8 @@ var addonLabels = {on: 'installed', adding: 'being added', off: 'turned off', de
 var kinds = {duplicate: 'Same game on more than one place (this copy is not used)', 'addon-without-game': 'Add-on without its game',
   'update-without-game': 'Update without its game', unusable: 'Cannot be read (damaged, not a PS4 pkg, or not game/update/add-on)',
   incomplete: 'Incomplete: still copying or cut off; used once complete'};
-var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', duplicate: 'On another drive', failed: 'Failed', excluded: 'Never added'};
-var order = {running: 0, ready: 1, pending: 2, failed: 3, removed: 4, excluded: 5, duplicate: 6, internal: 7};
+var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', retrying: 'Retrying', duplicate: 'On another drive', failed: 'Failed', excluded: 'Never added'};
+var order = {running: 0, ready: 1, pending: 2, retrying: 3, failed: 4, removed: 5, excluded: 6, duplicate: 7, internal: 8};
 
 function $(id) { return document.getElementById(id); }
 
@@ -222,7 +222,7 @@ es: {
 'Incomplete: still copying or cut off; used once complete': 'Incompleto: aún copiándose o cortado; se usará cuando esté completo',
 'Ready': 'Listo', 'Running': 'En ejecución', 'Not in library': 'No está en la biblioteca',
 'Installed on console': 'Instalado en la consola', 'Adding': 'Añadiendo', 'On another drive': 'En otra unidad',
-'Failed': 'Error', 'Never added': 'No se añade nunca',
+'Failed': 'Error', 'Retrying': 'Reintentando', 'Failed; trying again in {n} s': 'Falló; se reintenta en {n} s', 'Never added': 'No se añade nunca',
 'Wrong PIN. PIN of the PS4Mount panel:': 'PIN incorrecto. PIN del panel de PS4Mount:',
 'PIN of the PS4Mount panel:': 'PIN del panel de PS4Mount:', 'New: {tag}': 'Nueva: {tag}',
 'A newer PS4Mount is available': 'Hay una versión más reciente de PS4Mount',
@@ -319,7 +319,7 @@ pt: {
 'Incomplete: still copying or cut off; used once complete': 'Incompleto: ainda copiando ou cortado; será usado quando estiver completo',
 'Ready': 'Pronto', 'Running': 'Em execução', 'Not in library': 'Fora da biblioteca',
 'Installed on console': 'Instalado no console', 'Adding': 'Adicionando', 'On another drive': 'Em outra unidade',
-'Failed': 'Falhou', 'Never added': 'Nunca adicionado',
+'Failed': 'Falhou', 'Retrying': 'Tentando de novo', 'Failed; trying again in {n} s': 'Falhou; tenta de novo em {n} s', 'Never added': 'Nunca adicionado',
 'Wrong PIN. PIN of the PS4Mount panel:': 'PIN incorreto. PIN do painel do PS4Mount:',
 'PIN of the PS4Mount panel:': 'PIN do painel do PS4Mount:', 'New: {tag}': 'Nova: {tag}',
 'A newer PS4Mount is available': 'Há uma versão mais nova do PS4Mount',
@@ -416,7 +416,7 @@ fr: {
 'Incomplete: still copying or cut off; used once complete': 'Incomplet : copie en cours ou coupée ; utilisé une fois complet',
 'Ready': 'Prêt', 'Running': 'En cours', 'Not in library': 'Hors bibliothèque',
 'Installed on console': 'Installé sur la console', 'Adding': 'Ajout en cours', 'On another drive': 'Sur un autre disque',
-'Failed': 'Échec', 'Never added': 'Jamais ajouté',
+'Failed': 'Échec', 'Retrying': 'Nouvel essai', 'Failed; trying again in {n} s': 'Échec ; nouvel essai dans {n} s', 'Never added': 'Jamais ajouté',
 'Wrong PIN. PIN of the PS4Mount panel:': 'PIN incorrect. PIN du panneau PS4Mount :',
 'PIN of the PS4Mount panel:': 'PIN du panneau PS4Mount :', 'New: {tag}': 'Nouveau : {tag}',
 'A newer PS4Mount is available': 'Une version plus récente de PS4Mount est disponible',
@@ -683,7 +683,8 @@ function render() {
         (g.has_patch ? ' (' + t(g.update_other_drive ? 'with update from another drive' : 'with update') + ')' : '') +
         (g.dlc ? ' · ' + t('{n} add-on(s)', {n: g.dlc}) : '') + ' · ' + gb(g.size) + '</div>' +
       '<div class="meta">' + esc(g.source) + (g.mount ? ' · ' + t('mounted {how}', {how: esc(g.mount)}) : '') + '</div>' + upd + adds +
-      (g.update_issue ? '<div class="warn">' + esc(g.update_issue) + '</div>' : '') + '</div>' +
+      (g.update_issue ? '<div class="warn">' + esc(g.update_issue) + '</div>' : '') +
+      (g.state === 'retrying' && g.retry_in > 0 ? '<div class="warn">' + t('Failed; trying again in {n} s', {n: g.retry_in}) + '</div>' : '') + '</div>' +
       '<div class="actions">' + act + '</div></div>';
   });
   $('grid').innerHTML = html;

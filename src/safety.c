@@ -41,6 +41,13 @@ int retry_given_up(const retry_table_t *t, const char *tid) {
     return r && r->tries >= RETRY_MAX_TRIES;
 }
 
+long retry_remaining(const retry_table_t *t, const char *tid, time_t now) {
+    const retry_t *r = find(t, tid);
+    if (!r || r->tries >= RETRY_MAX_TRIES || now >= r->until)
+        return 0;
+    return (long)(r->until - now);
+}
+
 int retry_failed(retry_table_t *t, const char *tid, time_t now) {
     retry_t *r = find(t, tid);
     for (int i = 0; !r && i < t->n; i++)

@@ -913,7 +913,9 @@ static void test_policy(void) {
     p.internal = 1;
     CHECK(!strcmp(policy_panel_state(&p), "internal"));
     panel_facts_t q = {0};
-    q.given_up = 1;
+    q.retrying = 1;
+    CHECK(!strcmp(policy_panel_state(&q), "retrying"));
+    q.given_up = 1; /* given up wins over a pending retry */
     CHECK(!strcmp(policy_panel_state(&q), "failed"));
     q.mounted = q.registered = 1; /* added after all */
     CHECK(!strcmp(policy_panel_state(&q), "ready"));
@@ -965,11 +967,15 @@ static void test_safety(void) {
     retry_table_t t = {items, 2};
     time_t now = 1000;
     CHECK(!retry_waiting(&t, "CUSA00001", now));
+    CHECK(retry_remaining(&t, "CUSA00001", now) == 0); /* no entry: nothing pending */
     CHECK(retry_failed(&t, "CUSA00001", now) == 1);
+    CHECK(retry_remaining(&t, "CUSA00001", now) == RETRY_SECONDS);
+    CHECK(retry_remaining(&t, "CUSA00001", now + RETRY_SECONDS) == 0);
     CHECK(retry_waiting(&t, "CUSA00001", now + RETRY_SECONDS - 1));
     CHECK(!retry_waiting(&t, "CUSA00001", now + RETRY_SECONDS));
     CHECK(retry_failed(&t, "CUSA00001", now) == 2 && !retry_given_up(&t, "CUSA00001"));
     CHECK(retry_failed(&t, "CUSA00001", now) == RETRY_MAX_TRIES && retry_given_up(&t, "CUSA00001"));
+    CHECK(retry_remaining(&t, "CUSA00001", now) == 0); /* given up: no countdown */
     CHECK(retry_waiting(&t, "CUSA00001", now + 100000)); /* given up: not tried again by itself */
     CHECK(retry_failed(&t, "CUSA00002", now) == 1);
     CHECK(retry_failed(&t, "CUSA00003", now) == 0); /* table full */
