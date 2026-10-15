@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#0e1116">
 <title>PS4Mount</title>
+<script>
+/* The browser of older firmwares has no <dialog>: it gets its own page. */
+if (typeof document.createElement('dialog').showModal !== 'function') location.replace('/legacy');
+</script>
 <style>
 :root{--bg:#0e1116;--panel:#171b22;--line:#262c36;--fg:#e8eaed;--muted:#97a0ab;--accent:#3d7bfd;--ok:#2f9e57;--warn:#c98b1f;--bad:#c2453b;color-scheme:dark}
 *{box-sizing:border-box}
@@ -46,15 +50,11 @@ main{padding:20px;max-width:1400px;margin:0 auto}
 .warn{color:#f0c060;font-size:13px;background:#3a2e12;border:1px solid #5c4818;border-radius:8px;padding:6px 8px;margin-top:4px}
 dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:12px;max-width:95vw;max-width:min(900px,95vw);width:900px}
 dialog::backdrop{background:#000a}
-/* browsers without <dialog> (older firmwares): see dialogFallback() */
-dialog.fallback{display:none;position:fixed;top:50%;left:50%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%);z-index:20;max-height:90vh;overflow:auto;padding:16px;margin:0}
-dialog.fallback[open]{display:block}
-#dlg-backdrop{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.65);z-index:19}
 pre{white-space:pre-wrap;font-size:12px;max-height:60vh;overflow:auto;background:#0b0d11;padding:12px;border-radius:8px}
 form.settings{display:flex;flex-direction:column;gap:14px}
 form.settings label{display:flex;flex-direction:column;gap:6px}
 form.settings label.check{flex-direction:row;align-items:center;gap:10px}
-form.settings textarea,form.settings input[type=number]{background:#0b0d11;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit}
+form.settings textarea,form.settings input[type=number],form.settings input[type=text]{background:#0b0d11;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit}
 form.settings textarea{min-height:90px;resize:vertical;font-family:ui-monospace,Consolas,monospace}
 form.settings .hint{color:var(--muted);font-size:13px}
 form.settings .row{display:flex;gap:8px;justify-content:flex-end}
@@ -88,6 +88,15 @@ select{background:var(--panel);color:var(--fg);border:1px solid var(--line);bord
 #fmdlg .actions button:only-child{grid-column:auto}
 table{width:100%;border-collapse:collapse;font-size:13px}
 td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-break:break-all}
+form.settings fieldset{border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:12px}
+form.settings legend{font-weight:600;padding:0 6px}
+form.settings input.num{width:6em}
+.picker{width:100%;border-collapse:collapse;font-size:14px}
+.picker th,.picker td{border-bottom:1px solid var(--line);padding:8px 6px;text-align:left;vertical-align:top}
+.picker td.c,.picker th.c{width:36px;text-align:center}
+.picker .meta{font-size:12px}
+.pickwrap{max-height:55vh;overflow:auto;margin:10px 0}
+.note{color:#f0c060;font-size:13px}
 #toast{position:fixed;right:20px;bottom:20px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 16px;display:none;max-width:420px}
 </style>
 </head>
@@ -154,13 +163,30 @@ td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-b
     <span class="hint" id="s-pinhint"></span>
   </label>
   <label class="check" id="s-pinoff-row"><input type="checkbox" id="s-pinoff"> Remove the PIN</label>
-  <div class="hint">Pkgs moved back</div>
-  <div class="row" style="justify-content:flex-start">
-    <button type="button" class="danger" id="s-restore">Move all games back</button>
-    <button type="button" id="s-forget">Pick up moved-back pkgs again</button>
-  </div>
+  <fieldset><legend>Restore games to the original path</legend>
+    <span class="hint">Moves the pkgs of a game (game, update and all its add-ons) back to where they came from,
+      with their original names, and takes the game out of the library. No pkg is deleted. The open game is closed first.</span>
+    <label><span id="s-rsize-label"></span>
+      <input type="text" class="num" id="s-rsize" inputmode="numeric" pattern="[0-9]*" maxlength="2">
+    </label>
+    <div class="row" style="justify-content:flex-start;flex-wrap:wrap">
+      <button type="button" class="danger" id="s-restore">Move all games back</button>
+      <button type="button" id="s-pick">Restore selected games</button>
+      <button type="button" id="s-forget">Pick up moved-back pkgs again</button>
+    </div>
+  </fieldset>
   <div class="row"><button type="button" id="s-cancel">Cancel</button><button class="primary" type="submit">Save</button></div>
 </form></dialog>
+<dialog id="pickdlg"><h3>Restore selected games</h3>
+<div class="note">Each selected game is moved back with its update and all its add-ons (DLC). The open game is closed first.</div>
+<div class="pickwrap"><table class="picker">
+  <thead><tr><th class="c"><input type="checkbox" id="p-all" title="Select all"></th><th>Game</th><th>Moved back</th></tr></thead>
+  <tbody id="p-rows"></tbody>
+</table></div>
+<div class="hint" id="p-info"></div>
+<div class="row" style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+  <button type="button" id="p-cancel">Cancel</button><button type="button" class="danger" id="p-go" disabled>Move selected back</button>
+</div></dialog>
 <dialog id="logdlg"><h3>Log</h3><pre id="log"></pre>
 <div class="actions" style="padding:10px 0 0"><button class="primary" id="logsave">Download the whole log</button><form method="dialog"><button>Close</button></form></div></dialog>
 <dialog id="diagdlg"><h3>Diagnostics</h3>
@@ -262,7 +288,6 @@ es: {
 'Could not read the list: {e}': 'No se pudo leer la lista: {e}',
 'Remove {tid} from the library? The pkg stays on the USB drive.': '¿Quitar {tid} de la biblioteca? El pkg se queda en la unidad USB.',
 'Never add {tid}? It leaves the library and is skipped by every scan until you click Allow. The pkgs stay on the drive.': '¿No añadir nunca {tid}? Sale de la biblioteca y todas las búsquedas lo saltan hasta que pulses Permitir. Los pkgs se quedan en la unidad.',
-'Move the pkgs of {tid} back to where they came from, with their original names?\n\nThe game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.': '¿Devolver los pkgs de {tid} a su sitio original, con sus nombres originales?\n\nEl juego sale de la biblioteca y PS4Mount deja de usar estos pkgs. No se borra ningún pkg.',
 'Error: {e}': 'Error: {e}', 'Add {n} game(s)?': '¿Añadir {n} juego(s)?',
 'Remove {n} game(s)? The pkgs stay on the drive.': '¿Quitar {n} juego(s)? Los pkgs se quedan en la unidad.',
 'Never add {n} game(s)?': '¿No añadir nunca {n} juego(s)?', '{ok} done': '{ok} hechos',
@@ -282,7 +307,6 @@ es: {
 '4 to 8 digits. With a PIN, every browser must enter it before using the panel.': 'De 4 a 8 dígitos. Con PIN, cada navegador debe introducirlo antes de usar el panel.',
 'A PIN is set.': 'Hay un PIN configurado.', 'Anyone on your network can use the panel now.': 'Ahora cualquiera en tu red puede usar el panel.',
 'Could not read the settings: {e}': 'No se pudieron leer los ajustes: {e}',
-'Move the pkgs of ALL games back to where they came from, with their original names?\n\nAll PS4Mount games leave the library and PS4Mount stops picking these pkgs up. No pkg is deleted.': '¿Devolver los pkgs de TODOS los juegos a su sitio original, con sus nombres originales?\n\nTodos los juegos de PS4Mount salen de la biblioteca y PS4Mount deja de usar estos pkgs. No se borra ningún pkg.',
 'Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.': '¿Volver a usar los pkgs devueltos? Se mueven a la carpeta ps4 y se añaden en la próxima búsqueda.',
 'The PIN must be 4 to 8 digits': 'El PIN debe tener de 4 a 8 dígitos',
 'Stop PS4Mount? The games stay unavailable until it is loaded again.': '¿Detener PS4Mount? Los juegos no estarán disponibles hasta que se vuelva a cargar.',
@@ -292,7 +316,24 @@ es: {
 'Delete {what}? This cannot be undone.': '¿Borrar {what}? Esto no se puede deshacer.',
 'Moving {name}. Open the destination folder and press Move here.': 'Moviendo {name}. Abre la carpeta de destino y pulsa Mover aquí.',
 'Game': 'Juego', 'Update': 'Actualización', 'Add-on': 'Complemento', 'Duplicate': 'Duplicado',
-'Orphan add-on': 'Complemento huérfano', 'Spare update': 'Actualización de repuesto', 'Orphan update': 'Actualización huérfana'
+'Orphan add-on': 'Complemento huérfano', 'Spare update': 'Actualización de repuesto', 'Orphan update': 'Actualización huérfana',
+'Games removed from the library per group (1 to {max})': 'Juegos quitados de la biblioteca por grupo (1 a {max})',
+'Games per group must be a number from 1 to {max}': 'Los juegos por grupo deben ser un número de 1 a {max}',
+'{n} game(s) selected': '{n} juego(s) seleccionado(s)',
+'removed from the library {size} at a time': 'quitados de la biblioteca en grupos de {size}',
+'No games selected': 'Ningún juego seleccionado',
+'No PS4Mount games on the connected drives': 'No hay juegos de PS4Mount en las unidades conectadas',
+'WARNING: this moves the pkgs of ALL {n} games (game, update and all add-ons) back to where they came from, with their original names.\n\nThe open game is closed now, without saving. All PS4Mount games leave the library, {size} at a time, and PS4Mount stops picking these pkgs up. No pkg is deleted.\n\nContinue?': 'AVISO: esto devuelve los pkgs de TODOS los {n} juegos (juego, actualización y todos los complementos) a su sitio original, con sus nombres originales.\n\nEl juego abierto se cierra ahora, sin guardar. Todos los juegos de PS4Mount salen de la biblioteca en grupos de {size}, y PS4Mount deja de usar estos pkgs. No se borra ningún pkg.\n\n¿Continuar?',
+'Move the pkgs of {n} game(s), each with its update and all its add-ons, back to where they came from?\n\nThe open game is closed now, without saving. The games leave the library{batch}. No pkg is deleted.': '¿Devolver los pkgs de {n} juego(s), cada uno con su actualización y todos sus complementos, a su sitio original?\n\nEl juego abierto se cierra ahora, sin guardar. Los juegos salen de la biblioteca{batch}. No se borra ningún pkg.',
+', {size} at a time': ', en grupos de {size}',
+'Move the pkgs of {tid} (game, update and all its add-ons) back to where they came from, with their original names?\n\nThe open game is closed first. The game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.': '¿Devolver los pkgs de {tid} (juego, actualización y todos sus complementos) a su sitio original, con sus nombres originales?\n\nEl juego abierto se cierra primero. El juego sale de la biblioteca y PS4Mount deja de usar estos pkgs. No se borra ningún pkg.',
+'Restore games to the original path': 'Devolver juegos a su ruta original',
+'Moves the pkgs of a game (game, update and all its add-ons) back to where they came from, with their original names, and takes the game out of the library. No pkg is deleted. The open game is closed first.': 'Devuelve los pkgs de un juego (juego, actualización y todos sus complementos) a su sitio original, con sus nombres originales, y saca el juego de la biblioteca. No se borra ningún pkg. El juego abierto se cierra primero.',
+'Restore selected games': 'Devolver los juegos seleccionados',
+'Each selected game is moved back with its update and all its add-ons (DLC). The open game is closed first.': 'Cada juego seleccionado se devuelve con su actualización y todos sus complementos (DLC). El juego abierto se cierra primero.',
+'Moved back': 'Qué se devuelve',
+'Select all': 'Seleccionar todo',
+'Move selected back': 'Devolver los seleccionados'
 },
 pt: {
 'Search game or CUSA': 'Buscar jogo ou CUSA', 'Sort': 'Ordenar', 'Sort by name': 'Ordenar por nome',
@@ -350,7 +391,6 @@ pt: {
 'Could not read the list: {e}': 'Não foi possível ler a lista: {e}',
 'Remove {tid} from the library? The pkg stays on the USB drive.': 'Remover {tid} da biblioteca? O pkg continua na unidade USB.',
 'Never add {tid}? It leaves the library and is skipped by every scan until you click Allow. The pkgs stay on the drive.': 'Nunca adicionar {tid}? Ele sai da biblioteca e todas as verificações o pulam até você clicar em Permitir. Os pkgs continuam na unidade.',
-'Move the pkgs of {tid} back to where they came from, with their original names?\n\nThe game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.': 'Devolver os pkgs de {tid} para onde vieram, com os nomes originais?\n\nO jogo sai da biblioteca e o PS4Mount para de usar esses pkgs. Nenhum pkg é apagado.',
 'Error: {e}': 'Erro: {e}', 'Add {n} game(s)?': 'Adicionar {n} jogo(s)?',
 'Remove {n} game(s)? The pkgs stay on the drive.': 'Remover {n} jogo(s)? Os pkgs continuam na unidade.',
 'Never add {n} game(s)?': 'Nunca adicionar {n} jogo(s)?', '{ok} done': '{ok} concluídos',
@@ -370,7 +410,6 @@ pt: {
 '4 to 8 digits. With a PIN, every browser must enter it before using the panel.': 'De 4 a 8 dígitos. Com PIN, cada navegador precisa digitá-lo antes de usar o painel.',
 'A PIN is set.': 'Há um PIN definido.', 'Anyone on your network can use the panel now.': 'Agora qualquer pessoa na sua rede pode usar o painel.',
 'Could not read the settings: {e}': 'Não foi possível ler as configurações: {e}',
-'Move the pkgs of ALL games back to where they came from, with their original names?\n\nAll PS4Mount games leave the library and PS4Mount stops picking these pkgs up. No pkg is deleted.': 'Devolver os pkgs de TODOS os jogos para onde vieram, com os nomes originais?\n\nTodos os jogos do PS4Mount saem da biblioteca e o PS4Mount para de usar esses pkgs. Nenhum pkg é apagado.',
 'Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.': 'Usar de novo os pkgs devolvidos? Eles são movidos para a pasta ps4 e adicionados na próxima verificação.',
 'The PIN must be 4 to 8 digits': 'O PIN deve ter de 4 a 8 dígitos',
 'Stop PS4Mount? The games stay unavailable until it is loaded again.': 'Parar o PS4Mount? Os jogos ficam indisponíveis até ele ser carregado de novo.',
@@ -380,7 +419,24 @@ pt: {
 'Delete {what}? This cannot be undone.': 'Apagar {what}? Isso não pode ser desfeito.',
 'Moving {name}. Open the destination folder and press Move here.': 'Movendo {name}. Abra a pasta de destino e clique em Mover aqui.',
 'Game': 'Jogo', 'Update': 'Atualização', 'Add-on': 'Complemento', 'Duplicate': 'Duplicado',
-'Orphan add-on': 'Complemento órfão', 'Spare update': 'Atualização sobressalente', 'Orphan update': 'Atualização órfã'
+'Orphan add-on': 'Complemento órfão', 'Spare update': 'Atualização sobressalente', 'Orphan update': 'Atualização órfã',
+'Games removed from the library per group (1 to {max})': 'Jogos removidos da biblioteca por grupo (1 a {max})',
+'Games per group must be a number from 1 to {max}': 'Os jogos por grupo devem ser um número de 1 a {max}',
+'{n} game(s) selected': '{n} jogo(s) selecionado(s)',
+'removed from the library {size} at a time': 'removidos da biblioteca em grupos de {size}',
+'No games selected': 'Nenhum jogo selecionado',
+'No PS4Mount games on the connected drives': 'Não há jogos do PS4Mount nas unidades conectadas',
+'WARNING: this moves the pkgs of ALL {n} games (game, update and all add-ons) back to where they came from, with their original names.\n\nThe open game is closed now, without saving. All PS4Mount games leave the library, {size} at a time, and PS4Mount stops picking these pkgs up. No pkg is deleted.\n\nContinue?': 'ATENÇÃO: isto devolve os pkgs de TODOS os {n} jogos (jogo, atualização e todos os complementos) ao lugar original, com os nomes originais.\n\nO jogo aberto é fechado agora, sem salvar. Todos os jogos do PS4Mount saem da biblioteca em grupos de {size}, e o PS4Mount deixa de usar esses pkgs. Nenhum pkg é apagado.\n\nContinuar?',
+'Move the pkgs of {n} game(s), each with its update and all its add-ons, back to where they came from?\n\nThe open game is closed now, without saving. The games leave the library{batch}. No pkg is deleted.': 'Devolver os pkgs de {n} jogo(s), cada um com sua atualização e todos os seus complementos, ao lugar original?\n\nO jogo aberto é fechado agora, sem salvar. Os jogos saem da biblioteca{batch}. Nenhum pkg é apagado.',
+', {size} at a time': ', em grupos de {size}',
+'Move the pkgs of {tid} (game, update and all its add-ons) back to where they came from, with their original names?\n\nThe open game is closed first. The game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.': 'Devolver os pkgs de {tid} (jogo, atualização e todos os seus complementos) ao lugar original, com os nomes originais?\n\nO jogo aberto é fechado primeiro. O jogo sai da biblioteca e o PS4Mount deixa de usar esses pkgs. Nenhum pkg é apagado.',
+'Restore games to the original path': 'Devolver jogos ao caminho original',
+'Moves the pkgs of a game (game, update and all its add-ons) back to where they came from, with their original names, and takes the game out of the library. No pkg is deleted. The open game is closed first.': 'Devolve os pkgs de um jogo (jogo, atualização e todos os seus complementos) ao lugar original, com os nomes originais, e tira o jogo da biblioteca. Nenhum pkg é apagado. O jogo aberto é fechado primeiro.',
+'Restore selected games': 'Devolver os jogos selecionados',
+'Each selected game is moved back with its update and all its add-ons (DLC). The open game is closed first.': 'Cada jogo selecionado é devolvido com sua atualização e todos os seus complementos (DLC). O jogo aberto é fechado primeiro.',
+'Moved back': 'O que é devolvido',
+'Select all': 'Selecionar tudo',
+'Move selected back': 'Devolver os selecionados'
 },
 fr: {
 'Search game or CUSA': 'Chercher un jeu ou CUSA', 'Sort': 'Trier', 'Sort by name': 'Trier par nom',
@@ -438,7 +494,6 @@ fr: {
 'Could not read the list: {e}': 'Impossible de lire la liste : {e}',
 'Remove {tid} from the library? The pkg stays on the USB drive.': 'Retirer {tid} de la bibliothèque ? Le pkg reste sur le disque USB.',
 'Never add {tid}? It leaves the library and is skipped by every scan until you click Allow. The pkgs stay on the drive.': 'Ne jamais ajouter {tid} ? Il quitte la bibliothèque et chaque recherche l’ignore jusqu’à ce que vous cliquiez sur Autoriser. Les pkgs restent sur le disque.',
-'Move the pkgs of {tid} back to where they came from, with their original names?\n\nThe game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.': 'Remettre les pkgs de {tid} à leur emplacement d’origine, avec leurs noms d’origine ?\n\nLe jeu quitte la bibliothèque et PS4Mount n’utilise plus ces pkgs. Aucun pkg n’est supprimé.',
 'Error: {e}': 'Erreur : {e}', 'Add {n} game(s)?': 'Ajouter {n} jeu(x) ?',
 'Remove {n} game(s)? The pkgs stay on the drive.': 'Retirer {n} jeu(x) ? Les pkgs restent sur le disque.',
 'Never add {n} game(s)?': 'Ne jamais ajouter {n} jeu(x) ?', '{ok} done': '{ok} terminé(s)',
@@ -458,7 +513,6 @@ fr: {
 '4 to 8 digits. With a PIN, every browser must enter it before using the panel.': '4 à 8 chiffres. Avec un PIN, chaque navigateur doit le saisir avant d’utiliser le panneau.',
 'A PIN is set.': 'Un PIN est défini.', 'Anyone on your network can use the panel now.': 'Pour l’instant, n’importe qui sur votre réseau peut utiliser le panneau.',
 'Could not read the settings: {e}': 'Impossible de lire les réglages : {e}',
-'Move the pkgs of ALL games back to where they came from, with their original names?\n\nAll PS4Mount games leave the library and PS4Mount stops picking these pkgs up. No pkg is deleted.': 'Remettre les pkgs de TOUS les jeux à leur emplacement d’origine, avec leurs noms d’origine ?\n\nTous les jeux PS4Mount quittent la bibliothèque et PS4Mount n’utilise plus ces pkgs. Aucun pkg n’est supprimé.',
 'Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.': 'Reprendre les pkgs remis en place ? Ils sont déplacés dans le dossier ps4 et ajoutés à la prochaine recherche.',
 'The PIN must be 4 to 8 digits': 'Le PIN doit comporter 4 à 8 chiffres',
 'Stop PS4Mount? The games stay unavailable until it is loaded again.': 'Arrêter PS4Mount ? Les jeux restent indisponibles jusqu’à ce qu’il soit rechargé.',
@@ -468,7 +522,24 @@ fr: {
 'Delete {what}? This cannot be undone.': 'Supprimer {what} ? Cela ne peut pas être annulé.',
 'Moving {name}. Open the destination folder and press Move here.': 'Déplacement de {name}. Ouvrez le dossier de destination et appuyez sur Déplacer ici.',
 'Game': 'Jeu', 'Update': 'Mise à jour', 'Add-on': 'Extension', 'Duplicate': 'Doublon',
-'Orphan add-on': 'Extension orpheline', 'Spare update': 'Mise à jour de secours', 'Orphan update': 'Mise à jour orpheline'
+'Orphan add-on': 'Extension orpheline', 'Spare update': 'Mise à jour de secours', 'Orphan update': 'Mise à jour orpheline',
+'Games removed from the library per group (1 to {max})': 'Jeux retirés de la bibliothèque par groupe (1 à {max})',
+'Games per group must be a number from 1 to {max}': 'Les jeux par groupe doivent être un nombre de 1 à {max}',
+'{n} game(s) selected': '{n} jeu(x) sélectionné(s)',
+'removed from the library {size} at a time': 'retirés de la bibliothèque par groupes de {size}',
+'No games selected': 'Aucun jeu sélectionné',
+'No PS4Mount games on the connected drives': 'Aucun jeu PS4Mount sur les disques connectés',
+'WARNING: this moves the pkgs of ALL {n} games (game, update and all add-ons) back to where they came from, with their original names.\n\nThe open game is closed now, without saving. All PS4Mount games leave the library, {size} at a time, and PS4Mount stops picking these pkgs up. No pkg is deleted.\n\nContinue?': 'ATTENTION : ceci remet les pkgs des {n} jeux (jeu, mise à jour et toutes les extensions) à leur emplacement d\'origine, avec leurs noms d\'origine.\n\nLe jeu ouvert est fermé maintenant, sans sauvegarder. Tous les jeux PS4Mount quittent la bibliothèque par groupes de {size}, et PS4Mount cesse d\'utiliser ces pkgs. Aucun pkg n\'est supprimé.\n\nContinuer ?',
+'Move the pkgs of {n} game(s), each with its update and all its add-ons, back to where they came from?\n\nThe open game is closed now, without saving. The games leave the library{batch}. No pkg is deleted.': 'Remettre les pkgs de {n} jeu(x), chacun avec sa mise à jour et toutes ses extensions, à leur emplacement d\'origine ?\n\nLe jeu ouvert est fermé maintenant, sans sauvegarder. Les jeux quittent la bibliothèque{batch}. Aucun pkg n\'est supprimé.',
+', {size} at a time': ', par groupes de {size}',
+'Move the pkgs of {tid} (game, update and all its add-ons) back to where they came from, with their original names?\n\nThe open game is closed first. The game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.': 'Remettre les pkgs de {tid} (jeu, mise à jour et toutes ses extensions) à leur emplacement d\'origine, avec leurs noms d\'origine ?\n\nLe jeu ouvert est fermé d\'abord. Le jeu quitte la bibliothèque et PS4Mount cesse d\'utiliser ces pkgs. Aucun pkg n\'est supprimé.',
+'Restore games to the original path': 'Remettre les jeux à leur emplacement d\'origine',
+'Moves the pkgs of a game (game, update and all its add-ons) back to where they came from, with their original names, and takes the game out of the library. No pkg is deleted. The open game is closed first.': 'Remet les pkgs d\'un jeu (jeu, mise à jour et toutes ses extensions) à leur emplacement d\'origine, avec leurs noms d\'origine, et retire le jeu de la bibliothèque. Aucun pkg n\'est supprimé. Le jeu ouvert est fermé d\'abord.',
+'Restore selected games': 'Remettre les jeux sélectionnés',
+'Each selected game is moved back with its update and all its add-ons (DLC). The open game is closed first.': 'Chaque jeu sélectionné est remis avec sa mise à jour et toutes ses extensions (DLC). Le jeu ouvert est fermé d\'abord.',
+'Moved back': 'Ce qui est remis',
+'Select all': 'Tout sélectionner',
+'Move selected back': 'Remettre la sélection'
 }
 };
 function langPicked() { try { return localStorage.getItem('ps4mount-lang') || ''; } catch (e) { return ''; } }
@@ -595,6 +666,27 @@ function api(path, method, body, retried) {
       return j;
     });
   });
+}
+var maxRestore = 10;
+function movedBack(g) {
+  return t('Game') + (g.has_patch ? ' + ' + t('Update') : '') +
+    (g.dlc ? ' + ' + t('{n} add-on(s)', {n: g.dlc}) : '');
+}
+/* Games per group when moving back: digits only, 1 to maxRestore. */
+function restoreSize() {
+  var v = $('s-rsize').value;
+  if (!/^[0-9]+$/.test(v) || +v < 1 || +v > maxRestore) {
+    toast(t('Games per group must be a number from 1 to {max}', {max: maxRestore}));
+    return 0;
+  }
+  return +v;
+}
+/* Saves the group size, then starts moving back (body: selected games, or none for all). */
+function startRestore(size, body) {
+  return api('/api/config', 'POST', 'restore_batch=' + size)
+    .then(function () { return api('/api/restore', 'POST', body); })
+    .then(function (j) { toast(j.message); $('pickdlg').close(); $('setdlg').close(); setTimeout(load, 3000); })
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
 }
 
 function render() {
@@ -729,8 +821,7 @@ $('grid').addEventListener('click', function (e) {
   var tid = b.getAttribute('data-t'), a = b.getAttribute('data-a');
   if (a === 'unmount' && !confirm(t('Remove {tid} from the library? The pkg stays on the USB drive.', {tid: tid}))) return;
   if (a === 'exclude' && !confirm(t('Never add {tid}? It leaves the library and is skipped by every scan until you click Allow. The pkgs stay on the drive.', {tid: tid}))) return;
-  if (a === 'restore' && !confirm(t('Move the pkgs of {tid} back to where they came from, with their original names?\n\n' +
-      'The game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.', {tid: tid}))) return;
+  if (a === 'restore' && !confirm(t('Move the pkgs of {tid} (game, update and all its add-ons) back to where they came from, with their original names?\n\nThe open game is closed first. The game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.', {tid: tid}))) return;
   busy[tid] = 1; render();
   api('/api/' + a + '?title_id=' + tid, 'POST').then(function (j) { toast(j.message); })
     .catch(function (err) { toast(t('Error: {e}', {e: err.message})); })
@@ -1015,17 +1106,63 @@ $('settingsbtn').onclick = function () {
       t(c.pin_set ? 'A PIN is set.' : 'Anyone on your network can use the panel now.');
     $('s-pinoff-row').hidden = !c.pin_set;
     $('s-lang').value = langPicked();
+    maxRestore = c.max_restore_batch || 10;
+    $('s-rsize').value = c.restore_batch || 5;
+    $('s-rsize-label').textContent = t('Games removed from the library per group (1 to {max})', {max: maxRestore});
     $('setdlg').showModal();
   }).catch(function (e) { toast(t('Could not read the settings: {e}', {e: e.message})); });
 };
 $('s-batch').onchange = function () { $('s-size').disabled = !this.checked; };
 $('s-organize').onchange = function () { $('s-paths').disabled = !this.checked; };
 $('s-cancel').onclick = function () { $('setdlg').close(); };
+$('s-rsize').oninput = function () {
+  var v = this.value.replace(/[^0-9]/g, '');
+  if (v !== '' && +v > maxRestore) v = String(maxRestore);
+  if (v !== this.value) this.value = v;
+};
 $('s-restore').onclick = function () {
-  if (!confirm(t('Move the pkgs of ALL games back to where they came from, with their original names?\n\n' +
-      'All PS4Mount games leave the library and PS4Mount stops picking these pkgs up. No pkg is deleted.'))) return;
-  api('/api/restore', 'POST').then(function (j) { toast(j.message); $('setdlg').close(); })
-    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
+  var size = restoreSize();
+  if (!size) return;
+  if (!confirm(t('WARNING: this moves the pkgs of ALL {n} games (game, update and all add-ons) back to where they came from, with their original names.\n\nThe open game is closed now, without saving. All PS4Mount games leave the library, {size} at a time, and PS4Mount stops picking these pkgs up. No pkg is deleted.\n\nContinue?',
+      {n: games.length, size: size}))) return;
+  startRestore(size);
+};
+function pickUpdate() {
+  var boxes = $('p-rows').getElementsByTagName('input'), n = 0, size = +$('s-rsize').value || 0;
+  for (var i = 0; i < boxes.length; i++) n += boxes[i].checked ? 1 : 0;
+  $('p-all').checked = n > 0 && n === boxes.length;
+  $('p-go').disabled = !n;
+  $('p-info').textContent = n ? t('{n} game(s) selected', {n: n}) +
+    (size && n > size ? ' · ' + t('removed from the library {size} at a time', {size: size}) : '') : t('No games selected');
+}
+$('s-pick').onclick = function () {
+  if (!restoreSize()) return;
+  var rows = '';
+  games.forEach(function (g) {
+    if (g.state === 'internal') return;
+    rows += '<tr><td class="c"><input type="checkbox" value="' + g.title_id + '"></td>' +
+      '<td>' + esc(g.name) + '<div class="meta">' + g.title_id + ' · ' + esc(g.source) + '</div></td>' +
+      '<td>' + esc(movedBack(g)) + '</td></tr>';
+  });
+  $('p-rows').innerHTML = rows || '<tr><td colspan="3">' + t('No PS4Mount games on the connected drives') + '</td></tr>';
+  pickUpdate();
+  $('pickdlg').showModal();
+};
+$('p-rows').onchange = pickUpdate;
+$('p-all').onchange = function () {
+  var boxes = $('p-rows').getElementsByTagName('input');
+  for (var i = 0; i < boxes.length; i++) boxes[i].checked = this.checked;
+  pickUpdate();
+};
+$('p-cancel').onclick = function () { $('pickdlg').close(); };
+$('p-go').onclick = function () {
+  var size = restoreSize(), boxes = $('p-rows').getElementsByTagName('input'), tids = [];
+  if (!size) return;
+  for (var i = 0; i < boxes.length; i++) if (boxes[i].checked) tids.push(boxes[i].value);
+  if (!tids.length) return;
+  if (!confirm(t('Move the pkgs of {n} game(s), each with its update and all its add-ons, back to where they came from?\n\nThe open game is closed now, without saving. The games leave the library{batch}. No pkg is deleted.',
+      {n: tids.length, batch: tids.length > size ? t(', {size} at a time', {size: size}) : ''}))) return;
+  startRestore(size, 'title_ids=' + tids.join(','));
 };
 $('s-forget').onclick = function () {
   if (!confirm(t('Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.'))) return;
@@ -1034,9 +1171,10 @@ $('s-forget').onclick = function () {
 };
 $('setform').onsubmit = function (e) {
   e.preventDefault();
+  if (!restoreSize()) return;
   var body = 'batch=' + ($('s-batch').checked ? 1 : 0) + '&batch_size=' + encodeURIComponent($('s-size').value) +
     '&dlc=' + ($('s-dlc').checked ? 1 : 0) + '&organize=' + ($('s-organize').checked ? 1 : 0) +
-    '&cross=' + ($('s-cross').checked ? 1 : 0) +
+    '&cross=' + ($('s-cross').checked ? 1 : 0) + '&restore_batch=' + $('s-rsize').value +
     '&interval=' + encodeURIComponent($('s-interval').value) + '&ignore=' + encodeURIComponent($('s-ignore').value) +
     '&paths=' + encodeURIComponent($('s-paths').value);
   var pin = $('s-pin').value.replace(/\s/g, ''), off = $('s-pinoff').checked;

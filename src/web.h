@@ -34,8 +34,9 @@ int app_fm_move(const char *src, const char *dst, char *msg, size_t cap);
 /* Lets games be added again after a database corruption report paused it. 0 on success. */
 int app_resume(char *msg, size_t cap);
 void app_stop(void);
-/* Moves the pkgs of one game (tid) or of all games (NULL) back to where they came from. */
-int app_restore(const char *tid, char *msg, size_t cap);
+/* Closes the open game and moves the pkgs of the games in tids (comma separated title ids)
+ * or of all games (NULL) back to where they came from. */
+int app_restore(const char *tids, char *msg, size_t cap);
 /* Forgets the pkgs moved back, so the scan picks them up again. */
 int app_restored_forget(char *msg, size_t cap);
 void app_config_json(buf_t *out);
@@ -61,3 +62,5 @@ const char *app_pin(void);
 int web_listen(void);
 /* Serves one connection on the listening socket. */
 void web_serve(int listen_fd);
+/* Answers the request on a connected socket and closes it. */
+void web_handle(int fd);

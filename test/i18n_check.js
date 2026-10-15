@@ -7,8 +7,12 @@ const fs = require('fs');
 const path = require('path');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'utf8');
-const script = html.slice(html.indexOf('<script>') + 8, html.lastIndexOf('</script>'));
-const page = html.slice(html.indexOf('<body>'), html.indexOf('<script>'));
+/* the head holds a small script (the /legacy redirect): the panel's own script and the
+   page markup both start after <body> */
+const bodyAt = html.indexOf('<body>');
+const scriptAt = html.indexOf('<script>', bodyAt);
+const script = html.slice(scriptAt + 8, html.lastIndexOf('</script>'));
+const page = html.slice(bodyAt, scriptAt);
 
 /* Texts that stay the same in every language. */
 const SAME = new Set(['PS4Mount', 'English', 'Español', 'Português (Brasil)', 'Français', '/Backup']);
