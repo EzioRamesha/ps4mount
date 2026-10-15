@@ -206,6 +206,11 @@ static size_t read_file(const char *path, char *out, size_t cap) {
 
 #define DOING_FILE STATE_DIR "/doing.txt"
 
+/* Title IDs whose last launch attempt never returned: one tid per key, the usual kv_*
+ * file. Cleared by the ordinary act of pressing Play again, same as EXCLUDED_FILE is
+ * cleared by un-excluding a game. */
+#define LAUNCH_HELD_FILE STATE_DIR "/launch-held.txt"
+
 /* Marks action (e.g. "adding", "launching") as in progress for tids (comma-separated,
  * no spaces). Overwrites any previous marker: only one risky operation is ever tracked
  * at a time, matching how the daemon actually runs them (one batch, or one launch). */
@@ -2734,7 +2739,10 @@ void app_games_json(buf_t *out) {
             }
             buf_printf(out, "],\"addons\":[");
             addons_json(out, cat, g);
-            buf_printf(out, "]}");
+            buf_printf(out, "]");
+            char held[2];
+            buf_printf(out, ",\"launch_held\":%s", kv_get(LAUNCH_HELD_FILE, tid, held, sizeof(held)) ? "false" : "true");
+            buf_printf(out, "}");
             first = 0;
         }
     }
@@ -3020,6 +3028,7 @@ int app_launch(const char *tid, char *msg, size_t cap) {
         snprintf(msg, cap, "%s is not ready to play", tid);
         return -1;
     }
+    kv_set(LAUNCH_HELD_FILE, tid, NULL); /* pressing Play again is the user's own "try again" */
     if (g_install_busy) {
         snprintf(msg, cap, "Games are being added; try again in a moment");
         return -1;
@@ -3034,7 +3043,9 @@ int app_launch(const char *tid, char *msg, size_t cap) {
         return -1;
     }
     char *noargs[] = {NULL};
+    doing_mark("launching", tid);
     int rc = sceSystemServiceLaunchApp(tid, noargs, &ctx);
+    doing_clear();
     printf("[web] launch %s: rc=0x%08x user=%u\n", tid, rc, ctx.user_id);
     if (rc < 0) {
         snprintf(msg, cap, "Failed to start %s (0x%08x)", tid, rc);
@@ -4326,6 +4337,10 @@ int main(void) {
                 }
                 notify("Some games were held back: the console may have shut down while they were being added "
                        "last time. See the panel to try again.");
+            } else if (!strcmp(action, "launching")) {
+                kv_set(LAUNCH_HELD_FILE, tids, "1");
+                printf("[safety] %s: held, starting it may have caused the console to stop responding last time\n",
+                       tids);
             }
             doing_clear();
         }

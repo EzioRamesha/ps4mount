@@ -280,6 +280,7 @@ es: {
 'Update {v}': 'Actualización {v}', 'Add-ons: {used} of {total} used': 'Complementos: {used} de {total} en uso',
 'on another drive': 'en otra unidad',
 '{n} add-ons are on: a running game only sees about {max} (a console limit). Turn off the ones you do not need.': 'Hay {n} complementos activados: un juego en ejecución solo ve unos {max} (límite de la consola). Desactiva los que no necesites.',
+'Starting this last time may have caused the console to stop responding. Press Play to try again.': 'Iniciar esto la última vez pudo hacer que la consola dejara de responder. Pulsa Jugar para intentarlo de nuevo.',
 'Select': 'Seleccionar', 'with update from another drive': 'con actualización de otra unidad', 'with update': 'con actualización',
 '{n} add-on(s)': '{n} complemento(s)', 'mounted {how}': 'montado {how}', '{n} game(s)': '{n} juego(s)',
 '{name}: {free} free of {total}': '{name}: {free} libres de {total}', 'Almost full': 'Casi llena', 'almost full': 'casi llena',
@@ -383,6 +384,7 @@ pt: {
 'Update {v}': 'Atualização {v}', 'Add-ons: {used} of {total} used': 'Complementos: {used} de {total} em uso',
 'on another drive': 'em outra unidade',
 '{n} add-ons are on: a running game only sees about {max} (a console limit). Turn off the ones you do not need.': '{n} complementos estão ativados: um jogo em execução só vê cerca de {max} (limite do console). Desative os que não precisar.',
+'Starting this last time may have caused the console to stop responding. Press Play to try again.': 'Iniciar isto da última vez pode ter feito o console parar de responder. Aperte Jogar para tentar de novo.',
 'Select': 'Selecionar', 'with update from another drive': 'com atualização de outra unidade', 'with update': 'com atualização',
 '{n} add-on(s)': '{n} complemento(s)', 'mounted {how}': 'montado {how}', '{n} game(s)': '{n} jogo(s)',
 '{name}: {free} free of {total}': '{name}: {free} livres de {total}', 'Almost full': 'Quase cheia', 'almost full': 'quase cheia',
@@ -486,6 +488,7 @@ fr: {
 'Update {v}': 'Mise à jour {v}', 'Add-ons: {used} of {total} used': 'Extensions : {used} sur {total} utilisées',
 'on another drive': 'sur un autre disque',
 '{n} add-ons are on: a running game only sees about {max} (a console limit). Turn off the ones you do not need.': '{n} extensions sont activées : un jeu en cours n’en voit qu’environ {max} (limite de la console). Désactivez celles dont vous n’avez pas besoin.',
+'Starting this last time may have caused the console to stop responding. Press Play to try again.': 'Démarrer ceci la dernière fois a peut-être fait que la console ne réponde plus. Appuyez sur Jouer pour réessayer.',
 'Select': 'Sélectionner', 'with update from another drive': 'avec mise à jour d’un autre disque', 'with update': 'avec mise à jour',
 '{n} add-on(s)': '{n} extension(s)', 'mounted {how}': 'monté {how}', '{n} game(s)': '{n} jeu(x)',
 '{name}: {free} free of {total}': '{name} : {free} libres sur {total}', 'Almost full': 'Presque plein', 'almost full': 'presque plein',
@@ -760,6 +763,7 @@ function render() {
         (g.dlc ? ' · ' + t('{n} add-on(s)', {n: g.dlc}) : '') + ' · ' + gb(g.size) + '</div>' +
       '<div class="meta">' + esc(g.source) + (g.mount ? ' · ' + t('mounted {how}', {how: esc(g.mount)}) : '') + '</div>' + upd + adds +
       (g.update_issue ? '<div class="warn">' + esc(g.update_issue) + '</div>' : '') +
+      (g.launch_held ? '<div class="warn">' + t('Starting this last time may have caused the console to stop responding. Press Play to try again.') + '</div>' : '') +
       ((g.state === 'retrying' || g.state === 'failed') && g.fail_reason ?
         '<div class="warn">' + esc(g.fail_reason) +
         (g.state === 'retrying' && g.retry_in > 0 ? ' ' + t('Trying again in {n} s.', {n: g.retry_in}) : '') +
