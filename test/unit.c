@@ -857,6 +857,20 @@ static void test_speed_measure(void) {
     CHECK(speed_measure(path, 100ULL * SPEED_CHUNK, 50ULL * SPEED_CHUNK, 20, 0, &mbps, &done) == -1 && !mbps);
     unlink(path);
     CHECK(speed_measure(path, size, 2 * SPEED_CHUNK, 20, 0, &mbps, &done) == -1);
+    /* O_DIRECT reads must start on 4096 bytes and stay inside the file, for odd sizes too */
+    unsigned long long sizes[] = {5ULL * SPEED_CHUNK + 12345, 7ULL * SPEED_CHUNK + 1, 3000000001ULL, 41000000000ULL + 777};
+    int aligned = 1;
+    for (int k = 0; k < 4; k++) {
+        unsigned long long n = (64ULL << 20) / SPEED_CHUNK, room = sizes[k] / SPEED_CHUNK;
+        if (n > room)
+            n = room;
+        for (unsigned seed = 0; seed < 50; seed++)
+            for (unsigned long long i = 0; i < n; i++) {
+                unsigned long long off = speed_offset(i, sizes[k], n, seed);
+                aligned &= off % 4096 == 0 && off + SPEED_CHUNK <= sizes[k];
+            }
+    }
+    CHECK(aligned);
 }
 
 static void test_playgo_bounds(void) {
