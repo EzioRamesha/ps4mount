@@ -593,6 +593,13 @@ static void test_catalog_walk(void) {
     CHECK(!cat_has(&g, root, "Backup/old/game.pkg") && !cat_has(&g, root, "Games/RPG/Persona/Update/u.PKG"));
     catalog_free(&g);
 
+    printf("catalog: .trash is never walked into\n");
+    put_file(root, ".trash/somegame.pkg", "x");
+    catalog_t tc2 = {0};
+    CHECK(catalog_walk(&tc2, root, NULL, NULL, 0) >= 0);
+    CHECK(!cat_has(&tc2, root, ".trash/somegame.pkg"));
+    catalog_free(&tc2);
+
     char cmd[PATH_MAX + 16];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
     CHECK(system(cmd) == 0);

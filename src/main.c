@@ -3034,7 +3034,7 @@ int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap) {
     struct dirent *e;
     int first = 1, count = 0;
     while (count < 2000 && (e = readdir(d))) {
-        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || !strcmp(e->d_name, ".trash"))
             continue;
         char full[PATH_MAX + 256]; /* matches the mutation functions below, so long entries stay visible */
         if (snprintf(full, sizeof(full), "%s/%s", path, e->d_name) >= (int)sizeof(full))
