@@ -262,7 +262,13 @@ static int write_entry(pkg_t *pkg, uint32_t id, const char *path) {
     return rc;
 }
 
-static int write_buf(const char *path, const buf_t *b) { return write_file(path, b->data, b->len, 0777); }
+static int write_buf(const char *path, const buf_t *b) {
+    if (b->failed) {
+        printf("[write] %s: out of memory while building it, not written\n", path);
+        return -1;
+    }
+    return write_file(path, b->data, b->len, 0777);
+}
 
 /* --- registration --- */
 
@@ -3650,7 +3656,10 @@ static void config_save(void) {
         buf_printf(&b, "ignore=%s\n", g_cfg.ignore[i]);
     if (g_cfg.pin[0])
         buf_printf(&b, "pin=%s\n", g_cfg.pin);
-    write_file(CONFIG_PATH, b.data, b.len, 0600);
+    if (b.failed)
+        printf("[config] out of memory: settings not saved\n");
+    else
+        write_file(CONFIG_PATH, b.data, b.len, 0600);
     chmod(CONFIG_PATH, 0600); /* open() keeps the mode of a file that already exists */
     buf_free(&b);
 }
