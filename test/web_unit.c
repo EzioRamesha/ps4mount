@@ -285,6 +285,12 @@ static void test_launch(int listen_fd) {
     CHECK(strstr(resp, "invalid title_id") != NULL);
     request(listen_fd, "POST /api/launch HTTP/1.1\r\n\r\n", resp, sizeof(resp));
     CHECK(strstr(resp, "invalid title_id") != NULL);
+    request(listen_fd, "POST /api/launch?title_id=CUSA0000X HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "invalid title_id") != NULL);
+    request(listen_fd, "POST /api/launch?title_id=CUSA000012 HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "invalid title_id") != NULL);
+    request(listen_fd, "POST /api/launch?title_id=PLAS00001 HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "invalid title_id") != NULL);
     request(listen_fd, "GET /api/launch?title_id=CUSA00001 HTTP/1.1\r\n\r\n", resp, sizeof(resp));
     CHECK(strstr(resp, "404") != NULL);
 }
