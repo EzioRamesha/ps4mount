@@ -720,7 +720,7 @@ function render() {
     else if (g.state === 'running') act = '<button disabled>' + t('Close the game to remove it') + '</button>';
     if (g.state !== 'excluded' && g.state !== 'internal' && g.state !== 'running')
       act += '<button data-a="exclude" data-t="' + tid + '">' + t('Never add') + '</button>';
-    if (g.state !== 'running' && g.state !== 'internal' && !/\.pkg$/i.test(g.source))
+    if (g.state !== 'internal' && !/\.pkg$/i.test(g.source))
       act += '<button data-a="restore" data-t="' + tid + '">' + t('Move pkgs back') + '</button>';
     if (busy[tid]) act = '<button disabled>' + t('Please wait…') + '</button>';
     var upd = '';
