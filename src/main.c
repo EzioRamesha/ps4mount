@@ -205,34 +205,52 @@ static size_t read_file(const char *path, char *out, size_t cap) {
 }
 
 #define DOING_FILE STATE_DIR "/doing.txt"
+/* Big enough for MAX_TITLES tids of up to 9 chars + a comma each, plus the action line. */
+#define DOING_MAX (MAX_TITLES * 11 + 32)
 
 /* Title IDs whose last launch attempt never returned: one tid per key, the usual kv_*
  * file. Cleared by the ordinary act of pressing Play again, same as EXCLUDED_FILE is
  * cleared by un-excluding a game. */
 #define LAUNCH_HELD_FILE STATE_DIR "/launch-held.txt"
 
+/* The action currently marked, "" when nothing is. Kept in memory so a nested web_serve
+ * on the same thread (pump_events, during install_all's wait loop) cannot let an
+ * unrelated operation (e.g. a panel launch) clobber or clear a marker it does not own. */
+static char g_doing[16];
+
 /* Marks action (e.g. "adding", "launching") as in progress for tids (comma-separated,
- * no spaces). Overwrites any previous marker: only one risky operation is ever tracked
- * at a time, matching how the daemon actually runs them (one batch, or one launch). */
-static void doing_mark(const char *action, const char *tids) {
-    char body[512];
+ * no spaces). If a different action is already marked, this operation does not own the
+ * marker: the file is left alone and 0 is returned. Otherwise the file is (re)written,
+ * g_doing is set to action, and 1 is returned; the caller must pass the same action to
+ * doing_clear() once its bracketed operation returns. */
+static int doing_mark(const char *action, const char *tids) {
+    if (g_doing[0] && strcmp(g_doing, action))
+        return 0;
+    char body[DOING_MAX];
     snprintf(body, sizeof(body), "%s\n%s\n", action, tids);
     size_t n = strlen(body); /* snprintf's return value can exceed sizeof(body); strlen cannot */
     write_file(DOING_FILE, body, n, 0600);
+    snprintf(g_doing, sizeof(g_doing), "%s", action);
+    return 1;
 }
 
-/* Clears the marker. Called right after the bracketed operation returns, on every path:
- * success, failure, or a timeout that still returned. Only a console that did not come
- * back at all leaves this uncleared. */
-static void doing_clear(void) {
+/* Clears the marker, but only if action is the one this process actually marked (the
+ * return of doing_mark was 1 for it) or nothing is marked yet in this process at all: a
+ * caller that never owned the marker, because another operation already held it, must
+ * not erase that operation's marker. g_doing being unset covers startup recovery, which
+ * clears a marker left by a previous run before this process has marked anything. */
+static void doing_clear(const char *action) {
+    if (g_doing[0] && strcmp(g_doing, action))
+        return;
     unlink(DOING_FILE);
+    g_doing[0] = 0;
 }
 
 /* Reads the marker left by a previous run that did not clear it. action/tids are sized
  * for the same things doing_mark takes. Returns 0 (nothing was in progress) or 1 (action
  * and tids are filled in; the caller must still doing_clear() once it has acted on this). */
 static int doing_find(char *action, size_t asz, char *tids, size_t tsz) {
-    char buf[512];
+    char buf[DOING_MAX];
     size_t n = read_file(DOING_FILE, buf, sizeof(buf));
     if (!n)
         return 0;
@@ -1195,6 +1213,11 @@ static void check_firmware(void) {
  * block for good, which froze the whole daemon (panel, klog, stop request). A call still
  * running is never doubled; titles keep being checked in the database. */
 static volatile int g_install_busy, g_install_rc;
+/* Set around the install_all() call in the batch loop: g_install_busy alone clears as
+ * soon as sceAppInstUtilAppInstallAll returns, but install_all then still waits (pumping
+ * events, which can run a panel launch on this same thread) for ShellCore to finish
+ * registering. g_adding covers that whole wait too. */
+static volatile int g_adding;
 static char g_install_tids[MAX_TITLES][10];
 static int g_install_n;
 
@@ -1991,10 +2014,12 @@ static void scan_root(const char *root, int fresh, int reconnected) {
     int *members = malloc(sizeof(int) * (size_t)size);
     char (*ids)[10] = malloc(10 * (size_t)size);
     int *prepared = malloc(sizeof(int) * (size_t)size);
-    if (!members || !ids || !prepared) {
+    char *doing_tids = malloc((size_t)size * 11 + 1);
+    if (!members || !ids || !prepared || !doing_tids) {
         free(members);
         free(ids);
         free(prepared);
+        free(doing_tids);
         return;
     }
     for (int i = 0; i < count;) {
@@ -2038,15 +2063,16 @@ static void scan_root(const char *root, int fresh, int reconnected) {
             if (src.app.fd > 0)
                 src_close(&src);
         }
-        char doing_tids[50 * 11] = ""; /* up to batch_size (<= 50) tids, "TID," each */
+        doing_tids[0] = 0;
         for (int k = 0; k < np; k++)
-            snprintf(doing_tids + strlen(doing_tids), sizeof(doing_tids) - strlen(doing_tids), "%s%s", k ? "," : "",
-                     ids[k]);
-        if (np)
-            doing_mark("adding", doing_tids);
+            snprintf(doing_tids + strlen(doing_tids), (size_t)size * 11 + 1 - strlen(doing_tids), "%s%s",
+                     k ? "," : "", ids[k]);
+        int owned_adding = np && doing_mark("adding", doing_tids);
+        g_adding = 1;
         install_all(ids, np);
-        if (np)
-            doing_clear();
+        g_adding = 0;
+        if (owned_adding)
+            doing_clear("adding");
         /* own rows only after ShellCore stopped writing to its databases */
         wait_db_quiet(3, 30);
         for (int k = 0; k < n; k++) {
@@ -2070,6 +2096,7 @@ static void scan_root(const char *root, int fresh, int reconnected) {
     free(members);
     free(ids);
     free(prepared);
+    free(doing_tids);
     if (pending > 1)
         notify("%s: %d of %d game(s) added%s", label, ok, pending, ok == pending ? ", ready to play" : "");
 }
@@ -3028,8 +3055,7 @@ int app_launch(const char *tid, char *msg, size_t cap) {
         snprintf(msg, cap, "%s is not ready to play", tid);
         return -1;
     }
-    kv_set(LAUNCH_HELD_FILE, tid, NULL); /* pressing Play again is the user's own "try again" */
-    if (g_install_busy) {
+    if (g_install_busy || g_adding) {
         snprintf(msg, cap, "Games are being added; try again in a moment");
         return -1;
     }
@@ -3042,10 +3068,13 @@ int app_launch(const char *tid, char *msg, size_t cap) {
         snprintf(msg, cap, "No user is logged in on the console");
         return -1;
     }
+    kv_set(LAUNCH_HELD_FILE, tid, NULL); /* pressing Play again is the user's own "try again";
+                                          * cleared only once a launch is genuinely attempted */
     char *noargs[] = {NULL};
-    doing_mark("launching", tid);
+    int owned_launching = doing_mark("launching", tid);
     int rc = sceSystemServiceLaunchApp(tid, noargs, &ctx);
-    doing_clear();
+    if (owned_launching)
+        doing_clear("launching");
     printf("[web] launch %s: rc=0x%08x user=%u\n", tid, rc, ctx.user_id);
     if (rc < 0) {
         snprintf(msg, cap, "Failed to start %s (0x%08x)", tid, rc);
@@ -4055,6 +4084,10 @@ static void install_panel_shortcut(void) {
         notify("PS4Mount added to the Media tab");
 }
 
+/* Returns the listening socket, or -1 with errno left as the failing call set it: the
+ * genuine "already running" case is bind() failing with EADDRINUSE because another copy
+ * holds LOCK_PORT; any other errno is a real failure (out of sockets/permissions/etc.)
+ * that the caller must not describe as "already running". */
 static int single_instance(void) {
     int s = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in a = {0};
@@ -4062,8 +4095,10 @@ static int single_instance(void) {
     a.sin_port = htons(LOCK_PORT);
     a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     if (s < 0 || bind(s, (struct sockaddr *)&a, sizeof(a)) || listen(s, 1)) {
+        int err = errno;
         if (s >= 0)
             close(s);
+        errno = err;
         return -1;
     }
     return s;
@@ -4318,18 +4353,32 @@ void app_diag(buf_t *out) {
 int main(void) {
     int lock = single_instance();
     if (lock < 0) {
-        printf(VERSION " already running\n");
-        notify(VERSION " is already running. Check the autoload list or payload manager for an older copy.");
+        if (errno == EADDRINUSE) {
+            printf(VERSION " already running\n");
+            notify(VERSION " is already running. Check the autoload list or payload manager for an older copy.");
+        } else {
+            printf(VERSION ": could not open the instance lock (%s)\n", strerror(errno));
+            notify(VERSION " could not start: its instance lock could not be opened");
+        }
         return 0;
     }
     sceUserServiceInitialize(0);
     sceAppInstUtilInitialize();
     mkdirs(STATE_DIR, 0777);
+    /* the log goes to a file, every line with its time; when it cannot be opened, stdout
+     * stays as it was */
+    log_trim(LOG_FILE, LOG_MAX, LOG_KEEP);
+    if (!log_start(LOG_FILE))
+        atexit(log_stop); /* the last lines reach the file before the payload exits */
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    /* must run before a scan or anything else gets a chance to write a new marker */
     {
-        char action[16], tids[512];
+        char action[16], tids[DOING_MAX];
         if (doing_find(action, sizeof(action), tids, sizeof(tids))) {
             if (!strcmp(action, "adding")) {
                 for (char *tid = strtok(tids, ","); tid; tid = strtok(NULL, ",")) {
+                    if (strlen(tid) != 9) /* a truncated entry: never make it a retry row */
+                        continue;
                     for (int i = 0; i < RETRY_MAX_TRIES; i++)
                         retry_failed(&g_retry, tid, time(NULL),
                                       "Held back: the console may have shut down while this was being added "
@@ -4343,15 +4392,9 @@ int main(void) {
                 printf("[safety] %s: held, starting it may have caused the console to stop responding last time\n",
                        tids);
             }
-            doing_clear();
+            doing_clear(action);
         }
     }
-    /* the log goes to a file, every line with its time; when it cannot be opened, stdout
-     * stays as it was */
-    log_trim(LOG_FILE, LOG_MAX, LOG_KEEP);
-    if (!log_start(LOG_FILE))
-        atexit(log_stop); /* the last lines reach the file before the payload exits */
-    setvbuf(stdout, NULL, _IOLBF, 0);
     config_load();
     halt_load();
     updates_load();
@@ -4384,7 +4427,10 @@ int main(void) {
             /* lost in rest mode: take it again, or stop if another PS4Mount has it now */
             close(lock);
             if ((lock = single_instance()) < 0) {
-                notify(VERSION " stopped: another PS4Mount is running");
+                if (errno == EADDRINUSE)
+                    notify(VERSION " stopped: another PS4Mount is running");
+                else
+                    printf("[main] stopped: could not reopen the instance lock (%s)\n", strerror(errno));
                 return 0;
             }
             printf("[main] instance lock opened again\n");

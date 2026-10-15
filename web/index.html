@@ -763,7 +763,7 @@ function render() {
         (g.dlc ? ' · ' + t('{n} add-on(s)', {n: g.dlc}) : '') + ' · ' + gb(g.size) + '</div>' +
       '<div class="meta">' + esc(g.source) + (g.mount ? ' · ' + t('mounted {how}', {how: esc(g.mount)}) : '') + '</div>' + upd + adds +
       (g.update_issue ? '<div class="warn">' + esc(g.update_issue) + '</div>' : '') +
-      (g.launch_held ? '<div class="warn">' + t('Starting this last time may have caused the console to stop responding. Press Play to try again.') + '</div>' : '') +
+      (g.launch_held && (g.state === 'ready' || g.state === 'running') ? '<div class="warn">' + t('Starting this last time may have caused the console to stop responding. Press Play to try again.') + '</div>' : '') +
       ((g.state === 'retrying' || g.state === 'failed') && g.fail_reason ?
         '<div class="warn">' + esc(g.fail_reason) +
         (g.state === 'retrying' && g.retry_in > 0 ? ' ' + t('Trying again in {n} s.', {n: g.retry_in}) : '') +
