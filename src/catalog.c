@@ -9,6 +9,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "pkg.h"
 
@@ -239,6 +240,107 @@ const cat_game_t *catalog_game(const catalog_t *c, const char *title_id) {
         if (!strcmp(c->games[i].title_id, title_id))
             return &c->games[i];
     return NULL;
+}
+
+/* One line per read pkg, fields separated by tabs, the path last:
+ * state size mtime category title_id content_id app_ver nservices services... path */
+int catalog_save(const catalog_t *c, const char *path) {
+    char tmp[PATH_MAX];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    FILE *f = fopen(tmp, "w");
+    if (!f)
+        return -1;
+    for (int i = 0; i < c->npkgs; i++) {
+        const cat_pkg_t *p = &c->pkgs[i];
+        if (p->state == CAT_UNREAD || strpbrk(p->path, "\t\r\n"))
+            continue;
+        fprintf(f, "%d\t%llu\t%lld\t%s\t%s\t%s\t%s\t%d", p->state, (unsigned long long)p->size,
+                (long long)p->mtime, p->category[0] ? p->category : "-", p->title_id[0] ? p->title_id : "-",
+                p->content_id[0] ? p->content_id : "-", p->app_ver[0] ? p->app_ver : "-", p->nservices);
+        for (int k = 0; k < p->nservices; k++)
+            fprintf(f, "\t%s", p->services[k]);
+        fprintf(f, "\t%s\n", p->path);
+    }
+    int rc = ferror(f) ? -1 : 0;
+    if (fclose(f))
+        rc = -1;
+    if (!rc && rename(tmp, path))
+        rc = -1;
+    if (rc)
+        unlink(tmp);
+    return rc;
+}
+
+static void field(char *out, size_t n, const char *s) { snprintf(out, n, "%s", strcmp(s, "-") ? s : ""); }
+
+/* Parses one saved line into p. 0 when it is complete. */
+static int parse_line(char *line, cat_pkg_t *p) {
+    char *f[8 + CAT_MAX_SERVICES + 1];
+    int nf = 0;
+    for (char *s = line; nf < (int)(sizeof(f) / sizeof(f[0]));) {
+        f[nf++] = s;
+        char *t = strchr(s, '\t');
+        if (!t)
+            break;
+        *t = 0;
+        s = t + 1;
+    }
+    if (nf < 9)
+        return -1;
+    int ns = atoi(f[7]);
+    if (ns < 0 || ns > CAT_MAX_SERVICES || nf != 9 + ns)
+        return -1;
+    memset(p, 0, sizeof(*p));
+    p->state = atoi(f[0]);
+    if (p->state != CAT_OK && p->state != CAT_BAD)
+        return -1;
+    p->size = strtoull(f[1], NULL, 10);
+    p->mtime = strtoll(f[2], NULL, 10);
+    field(p->category, sizeof(p->category), f[3]);
+    field(p->title_id, sizeof(p->title_id), f[4]);
+    field(p->content_id, sizeof(p->content_id), f[5]);
+    field(p->app_ver, sizeof(p->app_ver), f[6]);
+    for (int k = 0; k < ns; k++)
+        snprintf(p->services[k], sizeof(p->services[k]), "%s", f[8 + k]);
+    p->nservices = ns;
+    if (f[8 + ns][0] != '/')
+        return -1;
+    snprintf(p->path, sizeof(p->path), "%s", f[8 + ns]);
+    return 0;
+}
+
+int catalog_load(catalog_t *c, const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return -1;
+    catalog_free(c);
+    char *line = malloc(PATH_MAX + 512);
+    cat_pkg_t p;
+    while (line && fgets(line, PATH_MAX + 512, f)) {
+        line[strcspn(line, "\r\n")] = 0;
+        if (parse_line(line, &p))
+            continue;
+        if (c->npkgs == c->cap) {
+            int cap = c->cap ? c->cap * 2 : 64;
+            cat_pkg_t *n = realloc(c->pkgs, (size_t)cap * sizeof(*n));
+            if (!n)
+                break;
+            c->pkgs = n;
+            c->cap = cap;
+        }
+        c->pkgs[c->npkgs++] = p;
+    }
+    free(line);
+    fclose(f);
+    if (c->npkgs > 1)
+        qsort(c->pkgs, (size_t)c->npkgs, sizeof(*c->pkgs), by_path);
+    /* a path saved twice: keep one */
+    int n = 0;
+    for (int i = 0; i < c->npkgs; i++)
+        if (!n || strcmp(c->pkgs[n - 1].path, c->pkgs[i].path))
+            c->pkgs[n++] = c->pkgs[i];
+    c->npkgs = n;
+    return n;
 }
 
 void catalog_free(catalog_t *c) {

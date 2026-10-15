@@ -55,4 +55,9 @@ int catalog_read(catalog_t *c);
  * in SERVICE_ID_ADDCONT_ADD_n, as add-ons of another region). */
 void catalog_group(catalog_t *c);
 const cat_game_t *catalog_game(const catalog_t *c, const char *title_id);
+/* Saves what was read of each pkg, so a restart does not read them all again. 0 on success. */
+int catalog_save(const catalog_t *c, const char *path);
+/* Replaces c with a saved catalog (pkgs only: group it again). The next walk keeps the
+ * pkgs whose size and time did not change. Returns how many were loaded, -1 without a file. */
+int catalog_load(catalog_t *c, const char *path);
 void catalog_free(catalog_t *c);
