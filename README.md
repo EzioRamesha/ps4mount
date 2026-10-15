@@ -144,6 +144,10 @@ the same network. The panel shows every game found on the connected drives, with
 | Failed | Adding it failed 3 times; it is not tried again until you click **Try again** or **Scan for games** |
 | Never added | You chose **Never add**; every scan skips it until you click **Allow** |
 
+A game that failed, or is waiting to be tried again, says why on its card in plain words (the pkg
+could not be read, the files could not be prepared, or the console did not accept it) instead of
+only showing the state, so the log is not the only place to find out what went wrong.
+
 Games can be searched by name or title ID, sorted by name, state or location, and filtered by drive.
 The summary shows the free and total space of each drive. A drive with less than 2 GB or 5% free is
 marked **almost full**, and a notification says so once (again only after space was freed and ran low
@@ -289,8 +293,14 @@ deleting a folder is planned for a later version.
 
 A pkg used by a game in the library cannot be renamed, moved or deleted: remove the game from the
 library first, or move its pkgs back. Moving is limited to the same drive for now; moving a file
-between drives is planned for a later version. Deleting a file is permanent: there is no undo and
-no trash.
+between drives is planned for a later version.
+
+Deleting a file does not remove it straight away: it moves into a hidden `.trash` folder on the
+same drive and stays there for 14 days, so a delete by mistake is not the end of it. The folder is
+left out of the panel and of every scan, and PS4Mount empties it on its own: anything older than
+14 days goes, and when a drive runs low on space the oldest items go first, before the "almost
+full" warning. To get a file back before then, connect over FTP and move it out of `.trash`
+yourself.
 
 ## Good to know
 
