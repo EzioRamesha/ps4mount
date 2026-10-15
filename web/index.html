@@ -48,6 +48,7 @@ main{padding:20px;max-width:1400px;margin:0 auto}
 .actions button.primary,.actions button.danger,.actions button:only-child{grid-column:1/-1}
 .empty{color:var(--muted);text-align:center;padding:60px 0}
 .warn{color:#f0c060;font-size:13px;background:#3a2e12;border:1px solid #5c4818;border-radius:8px;padding:6px 8px;margin-top:4px}
+.ok{color:#8be6ac;font-size:13px;background:#122b1b;border:1px solid var(--ok);border-radius:8px;padding:6px 8px;margin-top:4px}
 dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:12px;max-width:95vw;max-width:min(900px,95vw);width:900px}
 dialog::backdrop{background:#000a}
 pre{white-space:pre-wrap;font-size:12px;max-height:60vh;overflow:auto;background:#0b0d11;padding:12px;border-radius:8px}
@@ -618,11 +619,14 @@ function gb(n) {
   return (n / 1073741824).toFixed(n >= 10737418240 ? 0 : 1) + ' GB';
 }
 /* While the Files dialog (or its file sheet) is open, it sits in the browser's top layer and
-   paints over #toast, which is a plain fixed div outside both dialogs. Route the message to an
-   error area inside whichever of the two is open instead, so it is not silently hidden. */
-function toast(msg) {
+   paints over #toast, which is a plain fixed div outside both dialogs. Route the message to a
+   message area inside whichever of the two is open instead, so it is not silently hidden.
+   isErr (default false, i.e. a normal/success message) only changes which style that area gets:
+   the amber .warn look for a real failure, or the green .ok look otherwise. Existing single-
+   argument call sites keep working unchanged, reading as a success/neutral message. */
+function toast(msg, isErr) {
   var box = $('fmsheet').open ? $('fmserr') : ($('fmdlg').open ? $('fmerr') : null);
-  if (box) { box.textContent = msg; box.hidden = false; return; }
+  if (box) { box.className = isErr ? 'warn' : 'ok'; box.textContent = msg; box.hidden = false; return; }
   var t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(function () { t.style.display = 'none'; }, 4000);
 }
 
@@ -707,7 +711,7 @@ function movedBack(g) {
 function restoreSize() {
   var v = $('s-rsize').value;
   if (!/^[0-9]+$/.test(v) || +v < 1 || +v > maxRestore) {
-    toast(t('Games per group must be a number from 1 to {max}', {max: maxRestore}));
+    toast(t('Games per group must be a number from 1 to {max}', {max: maxRestore}), true);
     return 0;
   }
   return +v;
@@ -717,7 +721,7 @@ function startRestore(size, body) {
   return api('/api/config', 'POST', 'restore_batch=' + size)
     .then(function () { return api('/api/restore', 'POST', body); })
     .then(function (j) { toast(j.message); $('pickdlg').close(); $('setdlg').close(); setTimeout(load, 3000); })
-    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); });
 }
 
 function render() {
@@ -855,7 +859,7 @@ function load() {
        render(): without this, an unplugged drive stays listed until the user clicks it. */
     if ($('fmdlg').open && fm.path === '') fmOpen('');
   })
-    .catch(function (e) { if (!pinDeclined) toast(t('Could not read the list: {e}', {e: e.message})); });
+    .catch(function (e) { if (!pinDeclined) toast(t('Could not read the list: {e}', {e: e.message}), true); });
 }
 
 $('grid').addEventListener('click', function (e) {
@@ -867,7 +871,7 @@ $('grid').addEventListener('click', function (e) {
   if (a === 'restore' && !confirm(t('Move the pkgs of {tid} (game, update and all its add-ons) back to where they came from, with their original names?\n\nThe open game is closed first. The game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.', {tid: tid}))) return;
   busy[tid] = 1; render();
   api('/api/' + a + '?title_id=' + tid, 'POST').then(function (j) { toast(j.message); })
-    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); })
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); })
     .then(function () { delete busy[tid]; load(); });
 });
 $('grid').addEventListener('change', function (e) {
@@ -880,12 +884,12 @@ $('grid').addEventListener('change', function (e) {
     var cid = tid;
     el.disabled = true;
     api('/api/addon?content_id=' + cid + '&on=' + (el.checked ? 1 : 0), 'POST').then(function (j) { toast(j.message); })
-      .catch(function (err) { toast(t('Error: {e}', {e: err.message})); })
+      .catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); })
       .then(load);
   } else if ((tid = el.getAttribute('data-upd'))) {
     busy[tid] = 1; render();
     api('/api/update?title_id=' + tid + '&version=' + encodeURIComponent(el.value), 'POST').then(function (j) { toast(j.message); })
-      .catch(function (err) { toast(t('Error: {e}', {e: err.message})); })
+      .catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); })
       .then(function () { delete busy[tid]; load(); });
   }
 });
@@ -908,7 +912,7 @@ $('selbar').addEventListener('click', function (e) {
   (function next(i) {
     if (i >= list.length) {
       selected = {};
-      toast(t('{ok} done', {ok: ok}) + (failed ? ', ' + t('{failed} failed (see Log)', {failed: failed}) : ''));
+      toast(t('{ok} done', {ok: ok}) + (failed ? ', ' + t('{failed} failed (see Log)', {failed: failed}) : ''), failed > 0);
       load();
       return;
     }
@@ -929,7 +933,7 @@ $('probbtn').onclick = function () {
     $('problems').innerHTML = h ? '<table><tr><th>' + t('Problem') + '</th><th>' + t('Title') + '</th><th>' + t('Pkg') + '</th></tr>' +
       h + '</table>' : '<p>' + t('No problems found in the last scan.') + '</p>';
     $('probdlg').showModal();
-  }).catch(function (e) { toast(t('Could not read the problems: {e}', {e: e.message})); });
+  }).catch(function (e) { toast(t('Could not read the problems: {e}', {e: e.message}), true); });
 };
 
 /* Files dialog: browse a drive's folders. moving is state for the move sheet (src path
@@ -949,8 +953,13 @@ function fmPkgName(pkg, fallback) {
   return fallback;
 }
 
-function fmOpen(path) {
-  $('fmerr').hidden = true;
+/* keepMsg is true only when the caller just toasted its own success message and is now
+   refreshing the same folder to show the result: clearing #fmerr here would wipe that message
+   before the browser ever paints it (it is the same element, reused for both). Genuine
+   navigation (crumbs, opening a folder or drive, reopening the dialog, the background drive
+   refresh in load()) always calls this without it, which clears any leftover message. */
+function fmOpen(path, keepMsg) {
+  if (!keepMsg) $('fmerr').hidden = true;
   if (!path) { /* root: the drive list, built from /api/games' drives, no API call */
     fm.path = ''; fm.sel = {}; fm.moving = null; fm.truncated = false;
     fm.entries = drives.map(function (d) { return {name: d.name, drive: true, dir: true, free: d.free, total: d.total}; });
@@ -964,7 +973,7 @@ function fmOpen(path) {
     /* A failed refresh must not leave the old listing on screen: that is what made a
        successful delete/rename/move look like it silently did nothing (it left the deleted
        entry in view). Replace the list with a clear "could not refresh" row instead. */
-    toast(t('Error: {e}', {e: e.message}));
+    toast(t('Error: {e}', {e: e.message}), true);
     $('fmlist').innerHTML = '<div class="fmrow">' + esc(t('Could not refresh this folder: {e}. Open it again.', {e: e.message})) + '</div>';
   });
 }
@@ -1062,16 +1071,19 @@ $('fmnew').addEventListener('click', function () {
   if (!n) return;
   $('fmerr').hidden = true;
   api('/api/fm/mkdir?path=' + encodeURIComponent(fm.path) + '&name=' + encodeURIComponent(n), 'POST')
-    .then(function (j) { toast(j.message); return fmOpen(fm.path); })
-    .catch(function (e) { toast(t('Error: {e}', {e: e.message})); });
+    .then(function (j) { toast(j.message); return fmOpen(fm.path, true); })
+    .catch(function (e) { toast(t('Error: {e}', {e: e.message}), true); });
 });
 $('fms-rename').addEventListener('click', function () {
   var n = prompt(t('New name'), fm.sheet.name);
   if (!n || n === fm.sheet.name) return;
   $('fmserr').hidden = true;
   api('/api/fm/rename?path=' + encodeURIComponent(fm.path + '/' + fm.sheet.name) + '&name=' + encodeURIComponent(n), 'POST')
-    .then(function (j) { toast(j.message); $('fmsheet').close(); return fmOpen(fm.path); })
-    .catch(function (e) { toast(t('Error: {e}', {e: e.message})); });
+    /* Close the sheet BEFORE toasting: toast() picks its target by which dialog is open, and
+       the sheet closing takes #fmserr off screen with it. Closing first makes #fmdlg the open
+       dialog so the success message lands in #fmerr, where it survives the refresh below. */
+    .then(function (j) { $('fmsheet').close(); toast(j.message); return fmOpen(fm.path, true); })
+    .catch(function (e) { toast(t('Error: {e}', {e: e.message}), true); });
 });
 $('fms-move').addEventListener('click', function () {
   fm.moving = fm.path + '/' + fm.sheet.name;
@@ -1084,8 +1096,8 @@ $('fms-delete').addEventListener('click', function () {
   if (!confirm(t('Delete {what}? It moves to Trash and is kept for {days} days.', {what: what, days: 14}))) return;
   $('fmserr').hidden = true;
   api('/api/fm/delete?path=' + encodeURIComponent(fm.path + '/' + e.name), 'POST')
-    .then(function (j) { toast(j.message); $('fmsheet').close(); return fmOpen(fm.path); })
-    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
+    .then(function (j) { $('fmsheet').close(); toast(j.message); return fmOpen(fm.path, true); })
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); });
 });
 /* The "Move here"/"Cancel" buttons are (re)created by fmRender each time the bar shows, so
    their clicks are delegated on the bar's own element rather than bound once per button. */
@@ -1093,9 +1105,9 @@ $('fmmovebar').addEventListener('click', function (e) {
   if (e.target.id === 'fmdo') {
     $('fmerr').hidden = true;
     api('/api/fm/move?src=' + encodeURIComponent(fm.moving) + '&dst=' + encodeURIComponent(fm.path), 'POST')
-      .then(function (j) { toast(j.message); fm.moving = null; return fmOpen(fm.path); })
+      .then(function (j) { toast(j.message); fm.moving = null; return fmOpen(fm.path, true); })
       .catch(function (err) {
-        toast(t('Error: {e}', {e: err.message}));
+        toast(t('Error: {e}', {e: err.message}), true);
         /* A pending move that cannot complete should not linger as a half-forgotten state. */
         fm.moving = null;
         fmRender();
@@ -1117,13 +1129,13 @@ $('drive').onchange = function () { rescanLabel(); render(); };
 $('resume').onclick = function () {
   if (!confirm(t('Resume adding games? Do this only after restarting the console, once the database message is gone.'))) return;
   api('/api/resume', 'POST').then(function (j) { toast(j.message); load(); })
-    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); });
 };
 $('rescan').onclick = function () {
   var dv = $('drive').value;
   api('/api/rescan' + (dv ? '?drive=' + encodeURIComponent(dv) : ''), 'POST')
     .then(function (j) { toast(j.message); setTimeout(load, 3000); })
-    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); });
 };
 function rescanLabel() {
   $('rescan').textContent = $('drive').value ? t('Scan {d}', {d: $('drive').value}) : t('Scan for games');
@@ -1133,8 +1145,8 @@ $('speedbtn').onclick = function () {
   var dv = $('drive').value;
   if (!dv) return;
   api('/api/speedtest?drive=' + encodeURIComponent(dv), 'POST')
-    .then(function (j) { toast(j.message); if (j.ok !== false) load(); })
-    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
+    .then(function (j) { toast(j.message, j.ok === false); if (j.ok !== false) load(); })
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); });
 };
 $('logbtn').onclick = function () { api('/api/log').then(function (j) { $('log').textContent = j.log; $('logdlg').showModal(); }); };
 /* Fetched (to send the PIN) and saved through a link; a browser that cannot save files
@@ -1160,18 +1172,18 @@ $('logsave').onclick = function () {
     a.click();
     document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
-  }).catch(function (err) { toast(t('Could not download the log: {e}', {e: err.message})); });
+  }).catch(function (err) { toast(t('Could not download the log: {e}', {e: err.message}), true); });
 };
 $('diagbtn').onclick = function () {
   api('/api/diag').then(function (j) { $('diag').value = j.text; $('diagdlg').showModal(); })
-    .catch(function (e) { toast(t('Could not read the diagnostics: {e}', {e: e.message})); });
+    .catch(function (e) { toast(t('Could not read the diagnostics: {e}', {e: e.message}), true); });
 };
 $('diagcopy').onclick = function () {
   var ta = $('diag');
   ta.focus(); ta.select();
   var ok = false;
   try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-  toast(t(ok ? 'Copied' : 'Select the text and copy it'));
+  toast(t(ok ? 'Copied' : 'Select the text and copy it'), !ok);
 };
 $('settingsbtn').onclick = function () {
   api('/api/config').then(function (c) {
@@ -1195,7 +1207,7 @@ $('settingsbtn').onclick = function () {
     $('s-rsize').value = c.restore_batch || 5;
     $('s-rsize-label').textContent = t('Games removed from the library per group (1 to {max})', {max: maxRestore});
     $('setdlg').showModal();
-  }).catch(function (e) { toast(t('Could not read the settings: {e}', {e: e.message})); });
+  }).catch(function (e) { toast(t('Could not read the settings: {e}', {e: e.message}), true); });
 };
 $('s-batch').onchange = function () { $('s-size').disabled = !this.checked; };
 $('s-organize').onchange = function () { $('s-paths').disabled = !this.checked; };
@@ -1252,7 +1264,7 @@ $('p-go').onclick = function () {
 $('s-forget').onclick = function () {
   if (!confirm(t('Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.'))) return;
   api('/api/restored/forget', 'POST').then(function (j) { toast(j.message); })
-    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); });
 };
 $('setform').onsubmit = function (e) {
   e.preventDefault();
@@ -1263,7 +1275,7 @@ $('setform').onsubmit = function (e) {
     '&interval=' + encodeURIComponent($('s-interval').value) + '&ignore=' + encodeURIComponent($('s-ignore').value) +
     '&paths=' + encodeURIComponent($('s-paths').value);
   var pin = $('s-pin').value.replace(/\s/g, ''), off = $('s-pinoff').checked;
-  if (pin && !/^[0-9]{4,8}$/.test(pin)) { toast(t('The PIN must be 4 to 8 digits')); return; }
+  if (pin && !/^[0-9]{4,8}$/.test(pin)) { toast(t('The PIN must be 4 to 8 digits'), true); return; }
   if (off) body += '&pin=';
   else if (pin) body += '&pin=' + pin;
   var lang = $('s-lang').value;
@@ -1274,7 +1286,7 @@ $('setform').onsubmit = function (e) {
       try { if (lang) localStorage.setItem('ps4mount-lang', lang); else localStorage.removeItem('ps4mount-lang'); } catch (e) {}
       location.reload();
     }
-  }).catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
+  }).catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); });
 };
 $('pinbtn').onclick = function () { pinDeclined = false; load(); };
 $('stop').onclick = function () {
