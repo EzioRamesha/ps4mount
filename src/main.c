@@ -3124,6 +3124,38 @@ static int fm_protected(const char *path, const char **name) {
     return 0;
 }
 
+/* Every pkg path that belongs to a registered game, collected once so a listing does not
+ * re-walk every catalog for every entry (fm_protected above does that walk for a single path;
+ * this does the same traversal once and gathers every path it would have matched). Skips a
+ * game exactly where fm_protected would skip it (not registered), then collects the game pkg,
+ * the resolved update (catalog_patch, which also finds a cross-drive update) and every add-on
+ * (catalog_dlc_of, local and cross-drive). Returns how many paths were collected, stopping at
+ * max; the paths point into the catalogs, which do not change while one listing runs. */
+static int fm_protected_paths(const char **out, int max) {
+    int n = 0;
+    for (int d = 0; d < NUM_DRIVES && n < max; d++) {
+        const catalog_t *cat = &g_cat[d];
+        for (int gi = 0; gi < cat->ngames && n < max; gi++) {
+            const cat_game_t *g = &cat->games[gi];
+            if (!db_is_registered(g->title_id))
+                continue;
+            out[n++] = cat->pkgs[g->app].path;
+            if (n >= max)
+                break;
+            const cat_pkg_t *used = catalog_patch(g_cat, cat, g);
+            if (used)
+                out[n++] = used->path;
+            if (n >= max)
+                break;
+            const cat_pkg_t *dlc[2 * CAT_MAX_DLC];
+            int dn = catalog_dlc_of(g_cat, cat, g, dlc, 2 * CAT_MAX_DLC);
+            for (int k = 0; k < dn && n < max; k++)
+                out[n++] = dlc[k]->path;
+        }
+    }
+    return n;
+}
+
 /* Lists one folder of a drive as JSON rows, joined with the catalog so a pkg's title ID,
  * role, version and title are added when the folder is on a known drive (see app_fm_list,
  * web.h). path is a caller-checked drive path (web.c calls fm_path_ok first). */
@@ -3136,6 +3168,25 @@ int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap) {
     }
     int di = fm_drive_of(path);
     const catalog_t *cat = di >= 0 ? &g_cat[di] : NULL;
+
+    /* The protected-path set cannot change while this one listing runs, so it is collected
+     * once here instead of once per entry (that used to mean every entry re-walked every
+     * catalog, drive x games x add-ons, and re-ran db_is_registered for every game of every
+     * entry). The cap is the total pkg count across every drive's catalog, plus a little
+     * slack: each path fm_protected_paths collects names one real pkg already counted there,
+     * so that is always enough room. Skipped entirely when this folder is not on a known
+     * drive (cat is NULL), since then no entry below is ever matched to a catalog pkg either. */
+    const char **ppaths = NULL;
+    int pcount = 0;
+    if (cat) {
+        int pcap = 16;
+        for (int i = 0; i < NUM_DRIVES; i++)
+            pcap += g_cat[i].npkgs;
+        ppaths = malloc(sizeof(*ppaths) * (size_t)pcap);
+        if (ppaths)
+            pcount = fm_protected_paths(ppaths, pcap);
+    }
+
     buf_printf(out, "{\"path\":");
     json_str(out, path);
     buf_printf(out, ",\"entries\":[");
@@ -3168,13 +3219,26 @@ int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap) {
             json_str(out, pk->app_ver);
             buf_printf(out, ",\"title\":");
             json_str(out, pk->name);
-            buf_printf(out, ",\"protected\":%s}", fm_protected(full, NULL) ? "true" : "false");
+            int prot;
+            if (ppaths) {
+                prot = 0;
+                for (int i = 0; i < pcount; i++)
+                    if (fm_covers(full, ppaths[i])) {
+                        prot = 1;
+                        break;
+                    }
+            } else {
+                prot = fm_protected(full, NULL); /* ppaths malloc failed: fall back so a
+                                                   * protected pkg is still never missed */
+            }
+            buf_printf(out, ",\"protected\":%s}", prot ? "true" : "false");
         }
         buf_printf(out, "}");
         first = 0;
         count++;
     }
     closedir(d);
+    free(ppaths);
     buf_printf(out, "]}");
     return 0;
 }
