@@ -41,6 +41,7 @@
 #include "catalog.h"
 #include "crypto.h"
 #include "db.h"
+#include "fm.h"
 #include "fw.h"
 #include "logfile.h"
 #include "logts.h"
@@ -2983,6 +2984,243 @@ int app_launch(const char *tid, char *msg, size_t cap) {
         return -1;
     }
     snprintf(msg, cap, "Starting %s", tid);
+    return 0;
+}
+
+/* --- file manager: listing a folder with catalog details --- */
+
+/* 1 when path is a pkg of a registered game, or a folder holding one (so it must not be
+ * deleted or moved). name gets the first such game's title ID when non-NULL (the catalog
+ * does not keep the game's TITLE, only an add-on's). The update used and the add-ons are
+ * resolved with catalog_patch/catalog_dlc_of (not g->patch/g->dlc[] directly) because with
+ * the cross-drive setting on they may live on another drive than the game (g_cat[*].xpatch,
+ * xdlc[]); g->app is always local, so it needs no resolving. */
+static int fm_protected(const char *path, const char **name) {
+    for (int d = 0; d < NUM_DRIVES; d++) {
+        const catalog_t *cat = &g_cat[d];
+        for (int gi = 0; gi < cat->ngames; gi++) {
+            const cat_game_t *g = &cat->games[gi];
+            if (!db_is_registered(g->title_id))
+                continue;
+            if (fm_covers(path, cat->pkgs[g->app].path)) {
+                if (name)
+                    *name = g->title_id;
+                return 1;
+            }
+            const cat_pkg_t *used = catalog_patch(g_cat, cat, g);
+            if (used && fm_covers(path, used->path)) {
+                if (name)
+                    *name = g->title_id;
+                return 1;
+            }
+            const cat_pkg_t *dlc[2 * CAT_MAX_DLC];
+            int n = catalog_dlc_of(g_cat, cat, g, dlc, 2 * CAT_MAX_DLC);
+            for (int k = 0; k < n; k++) {
+                if (fm_covers(path, dlc[k]->path)) {
+                    if (name)
+                        *name = g->title_id;
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+/* Lists one folder of a drive as JSON rows, joined with the catalog so a pkg's title ID,
+ * role, version and title are added when the folder is on a known drive (see app_fm_list,
+ * web.h). path is a caller-checked drive path (web.c calls fm_path_ok first). */
+int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap) {
+    DIR *d = opendir(path);
+    if (!d) {
+        printf("[fm] opendir %s: %s\n", path, strerror(errno));
+        snprintf(msg, cap, "Cannot open %s: %s", path, strerror(errno));
+        return -1;
+    }
+    int di = fm_drive_of(path);
+    const catalog_t *cat = di >= 0 ? &g_cat[di] : NULL;
+    buf_printf(out, "{\"path\":");
+    json_str(out, path);
+    buf_printf(out, ",\"entries\":[");
+    struct dirent *e;
+    int first = 1, count = 0;
+    while (count < 2000 && (e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+            continue;
+        char full[PATH_MAX];
+        if (snprintf(full, sizeof(full), "%s/%s", path, e->d_name) >= (int)sizeof(full))
+            continue; /* name too long to build a safe path, leave it out */
+        struct stat st;
+        if (lstat(full, &st))
+            continue;
+        buf_printf(out, "%s{\"name\":", first ? "" : ",");
+        json_str(out, e->d_name);
+        buf_printf(out, ",\"dir\":%s,\"size\":%llu,\"mtime\":%lld", S_ISDIR(st.st_mode) ? "true" : "false",
+                   (unsigned long long)st.st_size, (long long)st.st_mtime);
+        const cat_pkg_t *pk = NULL;
+        if (cat && !S_ISDIR(st.st_mode))
+            for (int i = 0; i < cat->npkgs; i++)
+                if (!strcmp(cat->pkgs[i].path, full)) {
+                    pk = &cat->pkgs[i];
+                    break;
+                }
+        if (pk) {
+            buf_printf(out, ",\"pkg\":{\"title_id\":");
+            json_str(out, pk->title_id);
+            buf_printf(out, ",\"role\":%d,\"version\":", pk->role);
+            json_str(out, pk->app_ver);
+            buf_printf(out, ",\"title\":");
+            json_str(out, pk->name);
+            buf_printf(out, ",\"protected\":%s}", fm_protected(full, NULL) ? "true" : "false");
+        }
+        buf_printf(out, "}");
+        first = 0;
+        count++;
+    }
+    closedir(d);
+    buf_printf(out, "]}");
+    return 0;
+}
+
+/* --- file manager: mutations (make, rename, delete, move) ---
+ * dir/path/src/dst are caller-checked (web.c calls fm_path_ok, fm_is_drive_root first); name is
+ * caller-checked with fm_name_ok, so it never contains '/' or "." / "..". A combined path can
+ * still reach dir's 1023 chars plus a name's 240, so every buffer below is sized PATH_MAX + 256
+ * and every snprintf that joins them is checked: on would-be truncation the mutation fails
+ * closed instead of risking an operation on a path that isn't the one the caller asked for. */
+
+int app_fm_mkdir(const char *dir, const char *name, char *msg, size_t cap) {
+    char full[PATH_MAX + 256];
+    if (snprintf(full, sizeof(full), "%s/%s", dir, name) >= (int)sizeof(full)) {
+        snprintf(msg, cap, "Path too long");
+        return -1;
+    }
+    if (mkdir(full, 0777)) {
+        int err = errno;
+        snprintf(msg, cap, err == EEXIST ? "%s already exists" : "Could not create %s", name);
+        return -1;
+    }
+    g_next_scan = 0;
+    printf("[fm] mkdir %s\n", full);
+    snprintf(msg, cap, "Folder %s created", name);
+    return 0;
+}
+
+int app_fm_rename(const char *path, const char *name, char *msg, size_t cap) {
+    const char *game = NULL;
+    if (fm_protected(path, &game)) {
+        snprintf(msg, cap, "%s is used by %s; remove the game from the library first",
+                 strrchr(path, '/') + 1, game ? game : "a game");
+        return -1;
+    }
+    const char *slash = strrchr(path, '/');
+    char dst[PATH_MAX + 256];
+    if (snprintf(dst, sizeof(dst), "%.*s/%s", (int)(slash - path), path, name) >= (int)sizeof(dst)) {
+        snprintf(msg, cap, "Path too long");
+        return -1;
+    }
+    struct stat st;
+    if (!stat(dst, &st)) {
+        snprintf(msg, cap, "%s already exists", name);
+        return -1;
+    }
+    if (rename(path, dst)) {
+        int err = errno;
+        snprintf(msg, cap, "Could not rename: %s", strerror(err));
+        return -1;
+    }
+    g_next_scan = 0;
+    printf("[fm] rename %s -> %s\n", path, dst);
+    snprintf(msg, cap, "Renamed to %s", name);
+    return 0;
+}
+
+/* Deletes path, recursing into directories first. errno is preserved across each closedir() so
+ * a failure anywhere in the tree is still reported accurately by the caller. An entry whose full
+ * path would not fit the buffer is left alone rather than built into a truncated (and possibly
+ * wrong) path: the directory below it then fails to go empty and rmdir reports it, so the whole
+ * delete fails closed instead of silently touching something the caller never asked to remove. */
+static int fm_rm_tree(const char *path) {
+    struct stat st;
+    if (lstat(path, &st))
+        return -1;
+    if (!S_ISDIR(st.st_mode))
+        return unlink(path);
+    DIR *d = opendir(path);
+    if (!d)
+        return -1;
+    struct dirent *e;
+    int rc = 0;
+    while (!rc && (e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+            continue;
+        char sub[PATH_MAX + 256];
+        if (snprintf(sub, sizeof(sub), "%s/%s", path, e->d_name) >= (int)sizeof(sub))
+            continue; /* name too long to build a safe path: skip it, never guess */
+        rc = fm_rm_tree(sub);
+    }
+    int err = errno;
+    closedir(d);
+    errno = err;
+    return rc ? rc : rmdir(path);
+}
+
+int app_fm_delete(const char *path, char *msg, size_t cap) {
+    const char *game = NULL;
+    if (fm_protected(path, &game)) {
+        snprintf(msg, cap, "Used by %s; remove the game from the library first", game ? game : "a game");
+        return -1;
+    }
+    if (fm_rm_tree(path)) {
+        int err = errno;
+        snprintf(msg, cap, "Could not delete: %s", strerror(err));
+        return -1;
+    }
+    g_next_scan = 0;
+    printf("[fm] delete %s\n", path);
+    snprintf(msg, cap, "Deleted %s", strrchr(path, '/') + 1);
+    return 0;
+}
+
+/* Same-drive move only. fm_covers (is dst inside src, or src itself) is checked before
+ * fm_protected and before anything destructive, so a folder is never moved into itself or one
+ * of its own subfolders regardless of in-use state. */
+int app_fm_move(const char *src, const char *dst, char *msg, size_t cap) {
+    const char *game = NULL;
+    if (fm_drive_of(src) != fm_drive_of(dst)) {
+        snprintf(msg, cap, "Moving between drives is not supported yet");
+        return -1;
+    }
+    if (fm_covers(src, dst)) {
+        snprintf(msg, cap, "Cannot move a folder into itself");
+        return -1;
+    }
+    if (fm_protected(src, &game)) {
+        snprintf(msg, cap, "Used by %s; remove the game from the library first", game ? game : "a game");
+        return -1;
+    }
+    struct stat st;
+    if (stat(dst, &st) || !S_ISDIR(st.st_mode)) {
+        snprintf(msg, cap, "The destination is not a folder");
+        return -1;
+    }
+    char full[PATH_MAX + 256];
+    if (snprintf(full, sizeof(full), "%s/%s", dst, strrchr(src, '/') + 1) >= (int)sizeof(full)) {
+        snprintf(msg, cap, "Path too long");
+        return -1;
+    }
+    if (!stat(full, &st)) {
+        snprintf(msg, cap, "%s already exists there", strrchr(src, '/') + 1);
+        return -1;
+    }
+    if (rename(src, full)) {
+        int err = errno;
+        snprintf(msg, cap, "Could not move: %s", strerror(err));
+        return -1;
+    }
+    g_next_scan = 0;
+    printf("[fm] move %s -> %s\n", src, full);
+    snprintf(msg, cap, "Moved to %s", dst);
     return 0;
 }
 

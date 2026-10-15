@@ -21,6 +21,16 @@ int app_exclude(const char *tid, int on, char *msg, size_t cap);
 int app_rescan(const char *drive, char *msg, size_t cap);
 /* Starts a read speed test of a connected drive ("usb0"...). 0 when started. */
 int app_speedtest(const char *drive, char *msg, size_t cap);
+/* Lists one folder of a drive as JSON rows joined with the catalog. 0 on success. */
+int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap);
+/* Makes folder name inside dir. 0 on success. */
+int app_fm_mkdir(const char *dir, const char *name, char *msg, size_t cap);
+/* Renames the file or folder at path to name (same folder). 0 on success. */
+int app_fm_rename(const char *path, const char *name, char *msg, size_t cap);
+/* Deletes the file, or the folder and everything in it. 0 on success. */
+int app_fm_delete(const char *path, char *msg, size_t cap);
+/* Moves the file or folder at src into the folder dst on the same drive. 0 on success. */
+int app_fm_move(const char *src, const char *dst, char *msg, size_t cap);
 /* Lets games be added again after a database corruption report paused it. 0 on success. */
 int app_resume(char *msg, size_t cap);
 void app_stop(void);

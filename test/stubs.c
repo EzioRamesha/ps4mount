@@ -27,6 +27,30 @@ int app_exclude(const char *tid, int on, char *msg, size_t cap) {
 }
 int app_rescan(const char *drive, char *msg, size_t cap) { return record("rescan", drive, msg, cap); }
 int app_speedtest(const char *drive, char *msg, size_t cap) { return record("speedtest", drive, msg, cap); }
+int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap) {
+    char m[8];
+    (void)msg;
+    (void)cap;
+    record("fm_list", path, m, sizeof(m));
+    buf_printf(out, "{\"path\":\"%s\",\"entries\":[]}", path);
+    return 0;
+}
+int app_fm_mkdir(const char *dir, const char *name, char *msg, size_t cap) {
+    char arg[2048];
+    snprintf(arg, sizeof(arg), "%s + %s", dir, name);
+    return record("fm_mkdir", arg, msg, cap);
+}
+int app_fm_rename(const char *path, const char *name, char *msg, size_t cap) {
+    char arg[2048];
+    snprintf(arg, sizeof(arg), "%s -> %s", path, name);
+    return record("fm_rename", arg, msg, cap);
+}
+int app_fm_delete(const char *path, char *msg, size_t cap) { return record("fm_delete", path, msg, cap); }
+int app_fm_move(const char *src, const char *dst, char *msg, size_t cap) {
+    char arg[4096];
+    snprintf(arg, sizeof(arg), "%s -> %s", src, dst);
+    return record("fm_move", arg, msg, cap);
+}
 int app_resume(char *msg, size_t cap) { return record("resume", NULL, msg, cap); }
 void app_stop(void) {
     char m[8];
