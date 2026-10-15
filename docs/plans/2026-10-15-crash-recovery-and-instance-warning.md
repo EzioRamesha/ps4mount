@@ -111,9 +111,14 @@ static size_t read_file(const char *path, char *out, size_t cap) {
 - [ ] **Step 1: Bracket `install_all`.** Find the exact current line (confirm with `grep -n "install_all(ids, np);" src/main.c` — context as of this writing is immediately preceded by the per-title `src_open`/`register_prepare` loop and followed by `wait_db_quiet(3, 30);`). `ids` at this point is declared `char (*ids)[10] = malloc(...)` (a pointer to an array, not an array itself), so `sizeof(ids)` would only be a pointer's size — the buffer below is instead sized from `size`, the per-group title count already in scope a few lines above (bounded by the config's `batch_size`, itself capped at 50 by both `config_load` and `app_config_set`):
 
 ```c
-        char doing_tids[50 * 11] = ""; /* up to batch_size (<= 50) tids, "TID," each */
-        for (int k = 0; k < np; k++)
-            snprintf(doing_tids + strlen(doing_tids), sizeof(doing_tids) - strlen(doing_tids), "%s%s", k ? "," : "",
+        /* sized for the WHOLE group, not for batch_size: with batching switched off,
+         * size is `pending` and can reach MAX_TITLES, so a 50-title buffer would truncate
+         * mid-title-id and the recovered list would carry a mangled fragment */
+        char *doing_tids = malloc((size_t)size * 11 + 1);
+        if (doing_tids)
+            doing_tids[0] = 0;
+        for (int k = 0; k < np && doing_tids; k++)
+            snprintf(doing_tids + strlen(doing_tids), (size_t)size * 11 + 1 - strlen(doing_tids), "%s%s", k ? "," : "",
                      ids[k]);
         if (np)
             doing_mark("adding", doing_tids);
@@ -128,7 +133,8 @@ static size_t read_file(const char *path, char *out, size_t cap) {
 
 ```c
     {
-        char action[16], tids[512];
+        char action[16], tids[DOING_MAX]; /* DOING_MAX = MAX_TITLES * 11 + 32: a whole
+                                           * batch's worth of ids, not just batch_size's */
         if (doing_find(action, sizeof(action), tids, sizeof(tids))) {
             if (!strcmp(action, "adding")) {
                 for (char *tid = strtok(tids, ","); tid; tid = strtok(NULL, ",")) {
@@ -276,3 +282,28 @@ int main(void) {
 ## Out of scope (next up, not this plan)
 
 Detecting a title already mounted by another tool (ShadowMountPlus or similar) — roadmap item #13 — needs its own design pass extending `mounted_from()`/`HOLD_DIR` comparison into `policy_decide`'s skip reasons. Not started here.
+
+---
+
+## Post-implementation corrections (found by a 4-lens adversarial review)
+
+The plan as originally written had two defects that only surfaced once the code existed
+and four independent reviewers read it. Both are corrected in the task text above; they are
+recorded here so the reasoning is not lost:
+
+1. **The marker was last-writer-wins, and the daemon is re-entrant.** `install_all`'s wait
+   loop calls `pump_events()`, which serves the web panel on the same thread. A panel
+   "Play" arriving mid-batch therefore ran `doing_mark("launching", ...)` followed by
+   `doing_clear()`, erasing the live "adding" marker — so a crash during registration left
+   nothing to recover from, defeating the feature in exactly the case it exists for. The
+   marker now tracks which action owns it (`g_doing`): `doing_mark` refuses to overwrite a
+   different action's marker, and `doing_clear(action)` only clears its own. A `g_adding`
+   flag additionally keeps `app_launch` out of the window that `g_install_busy` does not
+   cover (it is cleared the moment the install call returns, before the batch is done).
+
+2. **`doing_tids` was sized from `batch_size`, which is not the group size.** With batching
+   switched off, the group is `pending` — up to `MAX_TITLES` — so a 50-title buffer
+   truncated mid-title-id, and the recovered list ended in a fragment like `CUS` that
+   became a bogus retry row while the real titles went un-held. The buffer is now allocated
+   for the actual group size, the shared `DOING_MAX` covers the file and parse buffers, and
+   the recovery loop skips any token that is not exactly 9 characters.
