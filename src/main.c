@@ -211,8 +211,9 @@ static size_t read_file(const char *path, char *out, size_t cap) {
  * at a time, matching how the daemon actually runs them (one batch, or one launch). */
 static void doing_mark(const char *action, const char *tids) {
     char body[512];
-    int n = snprintf(body, sizeof(body), "%s\n%s\n", action, tids);
-    write_file(DOING_FILE, body, (size_t)n, 0600);
+    snprintf(body, sizeof(body), "%s\n%s\n", action, tids);
+    size_t n = strlen(body); /* snprintf's return value can exceed sizeof(body); strlen cannot */
+    write_file(DOING_FILE, body, n, 0600);
 }
 
 /* Clears the marker. Called right after the bracketed operation returns, on every path:
