@@ -50,3 +50,4 @@ int app_set_update(const char *tid, const char *ver, char *msg, size_t cap) {
     return record("update", arg, msg, cap);
 }
 void app_diag(buf_t *out) { buf_printf(out, "diag\n"); }
+const char *app_pin(void) { return ""; }

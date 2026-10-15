@@ -77,17 +77,18 @@ typedef struct {
     char paths[MAX_SCAN_PATHS][128]; /* organize: folders whose pkgs are moved, relative to each drive; "" is the root */
     int npaths;
     int organize; /* pkgs are moved into <root>/ps4/<TID>/; off: they are used where they are */
-    int restore_batch; /* games removed from the library per group when moving pkgs back */
     char ignore[MAX_SCAN_PATHS][128]; /* folders the scan never enters, relative to each drive */
     int nignore;
     int interval; /* seconds between scans */
+    char pin[9];  /* panel PIN, "" for none */
+    int restore_batch; /* games removed from the library per group when moving pkgs back */
 } config_t;
 
-#define MAX_RESTORE_BATCH 10
 #define MIN_INTERVAL 10
 #define MAX_INTERVAL 300
+#define MAX_RESTORE_BATCH 10
 
-static config_t g_cfg = {1, 5, 1, {""}, 1, 0, 5, {""}, 0, SCAN_SECONDS};
+static config_t g_cfg = {1, 5, 1, {""}, 1, 0, {""}, 0, SCAN_SECONDS, "", 5};
 
 /* Set when the system log reports a corrupted system database: no game is added until
  * the user resumes in the panel. Kept in HALT_FILE across restarts. */
@@ -2988,12 +2989,22 @@ static void config_save(void) {
         buf_printf(&b, "path=%s\n", g_cfg.paths[i]);
     for (int i = 0; i < g_cfg.nignore; i++)
         buf_printf(&b, "ignore=%s\n", g_cfg.ignore[i]);
+    if (g_cfg.pin[0])
+        buf_printf(&b, "pin=%s\n", g_cfg.pin);
     if (b.failed)
         printf("[config] out of memory: settings not saved\n");
     else
-        write_file(CONFIG_PATH, b.data, b.len, 0666);
+        write_file(CONFIG_PATH, b.data, b.len, 0600);
     buf_free(&b);
 }
+
+/* 4 to 8 digits. */
+static int pin_valid(const char *s) {
+    size_t l = strspn(s, "0123456789");
+    return !s[l] && l >= 4 && l <= 8;
+}
+
+const char *app_pin(void) { return g_cfg.pin; }
 
 static void config_load(void) {
     FILE *f = fopen(CONFIG_PATH, "r");
@@ -3016,6 +3027,8 @@ static void config_load(void) {
             c.restore_batch = atoi(line + 14);
         else if (!strncmp(line, "interval=", 9))
             c.interval = atoi(line + 9);
+        else if (!strncmp(line, "pin=", 4) && pin_valid(line + 4))
+            snprintf(c.pin, sizeof(c.pin), "%s", line + 4);
         else if (!strncmp(line, "ignore=", 7) && c.nignore < MAX_SCAN_PATHS &&
                  !clean_scan_path(line + 7, path, sizeof(path), why, sizeof(why)) && path[0])
             snprintf(c.ignore[c.nignore++], sizeof(c.ignore[0]), "%s", path);
@@ -3056,7 +3069,7 @@ void app_config_json(buf_t *out) {
         buf_printf(out, "%s", i ? "," : "");
         json_str(out, shown);
     }
-    buf_printf(out, "]}");
+    buf_printf(out, "],\"pin_set\":%s}", g_cfg.pin[0] ? "true" : "false");
 }
 
 static void url_decode(const char *in, size_t len, char *out, size_t n) {
@@ -3075,7 +3088,8 @@ static void url_decode(const char *in, size_t len, char *out, size_t n) {
 }
 
 /* body: batch=0|1&batch_size=N&dlc=0|1&organize=0|1&restore_batch=N&interval=N&paths=<folders, one
- * per line>&ignore=<folders, one per line> (form encoded); keys left out keep their value. */
+ * per line>&ignore=<folders, one per line>&pin=<4 to 8 digits, empty to remove> (form encoded); keys
+ * left out keep their value. */
 int app_config_set(const char *body, char *msg, size_t cap) {
     config_t c = g_cfg;
     char value[1200], why[160] = "";
@@ -3100,6 +3114,13 @@ int app_config_set(const char *body, char *msg, size_t cap) {
             }
             else if (k == 8 && !strncmp(p, "interval", 8))
                 c.interval = atoi(value);
+            else if (k == 3 && !strncmp(p, "pin", 3)) {
+                if (value[0] && !pin_valid(value)) {
+                    snprintf(msg, cap, "Not saved: the PIN must be 4 to 8 digits");
+                    return -1;
+                }
+                snprintf(c.pin, sizeof(c.pin), "%s", value);
+            }
             else if (k == 6 && !strncmp(p, "ignore", 6)) {
                 c.nignore = 0;
                 for (char *line = strtok(value, "\n"); line; line = strtok(NULL, "\n")) {

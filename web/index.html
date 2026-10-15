@@ -80,6 +80,7 @@ td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-b
     <button id="logbtn">Log</button>
     <button id="diagbtn">Diagnostics</button>
     <button id="stop" class="danger">Stop</button>
+    <button id="pinbtn" class="primary" hidden>Enter PIN</button>
   </div>
 </header>
 <main>
@@ -115,6 +116,11 @@ td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-b
     <span class="hint">Smaller groups are gentler on the system when many games are added at once.</span>
   </label>
   <label class="check"><input type="checkbox" id="s-dlc"> Install add-ons (DLC)</label>
+  <label>Panel PIN
+    <input type="password" id="s-pin" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" autocomplete="new-password">
+    <span class="hint" id="s-pinhint"></span>
+  </label>
+  <label class="check" id="s-pinoff-row"><input type="checkbox" id="s-pinoff"> Remove the PIN</label>
   <fieldset><legend>Restore games to the original path</legend>
     <span class="hint">Moves the pkgs of a game (game, update and all its add-ons) back to where they came from,
       with their original names, and takes the game out of the library. No pkg is deleted. The open game is closed first.</span>
@@ -162,11 +168,41 @@ function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return '&#
 function gb(n) { return (n / 1073741824).toFixed(n >= 10737418240 ? 0 : 1) + ' GB'; }
 function toast(msg) { var t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(function () { t.style.display = 'none'; }, 4000); }
 
-function api(path, method, body) {
-  var opt = {method: method || 'GET', cache: 'no-store'};
-  if (body !== undefined) { opt.body = body; opt.headers = {'Content-Type': 'application/x-www-form-urlencoded'}; }
-  return fetch(path, opt).then(function (r) {
-    return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; });
+/* Panel PIN: sent as X-PIN, kept in this browser only. */
+var pinAsking = null, pinDeclined = false;
+function pinGet() { try { return localStorage.getItem('ps4mount-pin') || ''; } catch (e) { return ''; } }
+function pinPut(p) { try { if (p) localStorage.setItem('ps4mount-pin', p); else localStorage.removeItem('ps4mount-pin'); } catch (e) {} }
+function pinAsk(wrong) {
+  if (pinDeclined) return Promise.resolve(false);
+  if (!pinAsking) pinAsking = new Promise(function (done) {
+    setTimeout(function () {
+      var p = prompt(wrong ? 'Wrong PIN. PIN of the PS4Mount panel:' : 'PIN of the PS4Mount panel:');
+      pinAsking = null;
+      if (p === null) { pinDeclined = true; $('pinbtn').hidden = false; done(false); return; }
+      pinPut(p.replace(/\s/g, '')); done(true);
+    }, 0);
+  });
+  return pinAsking;
+}
+
+function api(path, method, body, retried) {
+  var h = {}, pin = pinGet();
+  if (pin) h['X-PIN'] = pin;
+  if (body !== undefined) h['Content-Type'] = 'application/x-www-form-urlencoded';
+  return fetch(path, {method: method || 'GET', cache: 'no-store', headers: h, body: body}).then(function (r) {
+    return r.json().then(function (j) {
+      if (r.status === 429) throw new Error('too many wrong PINs, wait a minute');
+      if (r.status === 401 && j.error === 'pin') {
+        if (retried > 2) throw new Error('wrong PIN');
+        return pinAsk(!!pin).then(function (again) {
+          if (!again) throw new Error('PIN needed');
+          return api(path, method, body, (retried || 0) + 1);
+        });
+      }
+      if (!r.ok) throw new Error(j.error || r.status);
+      $('pinbtn').hidden = true;
+      return j;
+    });
   });
 }
 var maxRestore = 10;
@@ -263,7 +299,7 @@ function load() {
     $('paused-msg').textContent = j.paused ? 'Adding games is paused: ' + j.paused + '. Games already added still work. Restart the console before resuming.' : '';
     render();
   })
-    .catch(function (e) { toast('Could not read the list: ' + e.message); });
+    .catch(function (e) { if (!pinDeclined) toast('Could not read the list: ' + e.message); });
 }
 
 $('grid').addEventListener('click', function (e) {
@@ -363,6 +399,11 @@ $('settingsbtn').onclick = function () {
     var spans = document.querySelectorAll('.rmax');
     for (var i = 0; i < spans.length; i++) spans[i].textContent = maxRestore;
     $('s-paths').disabled = !c.organize;
+    $('s-pin').value = ''; $('s-pinoff').checked = false;
+    $('s-pin').placeholder = c.pin_set ? 'Leave empty to keep the PIN' : 'No PIN';
+    $('s-pinhint').textContent = '4 to 8 digits. With a PIN, every browser must enter it before using the panel.' +
+      (c.pin_set ? ' A PIN is set.' : ' Anyone on your network can use the panel now.');
+    $('s-pinoff-row').hidden = !c.pin_set;
     $('setdlg').showModal();
   }).catch(function (e) { toast('Could not read the settings: ' + e.message); });
 };
@@ -432,11 +473,16 @@ $('setform').onsubmit = function (e) {
     '&restore_batch=' + $('s-rsize').value +
     '&interval=' + encodeURIComponent($('s-interval').value) + '&ignore=' + encodeURIComponent($('s-ignore').value) +
     '&paths=' + encodeURIComponent($('s-paths').value);
-  fetch('/api/config', {method: 'POST', cache: 'no-store', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: body})
-    .then(function (r) { return r.json(); })
-    .then(function (j) { toast(j.message || j.error); if (j.ok) $('setdlg').close(); })
-    .catch(function (err) { toast('Error: ' + err.message); });
+  var pin = $('s-pin').value.replace(/\s/g, ''), off = $('s-pinoff').checked;
+  if (pin && !/^[0-9]{4,8}$/.test(pin)) { toast('The PIN must be 4 to 8 digits'); return; }
+  if (off) body += '&pin=';
+  else if (pin) body += '&pin=' + pin;
+  api('/api/config', 'POST', body).then(function (j) {
+    if (off) pinPut(''); else if (pin) pinPut(pin);
+    toast(j.message); $('setdlg').close();
+  }).catch(function (err) { toast('Error: ' + err.message); });
 };
+$('pinbtn').onclick = function () { pinDeclined = false; load(); };
 $('stop').onclick = function () {
   if (!confirm('Stop PS4Mount? The games stay unavailable until it is loaded again.')) return;
   api('/api/stop', 'POST').then(function (j) { toast(j.message); });
