@@ -3154,20 +3154,57 @@ static int fm_rm_tree(const char *path) {
     return rc ? rc : rmdir(path);
 }
 
+#define TRASH_DIR_NAME ".trash"
+
+/* Moves path into <drive>/.trash/ instead of removing it, so a delete from the panel is
+ * reversible until a Task 7 purge runs fm_rm_tree on the trashed copy. fm_protected is checked
+ * first, before anything else (including the mkdirs below) touches the filesystem, so a
+ * protected path is never moved even into Trash. path is caller-checked (web.c calls
+ * fm_path_ok first), which guarantees it sits on a known drive, so fm_drive_of(path) is safe to
+ * use unchecked here, same as app_fm_rename/app_fm_move already trust it. */
 int app_fm_delete(const char *path, char *msg, size_t cap) {
     const char *game = NULL;
     if (fm_protected(path, &game)) {
         snprintf(msg, cap, "Used by %s; remove the game from the library first", game ? game : "a game");
         return -1;
     }
-    if (fm_rm_tree(path)) {
+    int di = fm_drive_of(path);
+    char root[32], trash_dir[64];
+    drive_root(di, root, sizeof(root));
+    snprintf(trash_dir, sizeof(trash_dir), "%s/" TRASH_DIR_NAME, root);
+    mkdirs(trash_dir, 0700);
+
+    const char *base = strrchr(path, '/') + 1;
+    char dst[PATH_MAX + 256], meta[PATH_MAX + 256];
+    time_t ts = time(NULL);
+    int tries;
+    struct stat st;
+    for (tries = 0; tries < 1000; tries++) {
+        if (snprintf(dst, sizeof(dst), "%s/%lld-%s", trash_dir, (long long)ts + tries, base) >= (int)sizeof(dst)) {
+            snprintf(msg, cap, "Path too long");
+            return -1;
+        }
+        if (stat(dst, &st))
+            break; /* dst does not exist yet: free to use */
+    }
+    if (tries == 1000) {
+        snprintf(msg, cap, "Could not make room in Trash for %s", base);
+        return -1;
+    }
+    if (rename(path, dst)) {
         int err = errno;
         snprintf(msg, cap, "Could not delete: %s", strerror(err));
         return -1;
     }
+    if (snprintf(meta, sizeof(meta), "%s.trashmeta", dst) < (int)sizeof(meta)) {
+        char body[PATH_MAX + 64];
+        int n = snprintf(body, sizeof(body), "%s\n%lld\n", path, (long long)ts);
+        write_file(meta, body, (size_t)n, 0600); /* best-effort: a missing sidecar only affects age-purge, not safety */
+    } /* truncation here would risk writing a sidecar at the wrong path; skip it rather than guess */
+
     g_next_scan = 0;
-    printf("[fm] delete %s\n", path);
-    snprintf(msg, cap, "Deleted %s", strrchr(path, '/') + 1);
+    printf("[fm] trashed %s -> %s\n", path, dst);
+    snprintf(msg, cap, "%s moved to Trash", base);
     return 0;
 }
 
