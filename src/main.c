@@ -4080,7 +4080,7 @@ void app_diag(buf_t *out) {
     buf_printf(out, "\n\nLast %d log lines:\n", DIAG_LOG_LINES);
     char *tail = malloc(64 << 10);
     if (tail && log_tail(LOG_FILE, DIAG_LOG_LINES, tail, 64 << 10) >= 0)
-        buf_printf(out, "%s", tail);
+        buf_put(out, tail, strlen(tail));
     free(tail);
 }
 
