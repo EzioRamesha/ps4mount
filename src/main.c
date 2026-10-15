@@ -3739,8 +3739,8 @@ static void pump_events(int ms) {
 
 /* Keeps log.txt bounded. */
 static void log_limit(void) {
-    /* The install thread prints to stdout; restarting the logger while it writes is undefined. */
-    if (g_install_busy)
+    /* The install and speed threads print to stdout; reopening it while they write is undefined. */
+    if (g_install_busy || g_speed_busy)
         return;
     if (log_trim(LOG_FILE, LOG_MAX, LOG_KEEP) != 1)
         return;
