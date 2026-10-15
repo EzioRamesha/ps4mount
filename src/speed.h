@@ -10,5 +10,9 @@
  * read. seed moves the reads a little so a repeated test does not read what the system just
  * cached. 0 on success; -1 when the file is smaller than one chunk, cannot be opened or a
  * read fails. */
+/* Where read i of n starts in a file of size bytes: a multiple of 4096 (O_DIRECT needs it),
+ * and the read ends inside the file when n <= size / SPEED_CHUNK. */
+unsigned long long speed_offset(unsigned long long i, unsigned long long size, unsigned long long n, unsigned seed);
+
 int speed_measure(const char *path, unsigned long long size, unsigned long long want, int max_seconds,
                   unsigned seed, double *mbps, unsigned long long *done);

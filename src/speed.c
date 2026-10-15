@@ -15,6 +15,16 @@ static double now_seconds(void) {
     return (double)ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
+unsigned long long speed_offset(unsigned long long i, unsigned long long size, unsigned long long n, unsigned seed) {
+    /* each read at the start of its share of the file, moved by up to a share's slack */
+    unsigned long long share = size / n;
+    share -= share % SPEED_ALIGN;
+    unsigned long long slack = share - SPEED_CHUNK;
+    unsigned long long shift = slack ? (unsigned long long)seed * 7919ULL * SPEED_ALIGN % slack : 0;
+    shift -= shift % SPEED_ALIGN;
+    return i * share + shift;
+}
+
 int speed_measure(const char *path, unsigned long long size, unsigned long long want, int max_seconds,
                   unsigned seed, double *mbps, unsigned long long *done) {
     *mbps = 0;
@@ -37,14 +47,10 @@ int speed_measure(const char *path, unsigned long long size, unsigned long long 
         close(fd);
         return -1;
     }
-    /* n reads, each at the start of its share of the file, moved by up to a share's slack */
-    unsigned long long share = size / n, slack = share - SPEED_CHUNK;
-    unsigned long long shift = slack ? (unsigned long long)seed * 7919ULL * SPEED_ALIGN % slack : 0;
-    shift -= shift % SPEED_ALIGN;
     int rc = 0;
     double start = now_seconds(), elapsed = 0;
     for (unsigned long long i = 0; i < n; i++) {
-        ssize_t r = pread(fd, buf, SPEED_CHUNK, (off_t)(i * share + shift));
+        ssize_t r = pread(fd, buf, SPEED_CHUNK, (off_t)speed_offset(i, size, n, seed));
         if (r != (ssize_t)SPEED_CHUNK) {
             rc = -1;
             break;
