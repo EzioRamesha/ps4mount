@@ -3171,8 +3171,16 @@ int app_fm_delete(const char *path, char *msg, size_t cap) {
     int di = fm_drive_of(path);
     char root[32], trash_dir[64];
     drive_root(di, root, sizeof(root));
-    snprintf(trash_dir, sizeof(trash_dir), "%s/" TRASH_DIR_NAME, root);
+    if (snprintf(trash_dir, sizeof(trash_dir), "%s/" TRASH_DIR_NAME, root) >= (int)sizeof(trash_dir)) {
+        snprintf(msg, cap, "Path too long");
+        return -1;
+    }
     mkdirs(trash_dir, 0700);
+    struct stat tst;
+    if (stat(trash_dir, &tst) || !S_ISDIR(tst.st_mode)) {
+        snprintf(msg, cap, "Could not open Trash on %s; the drive may be read-only or full", root + 5);
+        return -1;
+    }
 
     const char *base = strrchr(path, '/') + 1;
     char dst[PATH_MAX + 256], meta[PATH_MAX + 256];
