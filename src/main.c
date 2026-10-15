@@ -4319,6 +4319,7 @@ int main(void) {
     int lock = single_instance();
     if (lock < 0) {
         printf(VERSION " already running\n");
+        notify(VERSION " is already running. Check the autoload list or payload manager for an older copy.");
         return 0;
     }
     sceUserServiceInitialize(0);
