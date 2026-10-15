@@ -4162,6 +4162,8 @@ int main(void) {
             continue;
         }
         if (time(NULL) >= g_next_scan && !g_deleting) {
+            /* not 0 during the scan: a panel request served meanwhile sets 0 and is kept */
+            g_next_scan = time(NULL) + g_cfg.interval;
             if (g_reg_mode != REG_NONE)
                 scan_all();
             else if (g_manual_scan)
@@ -4169,7 +4171,8 @@ int main(void) {
             g_manual_scan = 0;
             g_scan_only = -1;
             log_limit();
-            g_next_scan = time(NULL) + g_cfg.interval;
+            if (g_next_scan)
+                g_next_scan = time(NULL) + g_cfg.interval;
         }
         pump_events(1000);
     }
