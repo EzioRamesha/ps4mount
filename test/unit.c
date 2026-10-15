@@ -682,6 +682,55 @@ static void test_catalog_short(void) {
     CHECK(system(cmd) == 0);
 }
 
+static void test_catalog_link(void) {
+    printf("catalog: updates and add-ons on another drive\n");
+    catalog_t d[3] = {{0}};
+    for (int i = 0; i < 3; i++) {
+        d[i].cap = 8;
+        d[i].pkgs = calloc((size_t)d[i].cap, sizeof(*d[i].pkgs));
+    }
+    /* drive 0: the game, an older update; drive 1: a newer update and two add-ons, one of
+     * another region listed by the newer update; drive 2: an add-on of no game at all */
+    cat_add(&d[0], "/a/game.pkg", "gd", "EP0001-CUSA00001_00-GAME000000000000", "01.00");
+    cat_add(&d[0], "/a/upd.pkg", "gp", "EP0001-CUSA00001_00-GAME000000000000", "01.03");
+    cat_add(&d[1], "/b/ac1.pkg", "ac", "EP0001-CUSA00001_00-COSTUME000000001", "");
+    cat_add(&d[1], "/b/ac2.pkg", "ac", "UP0001-CUSA00009_00-COSTUME000000002", "");
+    cat_pkg_t *u = cat_add(&d[1], "/b/upd.pkg", "gp", "EP0001-CUSA00001_00-GAME000000000000", "01.05");
+    snprintf(u->services[u->nservices++], 20, "UP0001-CUSA00009_00");
+    cat_add(&d[2], "/c/lost.pkg", "ac", "EP0001-CUSA00077_00-LOST000000000001", "");
+
+    catalog_link(d, 3, NULL, 0); /* off: every drive on its own */
+    const cat_game_t *g = catalog_game(&d[0], "CUSA00001");
+    CHECK(g && g->nxupdates == 0 && g->nxdlc == 0 && !strcmp(catalog_patch(d, &d[0], g)->path, "/a/upd.pkg"));
+    CHECK(d[1].orphans == 2 && d[1].pkgs[2].role == CAT_ROLE_NOGAME);
+
+    catalog_link(d, 3, NULL, 1);
+    g = catalog_game(&d[0], "CUSA00001");
+    CHECK(g && g->nxupdates == 1 && g->patch < 0 && !strcmp(catalog_patch(d, &d[0], g)->path, "/b/upd.pkg"));
+    CHECK(d[0].pkgs[1].role == CAT_ROLE_SPARE && d[1].pkgs[2].role == CAT_ROLE_PATCH);
+    const cat_pkg_t *list[CAT_MAX_DLC];
+    CHECK(g && catalog_updates_of(d, &d[0], g, list, CAT_MAX_DLC) == 2 && !strcmp(list[1]->path, "/b/upd.pkg"));
+    CHECK(g && catalog_dlc_of(d, &d[0], g, list, CAT_MAX_DLC) == 2);
+    CHECK(d[1].orphans == 0 && d[1].pkgs[0].role == CAT_ROLE_DLC && d[1].pkgs[1].role == CAT_ROLE_DLC);
+    CHECK(d[2].orphans == 1 && d[2].pkgs[0].role == CAT_ROLE_ORPHAN);
+
+    catalog_link(d, 3, choose_105, 1); /* chosen and on the other drive */
+    g = catalog_game(&d[0], "CUSA00001");
+    CHECK(g && !strcmp(catalog_patch(d, &d[0], g)->app_ver, "01.05"));
+    catalog_link(d, 3, choose_none, 1);
+    g = catalog_game(&d[0], "CUSA00001");
+    CHECK(g && catalog_patch(d, &d[0], g) == NULL);
+
+    /* the other drive is unplugged: back to the game's own drive */
+    catalog_unlink(d, 3);
+    catalog_free(&d[1]);
+    catalog_link(d, 3, NULL, 1);
+    g = catalog_game(&d[0], "CUSA00001");
+    CHECK(g && g->nxupdates == 0 && g->nxdlc == 0 && !strcmp(catalog_patch(d, &d[0], g)->path, "/a/upd.pkg"));
+    for (int i = 0; i < 3; i++)
+        catalog_free(&d[i]);
+}
+
 static void test_catalog_cache(void) {
     printf("catalog: saved and loaded again\n");
     catalog_t c = {0};
@@ -891,6 +940,7 @@ int main(void) {
     test_catalog_group();
     test_catalog_walk();
     test_catalog_short();
+    test_catalog_link();
     test_catalog_cache();
     test_safety();
     test_policy();

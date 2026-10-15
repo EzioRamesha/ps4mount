@@ -121,6 +121,9 @@ td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-b
     <span class="hint">Smaller groups are gentler on the system when many games are added at once.</span>
   </label>
   <label class="check"><input type="checkbox" id="s-dlc"> Install add-ons (DLC)</label>
+  <label class="check"><input type="checkbox" id="s-cross"> Use updates and add-ons from other drives</label>
+  <div class="hint">For a game on one drive with its update or add-ons on another. Keep both drives connected: without the
+    other drive, the game is added again without them.</div>
   <label>Panel PIN
     <input type="password" id="s-pin" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" autocomplete="new-password">
     <span class="hint" id="s-pinhint"></span>
@@ -301,7 +304,8 @@ function render() {
       g.addons.forEach(function (a) {
         adds += '<label><input type="checkbox" data-addon="' + esc(a.content_id) + '"' + (a.state === 'on' || a.state === 'adding' ? ' checked' : '') +
           (g.state === 'running' || g.state === 'internal' ? ' disabled' : '') + '> <span>' + esc(a.name || a.content_id.slice(20)) +
-          '<small>' + (a.name ? esc(a.content_id.slice(20)) + ' · ' : '') + esc(addonLabels[a.state] || a.state) + '</small></span></label>';
+          '<small>' + (a.name ? esc(a.content_id.slice(20)) + ' · ' : '') + esc(addonLabels[a.state] || a.state) +
+          (a.other_drive ? ' · on another drive' : '') + '</small></span></label>';
       });
       adds += '</details>';
       if (used > MAX_RUNNING_ADDONS)
@@ -313,7 +317,8 @@ function render() {
       '<span class="badge b-' + g.state + '">' + esc(labels[g.state] || g.state) + '</span>' +
       (pick ? '<input type="checkbox" class="pick" data-sel="' + tid + '" aria-label="Select"' + (selected[tid] ? ' checked' : '') + '>' : '') + '</div>' +
       '<div class="info"><div class="name">' + esc(g.name) + '</div>' +
-      '<div class="meta">' + tid + ' · v' + esc(g.version) + (g.has_patch ? ' (with update)' : '') +
+      '<div class="meta">' + tid + ' · v' + esc(g.version) +
+        (g.has_patch ? (g.update_other_drive ? ' (with update from another drive)' : ' (with update)') : '') +
         (g.dlc ? ' · ' + g.dlc + ' add-on' + (g.dlc > 1 ? 's' : '') : '') + ' · ' + gb(g.size) + '</div>' +
       '<div class="meta">' + esc(g.source) + (g.mount ? ' · mounted ' + g.mount : '') + '</div>' + upd + adds +
       (g.update_issue ? '<div class="warn">' + esc(g.update_issue) + '</div>' : '') + '</div>' +
@@ -462,6 +467,7 @@ $('settingsbtn').onclick = function () {
     $('s-batch').checked = c.batch;
     $('s-size').value = c.batch_size;
     $('s-dlc').checked = c.dlc;
+    $('s-cross').checked = c.cross;
     $('s-organize').checked = c.organize;
     $('s-size').disabled = !c.batch;
     maxRestore = c.max_restore_batch || 10;
@@ -540,7 +546,7 @@ $('setform').onsubmit = function (e) {
   if (!restoreSize()) return;
   var body = 'batch=' + ($('s-batch').checked ? 1 : 0) + '&batch_size=' + encodeURIComponent($('s-size').value) +
     '&dlc=' + ($('s-dlc').checked ? 1 : 0) + '&organize=' + ($('s-organize').checked ? 1 : 0) +
-    '&restore_batch=' + $('s-rsize').value +
+    '&cross=' + ($('s-cross').checked ? 1 : 0) + '&restore_batch=' + $('s-rsize').value +
     '&interval=' + encodeURIComponent($('s-interval').value) + '&ignore=' + encodeURIComponent($('s-ignore').value) +
     '&paths=' + encodeURIComponent($('s-paths').value);
   var pin = $('s-pin').value.replace(/\s/g, ''), off = $('s-pinoff').checked;

@@ -44,12 +44,25 @@ typedef struct {
     int role;                             /* CAT_ROLE_* */
 } cat_pkg_t;
 
-/* A game with its update and add-ons: indexes in catalog_t.pkgs. */
+/* A pkg of another drive: index of its catalog in the array given to catalog_link, and
+ * index in that catalog's pkgs. */
+typedef struct {
+    int drive, pkg;
+} cat_ref_t;
+
+/* A game with its update and add-ons: indexes in catalog_t.pkgs. catalog_link may add
+ * updates and add-ons of other drives (x...). Use catalog_patch, catalog_updates_of and
+ * catalog_dlc_of to see both. */
 typedef struct {
     char title_id[10];
-    int app, patch; /* patch is -1 without an update */
+    int app, patch; /* patch is -1 without an update, or when the update used is xpatch */
     int updates[CAT_MAX_UPDATES], nupdates; /* every update found, the one used included */
     int dlc[CAT_MAX_DLC], ndlc;
+    cat_ref_t xupdates[CAT_MAX_UPDATES];
+    int nxupdates;
+    int xpatch; /* index in xupdates of the update used, -1 for none */
+    cat_ref_t xdlc[CAT_MAX_DLC];
+    int nxdlc;
 } cat_game_t;
 
 /* The APP_VER of the update the user chose for a title, CAT_NO_UPDATE for none, or NULL
@@ -82,6 +95,18 @@ int catalog_read(catalog_t *c);
  * Sets the role of every pkg. choose may be NULL. */
 void catalog_group(catalog_t *c, cat_choose_fn choose);
 const cat_game_t *catalog_game(const catalog_t *c, const char *title_id);
+/* Groups each of the n catalogs of all again; with cross, updates and add-ons whose game
+ * is not on their drive then go with that game on another drive (every copy of it), and
+ * the update of each game is picked among the updates of every drive. */
+void catalog_link(catalog_t *all, int n, cat_choose_fn choose, int cross);
+/* Drops what catalog_link added from other drives (before walking a drive, whose pkgs
+ * then move). Roles stay as they were until the next catalog_link. */
+void catalog_unlink(catalog_t *all, int n);
+/* The update g uses (c is the catalog of g, all the array given to catalog_link), or NULL. */
+const cat_pkg_t *catalog_patch(const catalog_t *all, const catalog_t *c, const cat_game_t *g);
+/* Every update (or add-on) of g, of its drive first: fills out (at most max), returns how many. */
+int catalog_updates_of(const catalog_t *all, const catalog_t *c, const cat_game_t *g, const cat_pkg_t **out, int max);
+int catalog_dlc_of(const catalog_t *all, const catalog_t *c, const cat_game_t *g, const cat_pkg_t **out, int max);
 /* Saves what was read of each pkg, so a restart does not read them all again. 0 on success. */
 int catalog_save(const catalog_t *c, const char *path);
 /* Replaces c with a saved catalog (pkgs only: group it again). The next walk keeps the
