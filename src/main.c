@@ -2560,6 +2560,12 @@ int app_addon(const char *content_id, int on, char *msg, size_t cap) {
 }
 
 int app_set_update(const char *tid, const char *ver, char *msg, size_t cap) {
+    managed_t *m = managed_by(tid, NULL);
+    if ((m && m->running) || title_running(tid)) {
+        printf("[web] update choice of %s refused: game running\n", tid);
+        snprintf(msg, cap, "Close the game first");
+        return -1;
+    }
     if (kv_set(UPDATES_FILE, tid, ver[0] ? ver : NULL)) {
         snprintf(msg, cap, "Could not save the update choice");
         return -1;
