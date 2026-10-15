@@ -39,7 +39,10 @@ The web panel, opened from the **Media** tab:
   With several updates of a game, the highest version is used, or the one you pick in the panel
   (including no update).
 - Installs add-ons (DLC), with data or unlock-only. An add-on is matched to its game by title ID, or by
-  the add-on IDs the game lists (so add-ons of another region of the same game work too).
+  the add-on IDs the game lists (so add-ons of another region of the same game work too). Each
+  add-on can be turned off and on again in the panel.
+- Optionally uses an update or add-ons from another drive than the game.
+- Waits for pkgs that are still being copied (or were cut off) instead of failing on them.
 - Adds many games in groups, so a drive with dozens of games does not overload the console.
 - Stops adding games as soon as the system reports a corrupted database, and stops retrying a game
   that failed 3 times, so a problem never turns into an endless loop (see [Safety](#safety)).
@@ -50,8 +53,10 @@ The web panel, opened from the **Media** tab:
   games.
 - A web panel, also available as **PS4Mount** in the **Media** tab, to see the games and add or
   remove them from the library (one by one or several at once), keep a game out of the library, pick
-  its update, see the pkgs that are not used and why, filter by drive, and copy a diagnostics report.
-  It can be protected with a PIN and tells you when a newer PS4Mount is released.
+  its update and add-ons, see the pkgs that are not used and why, filter and scan by drive, download
+  the log and copy a diagnostics report. It warns when a drive is almost full, can be protected with
+  a PIN, tells you when a newer PS4Mount is released, and is available in English, Spanish,
+  Portuguese (Brazil) and French.
 
 ## Requirements
 
@@ -96,10 +101,15 @@ game with its update and add-ons on the same drive. For example:
 
 Hidden folders, `System Volume Information` and `$RECYCLE.BIN` are not searched. When the same game is
 twice on a drive, the first copy (by path) is used and the scan notification says so. A game is
-reported as ready only after its add-ons are installed too. An add-on whose game is not on the same
-drive is not used; the scan notification says how many there are. **Problems** in the panel lists
-these pkgs (duplicates, add-ons or updates without their game, and pkgs that cannot be read) with their
-path.
+reported as ready only after its add-ons are installed too. An update or add-on whose game is not on
+the same drive is not used, unless **Use updates and add-ons from other drives** is on (see
+[Settings](#settings)); the scan notification says how many there are. **Problems** in the panel lists
+these pkgs (duplicates, add-ons or updates without their game, pkgs that cannot be read, and incomplete
+pkgs) with their path.
+
+A pkg that is smaller than its header says (still being copied, or a copy that was cut off) is
+listed as incomplete with how much of it is there, and is used on the first scan after it is complete.
+A pkg whose full size was reserved before the copy stopped cannot be told apart from a complete one.
 
 To add more games later, copy their `.pkg` files to the drive.
 
@@ -133,11 +143,28 @@ the same network. The panel shows every game found on the connected drives, with
 | Never added | You chose **Never add**; every scan skips it until you click **Allow** |
 
 Games can be searched by name or title ID, sorted by name, state or location, and filtered by drive.
-The summary shows the free and total space of each drive.
+The summary shows the free and total space of each drive. A drive with less than 2 GB or 5% free is
+marked **almost full**, and a notification says so once (again only after space was freed and ran low
+again).
 
 A game with update pkgs has an **Update** list: **highest** (the default), **No update**, or a
 specific version. The game is added again with the chosen update; the choice is kept in
-`/data/ps4mount/updates.txt`.
+`/data/ps4mount/updates.txt`. "with update from another drive" next to the version means the update
+used is on another drive than the game.
+
+A game with add-ons has an **Add-ons** list with each add-on's name and state (installed, being added,
+turned off, deleted on the console, and whether it is on another drive). Untick an add-on to turn it
+off: the game is added again without it, and the choice is kept in `/data/ps4mount/addons-off.txt`.
+Tick it again to add it back, including an add-on deleted on the console. When more than 29 add-ons
+of a game are on, the panel warns that a running game only sees about 29 of them (see
+[Good to know](#good-to-know)) so you can turn off the ones you do not need. Add-ons cannot be
+changed while the game is running.
+
+The panel follows the browser's language (English, Spanish, Portuguese (Brazil) or French), or the
+one picked under **Language** in the settings, which is kept in that browser only. Messages sent by
+the console (notifications, the log and the confirmations shown after an action) stay in English.
+The translations were not written by native speakers: corrections are welcome in an issue or pull
+request.
 
 Tick the box on several games to **Add selected**, **Remove selected** or **Never add selected** at
 once. The games are handled one after the other.
@@ -154,10 +181,12 @@ Buttons:
   came from (see [Moving pkgs back](#moving-pkgs-back)). Only shown for games moved into the ps4 folder.
 - **Try again**: tries a failed game again.
 - **Add to library**: adds a removed game back.
-- **Scan for games**: checks the drives now and shows how many games were found on each one.
+- **Scan for games**: checks the drives now and shows how many games were found on each one. With a
+  drive picked in the drive filter, the button becomes **Scan usbN** and checks that drive only.
 - **Settings**: see below.
 - **Problems**: lists the pkgs found but not used (see [Usage](#usage)).
-- **Log**: shows the PS4Mount log.
+- **Log**: shows the end of the PS4Mount log; **Download the whole log** saves it as
+  `ps4mount-log.txt`.
 - **Diagnostics**: a report to paste in a bug report (version, firmware, settings, drives, failed
   games and the end of the log), with a **Copy** button. It holds no password or network address.
 - **Stop**: stops PS4Mount. Its games cannot start until it is loaded again.
@@ -168,6 +197,7 @@ Buttons:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
+| Language | Automatic | Language of the panel. Kept in the browser, not on the console, so each device can use its own. |
 | Move pkgs into the ps4 folder | Off | Moves new `.pkg` files into `/ps4/CUSAxxxxx/` (see [Usage](#usage)). When off, every `.pkg` is used where it is. |
 | Folders whose pkgs are moved | `/` | With the setting above on: folders, relative to each drive, whose `.pkg` files are moved (one per line). `/` is the root. The `ps4` folder cannot be used: it holds the games already moved. |
 | Add new games in groups | On | Adds many new games in groups instead of one after the other, which keeps the console stable when a drive has a lot of games. |
@@ -175,6 +205,7 @@ Buttons:
 | Folders to ignore | (none) | Folders, relative to each drive, whose `.pkg` files and subfolders are never used (one per line), for example `/Backup`. |
 | Seconds between scans | 10 | How often the drives are checked (10 to 300). Longer is lighter on drives with many folders; **Scan for games** always checks at once. |
 | Install add-ons (DLC) | On | Installs add-on `.pkg` files. When off, add-ons are not used. |
+| Use updates and add-ons from other drives | Off | Uses an update or add-on whose game is on another connected drive. Keep both drives connected: when the drive with the update or add-ons is unplugged, the game is added again without them. |
 | Panel PIN | (none) | 4 to 8 digits. With a PIN, each browser must enter it once before using the panel. Leave the field empty to keep the PIN, or tick **Remove the PIN**. |
 
 The settings also have **Move all games back** and **Pick up moved-back pkgs again** (see below).
@@ -250,7 +281,8 @@ settings. A `.pkg` you move, rename or replace yourself is picked up as usual.
   can use at most about 30 packages: the game, its update and roughly 29 add-ons. A game with more
   add-ons (for example Civilization VII with 35) starts normally but only sees the first add-ons, in
   alphabetical order of their label. This is a console limit that applies to installed games too; it
-  does not limit how many games you can have.
+  does not limit how many games you can have. Turn off the add-ons you do not need in the panel's
+  **Add-ons** list so the ones you want are seen.
 - If a game fails to start right after being added, start it again. The log (panel > **Log**) shows
   what happened.
 
@@ -269,8 +301,9 @@ what is needed to find the cause:
 6. **What happened**: what you did, what you expected, and the exact message or error code shown on
    the console.
 7. **The diagnostics report**: open the web panel, click **Diagnostics** and **Copy**. It covers
-   points 1, 3 and 5 and ends with the log. For a longer log, click **Log** or download
-   `/data/ps4mount/log.txt` over FTP, and include the part from the moment the problem happened.
+   points 1, 3 and 5 and ends with the log. For a longer log, click **Log** > **Download the whole
+   log** (or download `/data/ps4mount/log.txt` over FTP), and include the part from the moment the
+   problem happened.
 
 Do not attach `.pkg` files or links to them.
 
