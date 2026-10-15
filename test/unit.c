@@ -983,22 +983,29 @@ static void test_safety(void) {
     time_t now = 1000;
     CHECK(!retry_waiting(&t, "CUSA00001", now));
     CHECK(retry_remaining(&t, "CUSA00001", now) == 0); /* no entry: nothing pending */
-    CHECK(retry_failed(&t, "CUSA00001", now) == 1);
+    CHECK(!retry_reason(&t, "CUSA00001")[0]); /* no entry: no reason either */
+    CHECK(retry_failed(&t, "CUSA00001", now, "This pkg could not be read.") == 1);
+    CHECK(!strcmp(retry_reason(&t, "CUSA00001"), "This pkg could not be read."));
     CHECK(retry_remaining(&t, "CUSA00001", now) == RETRY_SECONDS);
     CHECK(retry_remaining(&t, "CUSA00001", now + RETRY_SECONDS) == 0);
     CHECK(retry_waiting(&t, "CUSA00001", now + RETRY_SECONDS - 1));
     CHECK(!retry_waiting(&t, "CUSA00001", now + RETRY_SECONDS));
-    CHECK(retry_failed(&t, "CUSA00001", now) == 2 && !retry_given_up(&t, "CUSA00001"));
-    CHECK(retry_failed(&t, "CUSA00001", now) == RETRY_MAX_TRIES && retry_given_up(&t, "CUSA00001"));
+    CHECK(retry_failed(&t, "CUSA00001", now, "The console didn't accept this game.") == 2 && !retry_given_up(&t, "CUSA00001"));
+    CHECK(!strcmp(retry_reason(&t, "CUSA00001"), "The console didn't accept this game.")); /* latest reason wins */
+    CHECK(retry_failed(&t, "CUSA00001", now, "The console didn't accept this game.") == RETRY_MAX_TRIES &&
+          retry_given_up(&t, "CUSA00001"));
     CHECK(retry_remaining(&t, "CUSA00001", now) == 0); /* given up: no countdown */
     CHECK(retry_waiting(&t, "CUSA00001", now + 100000)); /* given up: not tried again by itself */
-    CHECK(retry_failed(&t, "CUSA00002", now) == 1);
-    CHECK(retry_failed(&t, "CUSA00003", now) == 0); /* table full */
+    CHECK(retry_failed(&t, "CUSA00002", now, "") == 1); /* an empty reason is allowed */
+    CHECK(!retry_reason(&t, "CUSA00002")[0]);
+    CHECK(retry_failed(&t, "CUSA00003", now, "x") == 0); /* table full */
     retry_clear_given_up(&t);
     CHECK(!retry_given_up(&t, "CUSA00001") && !retry_waiting(&t, "CUSA00001", now + 100000));
+    CHECK(!retry_reason(&t, "CUSA00001")[0]); /* cleared along with the entry */
     CHECK(retry_waiting(&t, "CUSA00002", now)); /* still waiting: not given up */
     retry_clear(&t, "CUSA00002");
     CHECK(!retry_waiting(&t, "CUSA00002", now));
+    CHECK(!retry_reason(&t, "CUSA00002")[0]);
 }
 
 static void test_fm(void) {

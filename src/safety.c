@@ -48,7 +48,7 @@ long retry_remaining(const retry_table_t *t, const char *tid, time_t now) {
     return (long)(r->until - now);
 }
 
-int retry_failed(retry_table_t *t, const char *tid, time_t now) {
+int retry_failed(retry_table_t *t, const char *tid, time_t now, const char *reason) {
     retry_t *r = find(t, tid);
     for (int i = 0; !r && i < t->n; i++)
         if (!t->items[i].tid[0]) {
@@ -59,7 +59,13 @@ int retry_failed(retry_table_t *t, const char *tid, time_t now) {
         return 0;
     r->tries++;
     r->until = now + RETRY_SECONDS;
+    snprintf(r->reason, sizeof(r->reason), "%s", reason);
     return r->tries;
+}
+
+const char *retry_reason(const retry_table_t *t, const char *tid) {
+    const retry_t *r = find(t, tid);
+    return r ? r->reason : "";
 }
 
 void retry_clear(retry_table_t *t, const char *tid) {
