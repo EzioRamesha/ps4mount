@@ -611,6 +611,77 @@ static void test_catalog_walk(void) {
     CHECK(system(cmd) == 0);
 }
 
+/* A pkg header saying the pkg is full bytes long, cut after have bytes. */
+static void put_short_pkg(const char *root, const char *rel, uint64_t full, size_t have) {
+    static uint8_t h[0x2000];
+    memset(h, 0, sizeof(h));
+    h[0] = 0x7f, h[1] = 'C', h[2] = 'N', h[3] = 'T';
+    for (int i = 0; i < 8; i++)
+        h[0x430 + i] = (uint8_t)(full >> (56 - 8 * i));
+    char p[PATH_MAX];
+    snprintf(p, sizeof(p), "%s/%s", root, rel);
+    FILE *f = fopen(p, "wb");
+    if (f) {
+        fwrite(h, 1, have < sizeof(h) ? have : sizeof(h), f);
+        fclose(f);
+    }
+}
+
+static const cat_pkg_t *cat_get(const catalog_t *c, const char *root, const char *rel) {
+    char p[PATH_MAX];
+    snprintf(p, sizeof(p), "%s/%s", root, rel);
+    for (int i = 0; i < c->npkgs; i++)
+        if (!strcmp(c->pkgs[i].path, p))
+            return &c->pkgs[i];
+    return NULL;
+}
+
+static void test_catalog_short(void) {
+    printf("catalog: pkgs still copying or cut off\n");
+    char root[] = "/tmp/ps4mount-short-XXXXXX";
+    CHECK(mkdtemp(root) != NULL);
+    put_short_pkg(root, "cut.pkg", 0x10000, 0x1000);
+    put_short_pkg(root, "header-cut.pkg", 0x10000, 0x100); /* before the size field */
+    put_short_pkg(root, "magic-cut.pkg", 0x10000, 2);
+    put_short_pkg(root, "empty.pkg", 0x10000, 0);
+    put_short_pkg(root, "whole.pkg", 0x1000, 0x1000); /* right size, but not a real pkg */
+    put_file(root, "tiny.pkg", "x");
+
+    catalog_t c = {0};
+    CHECK(catalog_walk(&c, root, NULL, NULL, 0) == 6);
+    CHECK(catalog_read(&c) == 6);
+    const cat_pkg_t *cut = cat_get(&c, root, "cut.pkg");
+    CHECK(cut && cut->state == CAT_SHORT && cut->full_size == 0x10000);
+    CHECK(cat_get(&c, root, "header-cut.pkg")->state == CAT_SHORT);
+    CHECK(cat_get(&c, root, "magic-cut.pkg")->state == CAT_SHORT);
+    CHECK(cat_get(&c, root, "empty.pkg")->state == CAT_SHORT);
+    CHECK(cat_get(&c, root, "whole.pkg")->state == CAT_BAD);
+    CHECK(cat_get(&c, root, "tiny.pkg")->state == CAT_BAD);
+    catalog_group(&c, NULL);
+    CHECK(c.ngames == 0 && cat_get(&c, root, "cut.pkg")->role == CAT_ROLE_NONE);
+
+    char file[PATH_MAX];
+    snprintf(file, sizeof(file), "%s.cache", root);
+    CHECK(catalog_save(&c, file) == 0);
+    catalog_t l = {0};
+    CHECK(catalog_load(&l, file) == 2); /* only whole.pkg and tiny.pkg: incomplete ones are read again */
+    catalog_free(&l);
+    unlink(file);
+
+    CHECK(catalog_walk(&c, root, NULL, NULL, 0) == 0); /* unchanged: not read on every scan */
+    put_short_pkg(root, "cut.pkg", 0x10000, 0x2000);  /* the copy goes on */
+    CHECK(catalog_walk(&c, root, NULL, NULL, 0) == 1);
+    CHECK(catalog_read(&c) == 1 && cat_get(&c, root, "cut.pkg")->state == CAT_SHORT);
+    put_short_pkg(root, "cut.pkg", 0x1000, 0x1000);   /* complete now (and not a real pkg) */
+    CHECK(catalog_walk(&c, root, NULL, NULL, 0) == 1);
+    CHECK(catalog_read(&c) == 1 && cat_get(&c, root, "cut.pkg")->state == CAT_BAD);
+    catalog_free(&c);
+
+    char cmd[PATH_MAX + 16];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
+    CHECK(system(cmd) == 0);
+}
+
 static void test_catalog_cache(void) {
     printf("catalog: saved and loaded again\n");
     catalog_t c = {0};
@@ -793,6 +864,7 @@ int main(void) {
     test_name_file();
     test_catalog_group();
     test_catalog_walk();
+    test_catalog_short();
     test_catalog_cache();
     test_safety();
     test_policy();

@@ -4,6 +4,7 @@
 #include "catalog.h"
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -136,7 +137,43 @@ int catalog_walk(catalog_t *c, const char *root, cat_skip_fn skip, const char *c
     return unread;
 }
 
+#define PKG_MAGIC 0x7f434e54u
+#define PKG_SIZE_AT 0x430
+
+static uint64_t be64_at(const uint8_t *b) {
+    uint64_t v = 0;
+    for (int i = 0; i < 8; i++)
+        v = v << 8 | b[i];
+    return v;
+}
+
+/* 1 when the file is a PS4 pkg shorter than its header says (or too short to have a header);
+ * full gets the expected size, 0 when unknown. */
+static int is_short(const char *path, uint64_t size, uint64_t *full) {
+    *full = 0;
+    if (size == 0)
+        return 1;
+    int fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return 0;
+    uint8_t h[PKG_SIZE_AT + 8];
+    ssize_t n = pread(fd, h, sizeof(h), 0);
+    close(fd);
+    static const uint8_t magic[4] = {PKG_MAGIC >> 24, (PKG_MAGIC >> 16) & 0xff, (PKG_MAGIC >> 8) & 0xff,
+                                     PKG_MAGIC & 0xff};
+    if (n < 0 || memcmp(h, magic, (size_t)n < sizeof(magic) ? (size_t)n : sizeof(magic)))
+        return 0;
+    if ((size_t)n < sizeof(magic))
+        return 1;
+    if ((size_t)n < sizeof(h))
+        return 1;
+    *full = be64_at(h + PKG_SIZE_AT);
+    return *full > size;
+}
+
 static int read_one(cat_pkg_t *p, pkg_t *pkg, sfo_t *sfo) {
+    if (is_short(p->path, p->size, &p->full_size))
+        return 1;
     if (pkg_open(pkg, p->path))
         return -1;
     int rc = -1;
@@ -181,7 +218,8 @@ int catalog_read(catalog_t *c) {
             cat_pkg_t *p = &c->pkgs[i];
             if (p->state != CAT_UNREAD)
                 continue;
-            p->state = read_one(p, pkg, sfo) ? CAT_BAD : CAT_OK;
+            int rc = read_one(p, pkg, sfo);
+            p->state = rc > 0 ? CAT_SHORT : rc ? CAT_BAD : CAT_OK;
             n++;
         }
     free(pkg);
@@ -301,7 +339,7 @@ int catalog_save(const catalog_t *c, const char *path) {
         return -1;
     for (int i = 0; i < c->npkgs; i++) {
         const cat_pkg_t *p = &c->pkgs[i];
-        if (p->state == CAT_UNREAD || strpbrk(p->path, "\t\r\n"))
+        if (p->state == CAT_UNREAD || p->state == CAT_SHORT || strpbrk(p->path, "\t\r\n"))
             continue;
         fprintf(f, "%d\t%llu\t%lld\t%s\t%s\t%s\t%s\t%d", p->state, (unsigned long long)p->size,
                 (long long)p->mtime, p->category[0] ? p->category : "-", p->title_id[0] ? p->title_id : "-",
