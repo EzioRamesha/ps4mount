@@ -49,5 +49,10 @@ int app_set_update(const char *tid, const char *ver, char *msg, size_t cap) {
     snprintf(arg, sizeof(arg), "%s=[%s]", tid, ver);
     return record("update", arg, msg, cap);
 }
+int app_addon(const char *content_id, int on, char *msg, size_t cap) {
+    char arg[64];
+    snprintf(arg, sizeof(arg), "%s=%d", content_id, on);
+    return record("addon", arg, msg, cap);
+}
 void app_diag(buf_t *out) { buf_printf(out, "diag\n"); }
 const char *app_pin(void) { return ""; }

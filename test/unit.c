@@ -732,6 +732,32 @@ static void test_catalog_cache(void) {
     CHECK(catalog_load(&d, "/tmp/ps4mount-no-such-file") == -1);
     catalog_free(&c);
     catalog_free(&d);
+
+    printf("catalog: add-on names in the cache\n");
+    catalog_t e = {0};
+    e.cap = 4;
+    e.pkgs = calloc((size_t)e.cap, sizeof(*e.pkgs));
+    snprintf(cat_add(&e, "/u/ac.pkg", "ac", "EP0001-CUSA00001_00-COSTUME000000001", "")->name, 64, "Costume Pack - Été");
+    cat_add(&e, "/u/noname.pkg", "ac", "EP0001-CUSA00001_00-COSTUME000000002", "");
+    CHECK(catalog_save(&e, path) == 0);
+    catalog_t r = {0};
+    CHECK(catalog_load(&r, path) == 2);
+    CHECK(r.npkgs == 2 && !strcmp(r.pkgs[0].name, "Costume Pack - Été") && r.pkgs[0].state == CAT_OK);
+    CHECK(r.npkgs == 2 && r.pkgs[1].name[0] == 0 && r.pkgs[1].state == CAT_OK);
+    catalog_free(&e);
+    catalog_free(&r);
+    /* a cache from before add-on names: add-ons are read again, other pkgs are kept */
+    f = fopen(path, "w");
+    CHECK(f != NULL);
+    if (f) {
+        fputs("2\t10\t1\tac\tCUSA00001\tEP0001-CUSA00001_00-COSTUME000000001\t-\t0\t/u/ac.pkg\n", f);
+        fputs("2\t10\t1\tgd\tCUSA00001\tEP0001-CUSA00001_00-PERSONA000000000\t01.00\t0\t/u/game.pkg\n", f);
+        fclose(f);
+    }
+    CHECK(catalog_load(&r, path) == 2);
+    CHECK(r.npkgs == 2 && !strcmp(r.pkgs[0].path, "/u/ac.pkg") && r.pkgs[0].state == CAT_UNREAD);
+    CHECK(r.npkgs == 2 && r.pkgs[1].state == CAT_OK);
+    catalog_free(&r);
     unlink(path);
 }
 

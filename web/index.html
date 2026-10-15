@@ -63,6 +63,10 @@ select{background:var(--panel);color:var(--fg);border:1px solid var(--line);bord
 .card.sel{border-color:var(--accent)}
 .selbar{position:sticky;bottom:0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--panel);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;margin-top:18px}
 .info select{font-size:13px;padding:4px 8px;margin-top:4px}
+.addons{font-size:13px;margin-top:4px}
+.addons summary{cursor:pointer;color:var(--muted)}
+.addons label{display:flex;gap:8px;align-items:flex-start;padding:4px 0}
+.addons small{display:block;color:var(--muted);word-break:break-all}
 table{width:100%;border-collapse:collapse;font-size:13px}
 td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-break:break-all}
 #toast{position:fixed;right:20px;bottom:20px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 16px;display:none;max-width:420px}
@@ -157,7 +161,9 @@ td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-b
 <div class="actions" style="padding:10px 0 0"><form method="dialog"><button>Close</button></form></div></dialog>
 <div id="toast"></div>
 <script>
-var games = [], busy = {}, drives = [], selected = {};
+var games = [], busy = {}, drives = [], selected = {}, openAddons = {};
+var MAX_RUNNING_ADDONS = 29;
+var addonLabels = {on: 'installed', adding: 'being added', off: 'turned off', deleted: 'deleted on the console'};
 var kinds = {duplicate: 'Same game on more than one place (this copy is not used)', 'addon-without-game': 'Add-on without its game',
   'update-without-game': 'Update without its game', unusable: 'Cannot be read (damaged, not a PS4 pkg, or not game/update/add-on)',
   incomplete: 'Incomplete: still copying or cut off; used once complete'};
@@ -287,6 +293,21 @@ function render() {
       });
       upd += '</select>';
     }
+    var adds = '';
+    if (g.addons && g.addons.length) {
+      var used = 0;
+      g.addons.forEach(function (a) { if (a.state !== 'off' && a.state !== 'deleted') used++; });
+      adds = '<details class="addons" data-t="' + tid + '"' + (openAddons[tid] ? ' open' : '') + '><summary>Add-ons: ' + used + ' of ' + g.addons.length + ' used</summary>';
+      g.addons.forEach(function (a) {
+        adds += '<label><input type="checkbox" data-addon="' + esc(a.content_id) + '"' + (a.state === 'on' || a.state === 'adding' ? ' checked' : '') +
+          (g.state === 'running' || g.state === 'internal' ? ' disabled' : '') + '> <span>' + esc(a.name || a.content_id.slice(20)) +
+          '<small>' + (a.name ? esc(a.content_id.slice(20)) + ' · ' : '') + esc(addonLabels[a.state] || a.state) + '</small></span></label>';
+      });
+      adds += '</details>';
+      if (used > MAX_RUNNING_ADDONS)
+        adds += '<div class="warn">' + used + ' add-ons are on: a running game only sees about ' + MAX_RUNNING_ADDONS +
+          ' (a console limit). Turn off the ones you do not need.</div>';
+    }
     var pick = g.state !== 'internal' && g.state !== 'running';
     html += '<div class="card' + (selected[tid] ? ' sel' : '') + '"><div class="art" style="background-image:url(/icon/' + tid + ')">' +
       '<span class="badge b-' + g.state + '">' + esc(labels[g.state] || g.state) + '</span>' +
@@ -294,7 +315,7 @@ function render() {
       '<div class="info"><div class="name">' + esc(g.name) + '</div>' +
       '<div class="meta">' + tid + ' · v' + esc(g.version) + (g.has_patch ? ' (with update)' : '') +
         (g.dlc ? ' · ' + g.dlc + ' add-on' + (g.dlc > 1 ? 's' : '') : '') + ' · ' + gb(g.size) + '</div>' +
-      '<div class="meta">' + esc(g.source) + (g.mount ? ' · mounted ' + g.mount : '') + '</div>' + upd +
+      '<div class="meta">' + esc(g.source) + (g.mount ? ' · mounted ' + g.mount : '') + '</div>' + upd + adds +
       (g.update_issue ? '<div class="warn">' + esc(g.update_issue) + '</div>' : '') + '</div>' +
       '<div class="actions">' + act + '</div></div>';
   });
@@ -357,6 +378,12 @@ $('grid').addEventListener('change', function (e) {
     if (t.checked) selected[tid] = 1; else delete selected[tid];
     t.closest('.card').classList.toggle('sel', t.checked);
     selbar();
+  } else if ((tid = t.getAttribute('data-addon'))) {
+    var cid = tid;
+    t.disabled = true;
+    api('/api/addon?content_id=' + cid + '&on=' + (t.checked ? 1 : 0), 'POST').then(function (j) { toast(j.message); })
+      .catch(function (err) { toast('Error: ' + err.message); })
+      .then(load);
   } else if ((tid = t.getAttribute('data-upd'))) {
     busy[tid] = 1; render();
     api('/api/update?title_id=' + tid + '&version=' + encodeURIComponent(t.value), 'POST').then(function (j) { toast(j.message); })
@@ -364,6 +391,12 @@ $('grid').addEventListener('change', function (e) {
       .then(function () { delete busy[tid]; load(); });
   }
 });
+/* "toggle" does not bubble: listen while it goes down */
+$('grid').addEventListener('toggle', function (e) {
+  var d = e.target;
+  if (d.tagName !== 'DETAILS') return;
+  if (d.open) openAddons[d.getAttribute('data-t')] = 1; else delete openAddons[d.getAttribute('data-t')];
+}, true);
 $('selbar').addEventListener('click', function (e) {
   var b = e.target.closest('button[data-bulk]');
   if (!b) return;

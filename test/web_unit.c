@@ -38,6 +38,9 @@ int app_remove(const char *tid, char *msg, size_t cap) { return snprintf(msg, ca
 void app_rescan(void) {}
 void app_diag(buf_t *out) { buf_printf(out, "diag \"line\"\n"); }
 void app_problems_json(buf_t *out) { buf_printf(out, "{\"problems\":[]}"); }
+int app_addon(const char *content_id, int on, char *msg, size_t cap) {
+    return snprintf(msg, cap, "%s=%d", content_id, on) < 0;
+}
 static const char *test_pin = "";
 const char *app_pin(void) { return test_pin; }
 int app_set_update(const char *tid, const char *ver, char *msg, size_t cap) {
@@ -157,6 +160,30 @@ static void test_update_choice(int listen_fd) {
     CHECK(strstr(resp, "{\"problems\":[]}") != NULL);
 }
 
+static void test_addon(int listen_fd) {
+    printf("add-on on/off parameters\n");
+    char resp[2048];
+    request(listen_fd, "POST /api/addon?content_id=UP0001-CUSA00001_00-ADDON00000000001&on=0 HTTP/1.1\r\n\r\n", resp,
+            sizeof(resp));
+    CHECK(strstr(resp, "UP0001-CUSA00001_00-ADDON00000000001=0") != NULL);
+    request(listen_fd, "POST /api/addon?on=1&content_id=UP0001-CUSA00001_00-ADDON00000000001 HTTP/1.1\r\n\r\n", resp,
+            sizeof(resp));
+    CHECK(strstr(resp, "UP0001-CUSA00001_00-ADDON00000000001=1") != NULL);
+    static const char *const bad[] = {
+        "POST /api/addon?content_id=UP0001-CUSA00001_00-ADDON0000000000/&on=0 HTTP/1.1\r\n\r\n",
+        "POST /api/addon?content_id=UP0001-CUSA00001_00-ADDON00000000001X&on=0 HTTP/1.1\r\n\r\n",
+        "POST /api/addon?content_id=UP0001-CUSA00001_00-ADDON0000000000&on=0 HTTP/1.1\r\n\r\n",
+        "POST /api/addon?content_id=UP0001-PPSA00001_00-ADDON00000000001&on=0 HTTP/1.1\r\n\r\n",
+        "POST /api/addon?content_id=UP0001-CUSA00001_00-ADDON00000000001&on=2 HTTP/1.1\r\n\r\n",
+        "POST /api/addon?content_id=UP0001-CUSA00001_00-ADDON00000000001 HTTP/1.1\r\n\r\n",
+        "POST /api/addon?content_id=../../../../etc/passwd000000000000&on=0 HTTP/1.1\r\n\r\n",
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        request(listen_fd, bad[i], resp, sizeof(resp));
+        CHECK(strstr(resp, "invalid") != NULL);
+    }
+}
+
 static void test_pin_guard(int listen_fd) {
     printf("panel PIN\n");
     char resp[2048];
@@ -213,6 +240,7 @@ int main(void) {
     if (listen_fd >= 0) {
         test_diag(listen_fd);
         test_update_choice(listen_fd);
+        test_addon(listen_fd);
         test_pin_guard(listen_fd);
         test_stalled_reader(listen_fd);
         test_silent_client(listen_fd);

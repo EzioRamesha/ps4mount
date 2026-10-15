@@ -303,7 +303,10 @@ static int dlc_cmp(const void *a, const void *b) {
     return strcmp(((const dlc_src_t *)a)->pkg.content_id, ((const dlc_src_t *)b)->pkg.content_id);
 }
 
-/* The add-ons the catalog grouped with the game. A second copy of an add-on is left out. */
+static int addon_off(const char *content_id);
+
+/* The add-ons the catalog grouped with the game. A second copy of an add-on, and add-ons
+ * deleted on the console or turned off in the panel, are left out. */
 static void dlc_open(title_src_t *t, const catalog_t *c, const cat_game_t *g) {
     for (int k = 0; k < g->ndlc && t->ndlc < MAX_DLC; k++) {
         const cat_pkg_t *p = &c->pkgs[g->dlc[k]];
@@ -312,7 +315,7 @@ static void dlc_open(title_src_t *t, const catalog_t *c, const cat_game_t *g) {
             dup |= !strcmp(t->dlc[i].pkg.content_id, p->content_id);
         char rm[96];
         snprintf(rm, sizeof(rm), STATE_DIR "/%s.removed", p->content_id);
-        if (dup || exists(rm)) /* removed: deleted on the console */
+        if (dup || exists(rm) || addon_off(p->content_id)) /* removed: deleted on the console */
             continue;
         if (t->ndlc == t->dlc_cap) { /* about 100 KB per add-on: grown as they are found */
             int cap = t->dlc_cap ? t->dlc_cap * 2 : 4;
@@ -1004,6 +1007,34 @@ static const char *update_choice(const char *tid) {
         if (!strcmp(g_upd[i].tid, tid))
             return g_upd[i].ver;
     return NULL;
+}
+
+/* Add-ons turned off in the panel (content IDs): left out when their game is added. */
+#define ADDONS_OFF_FILE STATE_DIR "/addons-off.txt"
+#define MAX_ADDONS_OFF 512
+
+static char g_off[MAX_ADDONS_OFF][37];
+static int g_noff;
+
+static int addons_off_add(const char *key, const char *value, void *arg) {
+    (void)value;
+    (void)arg;
+    if (g_noff == MAX_ADDONS_OFF)
+        return 1;
+    snprintf(g_off[g_noff++], sizeof(g_off[0]), "%s", key);
+    return 0;
+}
+
+static void addons_off_load(void) {
+    g_noff = 0;
+    kv_each(ADDONS_OFF_FILE, addons_off_add, NULL);
+}
+
+static int addon_off(const char *content_id) {
+    for (int i = 0; i < g_noff; i++)
+        if (!strcmp(g_off[i], content_id))
+            return 1;
+    return 0;
 }
 
 /* POLICY_ADD, POLICY_KEEP or POLICY_SKIP (see policy_decide); why gets the reason of a skip. */
@@ -2267,6 +2298,34 @@ static const info_t *info_load(const char *root, const char *tid) {
     return in;
 }
 
+/* The add-ons of g for the panel: content ID, name and state, "on" (in place for the
+ * console), "adding", "off" (turned off in the panel) or "deleted" (deleted on the console). */
+static void addons_json(buf_t *out, const catalog_t *cat, const cat_game_t *g) {
+    for (int k = 0; k < g->ndlc; k++) {
+        const cat_pkg_t *p = &cat->pkgs[g->dlc[k]];
+        int dup = 0;
+        for (int j = 0; j < k; j++)
+            dup |= !strcmp(cat->pkgs[g->dlc[j]].content_id, p->content_id);
+        if (dup)
+            continue;
+        char path[PATH_MAX];
+        const char *state = "adding";
+        snprintf(path, sizeof(path), STATE_DIR "/%s.removed", p->content_id);
+        if (addon_off(p->content_id))
+            state = "off";
+        else if (exists(path))
+            state = "deleted";
+        else {
+            snprintf(path, sizeof(path), HOLD_DIR "/addcont/%s/%s/ac.pkg", p->title_id, p->content_id + 20);
+            if (exists(path))
+                state = "on";
+        }
+        buf_printf(out, "%s{\"content_id\":\"%s\",\"name\":", k ? "," : "", p->content_id);
+        json_str(out, p->name);
+        buf_printf(out, ",\"state\":\"%s\"}", state);
+    }
+}
+
 void app_games_json(buf_t *out) {
     buf_printf(out, "{\"version\":");
     json_str(out, VERSION);
@@ -2324,6 +2383,8 @@ void app_games_json(buf_t *out) {
                 buf_printf(out, "%s", k ? "," : "");
                 json_str(out, cat->pkgs[g->updates[k]].app_ver);
             }
+            buf_printf(out, "],\"addons\":[");
+            addons_json(out, cat, g);
             buf_printf(out, "]}");
             first = 0;
         }
@@ -2378,6 +2439,47 @@ void app_problems_json(buf_t *out) {
         }
     }
     buf_printf(out, "]}");
+}
+
+int app_addon(const char *content_id, int on, char *msg, size_t cap) {
+    char tid[10] = "";
+    for (int i = 0; i < NUM_DRIVES && !tid[0]; i++) {
+        const catalog_t *c = &g_cat[i];
+        for (int gi = 0; gi < c->ngames && !tid[0]; gi++)
+            for (int k = 0; k < c->games[gi].ndlc; k++)
+                if (!strcmp(c->pkgs[c->games[gi].dlc[k]].content_id, content_id)) {
+                    snprintf(tid, sizeof(tid), "%s", c->games[gi].title_id);
+                    break;
+                }
+    }
+    if (!tid[0]) {
+        snprintf(msg, cap, "This add-on is not on any connected drive");
+        return -1;
+    }
+    managed_t *m = managed_by(tid, NULL);
+    if (m && m->running) {
+        snprintf(msg, cap, "Close the game first");
+        return -1;
+    }
+    if (kv_set(ADDONS_OFF_FILE, content_id, on ? NULL : "off")) {
+        snprintf(msg, cap, "Could not save the add-on choice");
+        return -1;
+    }
+    addons_off_load();
+    if (on) {
+        char rm[96];
+        snprintf(rm, sizeof(rm), STATE_DIR "/%s.removed", content_id);
+        unlink(rm); /* deleted on the console: install it again */
+    } else {
+        char hold[PATH_MAX];
+        snprintf(hold, sizeof(hold), HOLD_DIR "/addcont/%.9s/%s", content_id + 7, content_id + 20);
+        rm_tree(hold);
+    }
+    retry_clear(&g_retry, tid);
+    g_next_scan = 0;
+    printf("[web] add-on %s of %s turned %s\n", content_id, tid, on ? "on" : "off");
+    snprintf(msg, cap, on ? "The add-on will be installed again" : "The add-on is turned off; the game keeps the others");
+    return 0;
 }
 
 int app_set_update(const char *tid, const char *ver, char *msg, size_t cap) {
@@ -3428,6 +3530,7 @@ int main(void) {
     config_load();
     halt_load();
     updates_load();
+    addons_off_load();
     signal(SIGPIPE, SIG_IGN);
     check_firmware();
     if (g_reg_mode != REG_NONE && !g_halt[0])
