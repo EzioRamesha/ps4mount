@@ -43,4 +43,10 @@ int app_icon(const char *tid, buf_t *out) {
     buf_put(out, "PNG", 3);
     return 0;
 }
+void app_problems_json(buf_t *out) { buf_printf(out, "{\"problems\":[]}"); }
+int app_set_update(const char *tid, const char *ver, char *msg, size_t cap) {
+    char arg[64];
+    snprintf(arg, sizeof(arg), "%s=[%s]", tid, ver);
+    return record("update", arg, msg, cap);
+}
 void app_diag(buf_t *out) { buf_printf(out, "diag\n"); }

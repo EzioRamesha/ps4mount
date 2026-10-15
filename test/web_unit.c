@@ -37,6 +37,10 @@ int app_add(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, 
 int app_remove(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "%s", tid) < 0; }
 void app_rescan(void) {}
 void app_diag(buf_t *out) { buf_printf(out, "diag \"line\"\n"); }
+void app_problems_json(buf_t *out) { buf_printf(out, "{\"problems\":[]}"); }
+int app_set_update(const char *tid, const char *ver, char *msg, size_t cap) {
+    return snprintf(msg, cap, "%s=[%s]", tid, ver) < 0;
+}
 int app_exclude(const char *tid, int on, char *msg, size_t cap) {
     return snprintf(msg, cap, "%s %s", tid, on ? "excluded" : "included") < 0;
 }
@@ -134,12 +138,30 @@ static void test_diag(int listen_fd) {
     CHECK(strstr(resp, "{\"text\":\"diag \\\"line\\\"\\n\"}") != NULL);
 }
 
+static void test_update_choice(int listen_fd) {
+    printf("update choice parameters\n");
+    char resp[2048];
+    request(listen_fd, "POST /api/update?title_id=CUSA00001&version=01.05 HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "CUSA00001=[01.05]") != NULL);
+    request(listen_fd, "POST /api/update?title_id=CUSA00001&version=none HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "CUSA00001=[none]") != NULL);
+    request(listen_fd, "POST /api/update?title_id=CUSA00001&version= HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "CUSA00001=[]") != NULL);
+    request(listen_fd, "POST /api/update?title_id=CUSA00001&version=../x HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "invalid") != NULL);
+    request(listen_fd, "POST /api/update?title_id=CUSA00001&version=1.5 HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "invalid") != NULL);
+    request(listen_fd, "GET /api/problems HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "{\"problems\":[]}") != NULL);
+}
+
 int main(void) {
     signal(SIGPIPE, SIG_IGN);
     int listen_fd = web_listen();
     CHECK(listen_fd >= 0);
     if (listen_fd >= 0) {
         test_diag(listen_fd);
+        test_update_choice(listen_fd);
         test_stalled_reader(listen_fd);
         test_silent_client(listen_fd);
         close(listen_fd);

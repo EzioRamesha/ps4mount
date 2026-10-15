@@ -10,7 +10,21 @@
 #define CAT_MAX_SERVICES 7
 #define CAT_MAX_DEPTH 16
 
+#define CAT_MAX_UPDATES 8
+
 enum { CAT_UNREAD, CAT_BAD, CAT_OK };
+
+/* What a pkg is used for, set by catalog_group. */
+enum {
+    CAT_ROLE_NONE,   /* not grouped: unread or unusable */
+    CAT_ROLE_APP,    /* the game pkg of a game */
+    CAT_ROLE_PATCH,  /* the update used */
+    CAT_ROLE_DLC,    /* an add-on of a game */
+    CAT_ROLE_DUPE,   /* a second copy of a game pkg */
+    CAT_ROLE_ORPHAN, /* an add-on whose game is not on the drive */
+    CAT_ROLE_SPARE,  /* another update of a game, not used */
+    CAT_ROLE_NOGAME, /* an update whose game is not on the drive */
+};
 
 /* One .pkg file. Its details are read once and kept while its size and time stay the same. */
 typedef struct {
@@ -23,14 +37,21 @@ typedef struct {
     char services[CAT_MAX_SERVICES][20];  /* add-on content ID prefixes a game or update lists */
     int nservices;
     int seen;                             /* found by the current walk */
+    int role;                             /* CAT_ROLE_* */
 } cat_pkg_t;
 
 /* A game with its update and add-ons: indexes in catalog_t.pkgs. */
 typedef struct {
     char title_id[10];
     int app, patch; /* patch is -1 without an update */
+    int updates[CAT_MAX_UPDATES], nupdates; /* every update found, the one used included */
     int dlc[CAT_MAX_DLC], ndlc;
 } cat_game_t;
+
+/* The APP_VER of the update the user chose for a title, CAT_NO_UPDATE for none, or NULL
+ * for the highest version (also used when the chosen one is not on the drive). */
+typedef const char *(*cat_choose_fn)(const char *title_id);
+#define CAT_NO_UPDATE "none"
 
 typedef struct {
     cat_pkg_t *pkgs; /* sorted by path */
@@ -52,9 +73,10 @@ int catalog_walk(catalog_t *c, const char *root, cat_skip_fn skip, const char *c
 /* Reads the details of the unread pkgs. Returns how many were read. */
 int catalog_read(catalog_t *c);
 /* Groups the readable pkgs into games: the first game pkg of a title (by path), its update
- * with the highest APP_VER, and its add-ons (same title ID, or listed by the game or update
- * in SERVICE_ID_ADDCONT_ADD_n, as add-ons of another region). */
-void catalog_group(catalog_t *c);
+ * (the one choose names, else the highest APP_VER), and its add-ons (same title ID, or
+ * listed by the game or update in SERVICE_ID_ADDCONT_ADD_n, as add-ons of another region).
+ * Sets the role of every pkg. choose may be NULL. */
+void catalog_group(catalog_t *c, cat_choose_fn choose);
 const cat_game_t *catalog_game(const catalog_t *c, const char *title_id);
 /* Saves what was read of each pkg, so a restart does not read them all again. 0 on success. */
 int catalog_save(const catalog_t *c, const char *path);
