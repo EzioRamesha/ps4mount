@@ -42,3 +42,44 @@ int log_trim(const char *path, off_t max, off_t keep) {
         unlink(tmp);
     return rc ? -1 : 1;
 }
+
+#define TAIL_READ (64 << 10) /* bytes read from the end of the file */
+
+long log_tail(const char *path, int lines, char *out, size_t n) {
+    if (n)
+        out[0] = 0;
+    int fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return -1;
+    off_t end = lseek(fd, 0, SEEK_END), start = end > TAIL_READ ? end - TAIL_READ : 0;
+    char *b = malloc(TAIL_READ + 1);
+    ssize_t len = b && lseek(fd, start, SEEK_SET) == start ? read(fd, b, TAIL_READ) : -1;
+    close(fd);
+    if (len < 0) {
+        free(b);
+        return -1;
+    }
+    /* back from the end to the start of the last lines lines (a final line break ends the last one) */
+    ssize_t s = len;
+    if (s && b[s - 1] == '\n')
+        s--;
+    int found = 0;
+    while (s > 0 && found < lines) {
+        s--;
+        if (b[s] == '\n' && ++found == lines)
+            s++;
+    }
+    if (lines <= 0)
+        s = len;
+    while (n && (size_t)(len - s) > n - 1) { /* drop whole lines until it fits */
+        char *nl = memchr(b + s, '\n', (size_t)(len - s));
+        s = nl ? nl - b + 1 : len;
+    }
+    long copied = n ? (long)(len - s) : 0;
+    if (n) {
+        memcpy(out, b + s, (size_t)copied);
+        out[copied] = 0;
+    }
+    free(b);
+    return copied;
+}

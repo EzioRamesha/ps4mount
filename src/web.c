@@ -93,21 +93,12 @@ static int title_param(const char *path, char *tid) {
     return p ? title_at(p + 9, tid) : -1;
 }
 
-static void send_log(int fd) {
-    buf_t b = {0}, j = {0};
-    int f = open(LOG_PATH, O_RDONLY);
-    if (f >= 0) {
-        off_t end = lseek(f, 0, SEEK_END), start = end > 16384 ? end - 16384 : 0;
-        lseek(f, start, SEEK_SET);
-        char tmp[4096];
-        ssize_t n;
-        while ((n = read(f, tmp, sizeof(tmp))) > 0)
-            buf_put(&b, tmp, (size_t)n);
-        close(f);
-    }
-    buf_printf(&j, "{\"log\":\"");
-    for (size_t i = 0; i < b.len; i++) {
-        char c = (char)b.data[i];
+/* Replies {"<key>":"<text>"} with the text escaped for JSON. */
+static void reply_text_json(int fd, const char *key, const buf_t *b) {
+    buf_t j = {0};
+    buf_printf(&j, "{\"%s\":\"", key);
+    for (size_t i = 0; i < b->len; i++) {
+        char c = (char)b->data[i];
         if (c == '\n')
             buf_put(&j, "\\n", 2);
         else if (c == '"' || c == '\\') {
@@ -118,8 +109,23 @@ static void send_log(int fd) {
     }
     buf_printf(&j, "\"}");
     reply(fd, "200 OK", "application/json; charset=utf-8", j.data, j.len);
-    buf_free(&b);
     buf_free(&j);
+}
+
+static void send_log(int fd) {
+    buf_t b = {0};
+    int f = open(LOG_PATH, O_RDONLY);
+    if (f >= 0) {
+        off_t end = lseek(f, 0, SEEK_END), start = end > 16384 ? end - 16384 : 0;
+        lseek(f, start, SEEK_SET);
+        char tmp[4096];
+        ssize_t n;
+        while ((n = read(f, tmp, sizeof(tmp))) > 0)
+            buf_put(&b, tmp, (size_t)n);
+        close(f);
+    }
+    reply_text_json(fd, "log", &b);
+    buf_free(&b);
 }
 
 void web_serve(int listen_fd) {
@@ -237,6 +243,11 @@ void web_handle(int fd) {
         json_msg(fd, !rc, msg);
     } else if (!strcmp(path, "/api/log")) {
         send_log(fd);
+    } else if (!strcmp(path, "/api/diag")) {
+        buf_t b = {0};
+        app_diag(&b);
+        reply_text_json(fd, "text", &b);
+        buf_free(&b);
     } else if (post && !strcmp(path, "/api/stop")) {
         json_msg(fd, 1, "PS4Mount is stopping");
         app_stop();

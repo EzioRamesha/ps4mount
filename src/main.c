@@ -1170,12 +1170,31 @@ static void install_all(char (*tids)[10], int n) {
  * open with its own cache, and rows written from outside make it flag app.db as
  * corrupted (and rebuild it at the next boot). A title the system did not register
  * is tried again later. */
+/* Logs what the system and PS4Mount have of each add-on after a registration, so a log
+ * shows where an add-on the game does not see stops (reported below 6.00). */
+static void log_dlc_state(const title_src_t *t) {
+    for (int i = 0; i < t->ndlc; i++) {
+        const pkg_t *p = &t->dlc[i].pkg;
+        const char *label = p->content_id + 20;
+        char link[PATH_MAX], pdb[PATH_MAX], target[64], tables[128];
+        snprintf(link, sizeof(link), HOLD_DIR "/addcont/%s/%s/ac.pkg", p->title_id, label);
+        snprintf(pdb, sizeof(pdb), "/user/playgo/addcont/%s/00/d0.pdb", p->content_id);
+        snprintf(target, sizeof(target), "/user/addcont/%s", p->title_id);
+        int rows = db_addcont_rows(p->content_id, tables, sizeof(tables));
+        printf("[dlc] %s %s (%s): link %s, playgo %s, /user/addcont %s, addcont.db %d row(s)%s%s, mode %s\n",
+               t->app.title_id, p->content_id, t->dlc[i].data ? "data" : "license", exists(link) ? "ok" : "MISSING",
+               exists(pdb) ? "ok" : "MISSING", mounted_from(target, NULL, 0) ? "mounted" : "NOT mounted", rows,
+               rows > 0 ? " in " : "", tables, reg_mode_name());
+    }
+}
+
 static int register_finish(title_src_t *t) {
     const char *tid = t->app.title_id;
     if (!db_is_registered(tid)) {
         printf("[reg] %s: not registered by the system\n", tid);
         return -1;
     }
+    log_dlc_state(t);
     enforce_patch_sfo(t);
     char marker[64];
     snprintf(marker, sizeof(marker), STATE_DIR "/%s.src", tid);
@@ -2011,7 +2030,8 @@ static void start_delete_window(void) {
 static void trace_klog(const char *line) {
     static const char *keys[] = {"CRASH", "Trophy:Register", "_pfs_mount", "mountpfs", "PrepareProcessLaunch",
                                  "preLaunchCheck", "scePlayGoCore", "process_mount", "process_check", "sqlite",
-                                 "SQLITE", "corrupt", "Corrupt", "CORRUPT", "dbr", "DBR", NULL};
+                                 "SQLITE", "corrupt", "Corrupt", "CORRUPT", "dbr", "DBR", "AddcontInfo",
+                                 "Addcont", "addcont", NULL};
     for (int i = 0; keys[i]; i++)
         if (strstr(line, keys[i])) {
             printf("[klog] %.300s\n", line);
@@ -3205,6 +3225,54 @@ static void log_limit(void) {
     log_stop();
     log_start(LOG_FILE);
     printf("[main] log trimmed to its last %d KB\n", LOG_KEEP >> 10);
+}
+
+#define DIAG_LOG_LINES 200
+
+static int diag_excluded(const char *key, const char *value, void *arg) {
+    (void)value;
+    buf_printf(arg, " %s", key);
+    return 0;
+}
+
+void app_diag(buf_t *out) {
+    buf_printf(out, "%s\nFirmware %s, registration %s, klog %s\n", VERSION, g_fw_text, reg_mode_name(),
+               g_klog >= 0 ? (g_live ? "live" : "connected") : "not connected");
+    buf_printf(out, "Adding games: %s%s\n", g_halt[0] ? "PAUSED, " : "on", g_halt);
+    buf_printf(out, "Settings: organize=%d dlc=%d batch=%d/%d interval=%d folders=%d ignored=%d\n", g_cfg.organize,
+               g_cfg.dlc, g_cfg.batch, g_cfg.batch_size, g_cfg.interval, g_cfg.npaths, g_cfg.nignore);
+    for (int i = 0; i < NUM_DRIVES; i++) {
+        char root[32];
+        drive_root(i, root, sizeof(root));
+        if (!is_mountpoint(root))
+            continue;
+        const catalog_t *c = &g_cat[i];
+        int bad = 0;
+        for (int k = 0; k < c->npkgs; k++)
+            bad += c->pkgs[k].state == CAT_BAD;
+        struct statfs sf;
+        memset(&sf, 0, sizeof(sf));
+        unsigned long long total = 0, avail = 0;
+        if (!statfs(root, &sf)) {
+            total = (unsigned long long)sf.f_blocks * sf.f_bsize;
+            avail = (unsigned long long)sf.f_bavail * sf.f_bsize;
+        }
+        buf_printf(out, "Drive %s (%s): %d pkg(s), %d game(s), %d unusable, %d add-on(s) without game, %d duplicate(s), "
+                        "%.1f of %.1f GB free\n",
+                   root + 5, sf.f_fstypename, c->npkgs, c->ngames, bad, c->orphans, c->dupes, avail / 1073741824.0,
+                   total / 1073741824.0);
+    }
+    buf_printf(out, "Failed:");
+    for (int i = 0; i < g_retry.n; i++)
+        if (g_retry.items[i].tid[0])
+            buf_printf(out, " %s(%d)", g_retry.items[i].tid, g_retry.items[i].tries);
+    buf_printf(out, "\nNever added:");
+    kv_each(EXCLUDED_FILE, diag_excluded, out);
+    buf_printf(out, "\n\nLast %d log lines:\n", DIAG_LOG_LINES);
+    char *tail = malloc(64 << 10);
+    if (tail && log_tail(LOG_FILE, DIAG_LOG_LINES, tail, 64 << 10) >= 0)
+        buf_printf(out, "%s", tail);
+    free(tail);
 }
 
 int main(void) {

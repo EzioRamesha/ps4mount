@@ -43,3 +43,4 @@ int app_icon(const char *tid, buf_t *out) {
     buf_put(out, "PNG", 3);
     return 0;
 }
+void app_diag(buf_t *out) { buf_printf(out, "diag\n"); }

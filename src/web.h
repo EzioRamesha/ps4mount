@@ -29,6 +29,8 @@ void app_config_json(buf_t *out);
 int app_config_set(const char *body, char *msg, size_t cap);
 /* Fills an icon0.png for tid; 0 on success. */
 int app_icon(const char *tid, buf_t *out);
+/* Plain text report for bug reports: version, firmware, settings, drives, failures, log tail. */
+void app_diag(buf_t *out);
 
 int web_listen(void);
 /* Serves one connection on the listening socket. */

@@ -62,6 +62,60 @@ static void refresh(void) {
     }
 }
 
+#ifndef ADDCONT_DB
+#define ADDCONT_DB "/system_data/priv/mms/addcont.db"
+#endif
+
+/* Rows of table t that contain needle in a text column. */
+static int table_rows(sqlite3 *db, const char *t, const char *needle) {
+    char sql[160];
+    snprintf(sql, sizeof(sql), "SELECT * FROM \"%s\"", t);
+    sqlite3_stmt *st;
+    if (sqlite3_prepare_v2(db, sql, -1, &st, NULL) != SQLITE_OK)
+        return 0;
+    int rows = 0;
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        int cols = sqlite3_column_count(st), hit = 0;
+        for (int c = 0; c < cols && !hit; c++) {
+            const char *v = sqlite3_column_type(st, c) == SQLITE_TEXT ? (const char *)sqlite3_column_text(st, c) : NULL;
+            hit = v && strstr(v, needle);
+        }
+        rows += hit;
+    }
+    sqlite3_finalize(st);
+    return rows;
+}
+
+int db_addcont_rows(const char *needle, char *tables, size_t n) {
+    if (n)
+        tables[0] = 0;
+    sqlite3 *db = NULL;
+    if (sqlite3_open_v2("file:" ADDCONT_DB "?mode=ro&nolock=1", &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, NULL) !=
+        SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;
+    }
+    sqlite3_stmt *st;
+    int total = 0;
+    if (sqlite3_prepare_v2(db, "SELECT name FROM sqlite_master WHERE type='table'", -1, &st, NULL) != SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;
+    }
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        const char *t = (const char *)sqlite3_column_text(st, 0);
+        if (!t || strchr(t, '"'))
+            continue;
+        int rows = table_rows(db, t, needle);
+        total += rows;
+        size_t l = n ? strlen(tables) : 0;
+        if (rows && n && l + strlen(t) + 2 < n)
+            snprintf(tables + l, n - l, "%s%s", l ? "," : "", t);
+    }
+    sqlite3_finalize(st);
+    sqlite3_close(db);
+    return total;
+}
+
 int db_is_registered(const char *title_id) {
     refresh();
     for (int i = 0; i < g_ntitles; i++)
