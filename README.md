@@ -40,6 +40,9 @@ The web panel, opened from the **Media** tab:
 - Installs add-ons (DLC), with data or unlock-only. An add-on is matched to its game by title ID, or by
   the add-on IDs the game lists (so add-ons of another region of the same game work too).
 - Adds many games in groups, so a drive with dozens of games does not overload the console.
+- Stops adding games as soon as the system reports a corrupted database, and stops retrying a game
+  that failed 3 times, so a problem never turns into an endless loop (see [Safety](#safety)).
+- Remembers what it read of each `.pkg`, so after a restart only new or changed files are read.
 - Games run from the drive; no internal storage is used for the packages.
 - Deleting a game from the PS5 removes it from the library only. The `.pkg` is never deleted.
 - Notifications while scanning (how many games were found on each drive) and for added and removed
@@ -104,7 +107,9 @@ package it uses into a folder per game on the same drive, as earlier versions di
 /ps4/CUSAxxxxx/addcont/CUSAyyyyy/<LABEL>/ac.pkg add-on (optional)
 ```
 
-Games already in this layout keep working with the setting off.
+Games already in this layout keep working with the setting off. Each `CUSAxxxxx` folder also gets a
+`<game name>.txt` file with the title, version and the original file names, so the folders can be told
+apart on a computer.
 
 ### Web panel
 
@@ -119,12 +124,16 @@ the same network. The panel shows every game found on the connected drives, with
 | Adding | Being added to the library |
 | Installed on console | A normal installation of this game exists; PS4Mount leaves it alone |
 | On another drive | The same game is also on another connected drive, which is the one used |
+| Failed | Adding it failed 3 times; it is not tried again until you click **Try again** or **Scan for games** |
+
+Games can be searched by name or title ID and sorted by name, state or location.
 
 Buttons:
 
 - **Remove from library**: removes the game from the home screen. The `.pkg` stays on the drive.
 - **Move pkgs back**: removes the game from the library and moves its `.pkg` files back to where they
-  came from (see [Moving pkgs back](#moving-pkgs-back)).
+  came from (see [Moving pkgs back](#moving-pkgs-back)). Only shown for games moved into the ps4 folder.
+- **Try again**: tries a failed game again.
 - **Add to library**: adds a removed game back.
 - **Scan for games**: checks the drives now and shows how many games were found on each one.
 - **Settings**: see below.
@@ -148,6 +157,17 @@ The settings also have **Move all games back** and **Pick up moved-back pkgs aga
 Settings are saved in `/data/ps4mount/config.txt`.
 
 The panel has no password. Anyone on your local network can open it.
+
+### Safety
+
+If the system log reports a corrupted system database (`DbCorruptionOccured`), PS4Mount stops adding
+games at once: games already in the library keep working, but no new game is registered, even after a
+restart of PS4Mount. The panel then shows a red banner. Restart the console, check that the database
+message is gone, then click **Resume adding games**. This needs klogsrv or access to `/dev/klog` (see
+[Requirements](#requirements)).
+
+A game that fails to be added is tried again after 5 minutes, at most 3 times. After that it shows as
+**Failed** until you click **Try again** or **Scan for games**.
 
 ### Removing games
 
@@ -293,7 +313,8 @@ release with `ps4mount.elf` and its SHA-256 checksum attached.
 | --- | --- |
 | `src/main.c` | Daemon: drive scan, registration, mounts, klog events, panel actions |
 | `src/pkg.c` | PKG reader and fake-key entry decryption |
-| `src/catalog.c` | Finds the `.pkg` files in every folder of a drive and groups them per game |
+| `src/catalog.c` | Finds the `.pkg` files in every folder of a drive, groups them per game and keeps what was read in `/data/ps4mount/catalog-<drive>.txt` |
+| `src/safety.c` | Database corruption reports and the limit on retries |
 | `src/build.c` | Generators for the install files (app/patch metadata, PlayGo records, license) |
 | `src/db.c` | Library rows (`app.db`, `appinfo.db`) |
 | `src/crypto.c` | SHA-256, AES-128-CBC, CRC32C, RSA-2048 |
