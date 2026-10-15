@@ -224,7 +224,7 @@ es: {
 'Incomplete: still copying or cut off; used once complete': 'Incompleto: aún copiándose o cortado; se usará cuando esté completo',
 'Ready': 'Listo', 'Running': 'En ejecución', 'Not in library': 'No está en la biblioteca',
 'Installed on console': 'Instalado en la consola', 'Adding': 'Añadiendo', 'On another drive': 'En otra unidad',
-'Failed': 'Error', 'Retrying': 'Reintentando', 'Show only these games': 'Mostrar solo estos juegos', 'Failed; trying again in {n} s': 'Falló; se reintenta en {n} s', 'Never added': 'No se añade nunca',
+'Failed': 'Error', 'Retrying': 'Reintentando', 'Show only these games': 'Mostrar solo estos juegos', 'Play': 'Jugar', 'Failed; trying again in {n} s': 'Falló; se reintenta en {n} s', 'Never added': 'No se añade nunca',
 'Wrong PIN. PIN of the PS4Mount panel:': 'PIN incorrecto. PIN del panel de PS4Mount:',
 'PIN of the PS4Mount panel:': 'PIN del panel de PS4Mount:', 'New: {tag}': 'Nueva: {tag}',
 'A newer PS4Mount is available': 'Hay una versión más reciente de PS4Mount',
@@ -321,7 +321,7 @@ pt: {
 'Incomplete: still copying or cut off; used once complete': 'Incompleto: ainda copiando ou cortado; será usado quando estiver completo',
 'Ready': 'Pronto', 'Running': 'Em execução', 'Not in library': 'Fora da biblioteca',
 'Installed on console': 'Instalado no console', 'Adding': 'Adicionando', 'On another drive': 'Em outra unidade',
-'Failed': 'Falhou', 'Retrying': 'Tentando de novo', 'Show only these games': 'Mostrar só estes jogos', 'Failed; trying again in {n} s': 'Falhou; tenta de novo em {n} s', 'Never added': 'Nunca adicionado',
+'Failed': 'Falhou', 'Retrying': 'Tentando de novo', 'Show only these games': 'Mostrar só estes jogos', 'Play': 'Jogar', 'Failed; trying again in {n} s': 'Falhou; tenta de novo em {n} s', 'Never added': 'Nunca adicionado',
 'Wrong PIN. PIN of the PS4Mount panel:': 'PIN incorreto. PIN do painel do PS4Mount:',
 'PIN of the PS4Mount panel:': 'PIN do painel do PS4Mount:', 'New: {tag}': 'Nova: {tag}',
 'A newer PS4Mount is available': 'Há uma versão mais nova do PS4Mount',
@@ -418,7 +418,7 @@ fr: {
 'Incomplete: still copying or cut off; used once complete': 'Incomplet : copie en cours ou coupée ; utilisé une fois complet',
 'Ready': 'Prêt', 'Running': 'En cours', 'Not in library': 'Hors bibliothèque',
 'Installed on console': 'Installé sur la console', 'Adding': 'Ajout en cours', 'On another drive': 'Sur un autre disque',
-'Failed': 'Échec', 'Retrying': 'Nouvel essai', 'Show only these games': 'Montrer seulement ces jeux', 'Failed; trying again in {n} s': 'Échec ; nouvel essai dans {n} s', 'Never added': 'Jamais ajouté',
+'Failed': 'Échec', 'Retrying': 'Nouvel essai', 'Show only these games': 'Montrer seulement ces jeux', 'Play': 'Jouer', 'Failed; trying again in {n} s': 'Échec ; nouvel essai dans {n} s', 'Never added': 'Jamais ajouté',
 'Wrong PIN. PIN of the PS4Mount panel:': 'PIN incorrect. PIN du panneau PS4Mount :',
 'PIN of the PS4Mount panel:': 'PIN du panneau PS4Mount :', 'New: {tag}': 'Nouveau : {tag}',
 'A newer PS4Mount is available': 'Une version plus récente de PS4Mount est disponible',
@@ -644,7 +644,8 @@ function render() {
     if (g.state === 'removed') act = '<button class="primary" data-a="mount" data-t="' + tid + '">' + t('Add to library') + '</button>';
     else if (g.state === 'failed') act = '<button class="primary" data-a="mount" data-t="' + tid + '">' + t('Try again') + '</button>';
     else if (g.state === 'excluded') act = '<button class="primary" data-a="include" data-t="' + tid + '">' + t('Allow') + '</button>';
-    else if (g.state === 'ready') act = '<button class="danger" data-a="unmount" data-t="' + tid + '">' + t('Remove from library') + '</button>';
+    else if (g.state === 'ready') act = '<button class="primary" data-a="launch" data-t="' + tid + '">' + t('Play') + '</button>' +
+      '<button class="danger" data-a="unmount" data-t="' + tid + '">' + t('Remove from library') + '</button>';
     else if (g.state === 'running') act = '<button disabled>' + t('Close the game to remove it') + '</button>';
     if (g.state !== 'excluded' && g.state !== 'internal' && g.state !== 'running')
       act += '<button data-a="exclude" data-t="' + tid + '">' + t('Never add') + '</button>';

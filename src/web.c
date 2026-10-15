@@ -332,6 +332,13 @@ void web_handle(int fd) {
             int rc = app_remove(tid, msg, sizeof(msg));
             json_msg(fd, !rc, msg);
         }
+    } else if (post && !strncmp(path, "/api/launch", 11)) {
+        if (title_param(path, tid))
+            json_msg(fd, 0, "invalid title_id");
+        else {
+            int rc = app_launch(tid, msg, sizeof(msg));
+            json_msg(fd, !rc, msg);
+        }
     } else if (post && (!strncmp(path, "/api/exclude", 12) || !strncmp(path, "/api/include", 12))) {
         if (title_param(path, tid))
             json_msg(fd, 0, "invalid title_id");

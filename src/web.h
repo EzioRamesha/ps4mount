@@ -13,6 +13,8 @@
 void app_games_json(buf_t *out);
 int app_add(const char *tid, char *msg, size_t cap);
 int app_remove(const char *tid, char *msg, size_t cap);
+/* Starts a ready game on the console. 0 when the system accepted the launch. */
+int app_launch(const char *tid, char *msg, size_t cap);
 /* on: removes the game from the library and never adds it again; off: allows it again. 0 on success. */
 int app_exclude(const char *tid, int on, char *msg, size_t cap);
 /* Scans every drive now, or only drive ("usb0" ... "ext1") when not NULL. 0 when started. */
