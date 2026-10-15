@@ -595,7 +595,11 @@ translatePage();
   })(dlgs[i]);
 })();
 function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
-function gb(n) { return (n / 1073741824).toFixed(n >= 10737418240 ? 0 : 1) + ' GB'; }
+function gb(n) {
+  if (n < 1048576) return Math.ceil(n / 1024) + ' KB';
+  if (n < 1073741824) return (n / 1048576).toFixed(n >= 10485760 ? 0 : 1) + ' MB';
+  return (n / 1073741824).toFixed(n >= 10737418240 ? 0 : 1) + ' GB';
+}
 function toast(msg) { var t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(function () { t.style.display = 'none'; }, 4000); }
 
 /* Panel PIN: sent as X-PIN, kept in this browser only. */
