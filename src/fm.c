@@ -59,8 +59,10 @@ int fm_name_ok(const char *name) {
     size_t n = strlen(name);
     if (n == 0 || n > 240)
         return 0;
-    if (!strcmp(name, ".") || !strcmp(name, ".."))
-        return 0;
+    if (!strcmp(name, ".") || !strcmp(name, "..") || !strcmp(name, ".trash"))
+        return 0; /* ".trash" is our own Trash bin's name (see TRASH_DIR_NAME in main.c):
+                   * a folder made with that name would be indistinguishable from it and,
+                   * at a drive root, become it. */
     for (size_t i = 0; i < n; i++)
         if ((unsigned char)name[i] < 0x20 || name[i] == '/')
             return 0;

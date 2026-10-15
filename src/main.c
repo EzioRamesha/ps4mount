@@ -3086,18 +3086,31 @@ int app_launch(const char *tid, char *msg, size_t cap) {
 
 /* --- file manager: listing a folder with catalog details --- */
 
-/* 1 when path is a pkg of a registered game, or a folder holding one (so it must not be
- * deleted or moved). name gets the first such game's title ID when non-NULL (the catalog
- * does not keep the game's TITLE, only an add-on's). The update used and the add-ons are
- * resolved with catalog_patch/catalog_dlc_of (not g->patch/g->dlc[] directly) because with
- * the cross-drive setting on they may live on another drive than the game (g_cat[*].xpatch,
- * xdlc[]); g->app is always local, so it needs no resolving. */
+/* 1 when path is a pkg of a registered (or being-registered) game, or a folder holding one
+ * (so it must not be deleted or moved). name gets the first such game's title ID when
+ * non-NULL (the catalog does not keep the game's TITLE, only an add-on's). The update used
+ * and the add-ons are resolved with catalog_patch/catalog_dlc_of (not g->patch/g->dlc[]
+ * directly) because with the cross-drive setting on they may live on another drive than the
+ * game (g_cat[*].xpatch, xdlc[]); g->app is always local, so it needs no resolving.
+ *
+ * db_is_registered() alone misses the window where a game's files are already live on the
+ * console but the database row has not appeared yet: register_prepare() calls place_files()
+ * (writes the HOLD_DIR symlinks) and mount_title() (mounts them over /user/app/<TID>) and
+ * only then manage() (adds the title to g_managed[]), all before install_all() ever pumps
+ * events and lets the panel run a request; db_is_registered() does not turn true until
+ * ShellCore's AppInstallAll call that install_all() waits for returns. So managed_by() is
+ * checked too: it is true exactly from register_prepare()'s manage() call (files already
+ * placed and mounted) through to app_remove()/the uninstall-end klog handler clearing
+ * m->used, which covers the whole time this title's files are live, registered or not.
+ * marker_matches()/hold_ready() (what title_state's f.installed uses) do not work here: the
+ * marker file is written by register_finish(), which only runs after registration already
+ * succeeded, so it is never set during the window this check needs to cover. */
 static int fm_protected(const char *path, const char **name) {
     for (int d = 0; d < NUM_DRIVES; d++) {
         const catalog_t *cat = &g_cat[d];
         for (int gi = 0; gi < cat->ngames; gi++) {
             const cat_game_t *g = &cat->games[gi];
-            if (!db_is_registered(g->title_id))
+            if (!db_is_registered(g->title_id) && !managed_by(g->title_id, NULL))
                 continue;
             if (fm_covers(path, cat->pkgs[g->app].path)) {
                 if (name)
@@ -3124,11 +3137,12 @@ static int fm_protected(const char *path, const char **name) {
     return 0;
 }
 
-/* Every pkg path that belongs to a registered game, collected once so a listing does not
- * re-walk every catalog for every entry (fm_protected above does that walk for a single path;
- * this does the same traversal once and gathers every path it would have matched). Skips a
- * game exactly where fm_protected would skip it (not registered), then collects the game pkg,
- * the resolved update (catalog_patch, which also finds a cross-drive update) and every add-on
+/* Every pkg path that belongs to a registered (or being-registered) game, collected once so a
+ * listing does not re-walk every catalog for every entry (fm_protected above does that walk
+ * for a single path; this does the same traversal once and gathers every path it would have
+ * matched). Skips a game exactly where fm_protected would skip it (not registered and not in
+ * g_managed[], see fm_protected's comment), then collects the game pkg, the resolved update
+ * (catalog_patch, which also finds a cross-drive update) and every add-on
  * (catalog_dlc_of, local and cross-drive). Returns how many paths were collected; the paths
  * point into the catalogs, which do not change while one listing runs.
  *
@@ -3147,7 +3161,7 @@ static int fm_protected_paths(const char **out, int max, int *truncated) {
         const catalog_t *cat = &g_cat[d];
         for (int gi = 0; gi < cat->ngames; gi++) {
             const cat_game_t *g = &cat->games[gi];
-            if (!db_is_registered(g->title_id))
+            if (!db_is_registered(g->title_id) && !managed_by(g->title_id, NULL))
                 continue;
             if (n >= max) {
                 *truncated = 1;
@@ -3188,6 +3202,10 @@ int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap) {
     }
     int di = fm_drive_of(path);
     const catalog_t *cat = di >= 0 ? &g_cat[di] : NULL;
+    /* ".trash" (see TRASH_DIR_NAME below) is only ever the drive's Trash bin at its root; a
+     * folder named ".trash" deeper in the tree is just a folder (fm_name_ok refuses making a
+     * new one, but one from before that rule, or made by another tool, must stay reachable). */
+    int at_root = fm_is_drive_root(path);
 
     /* The protected-path set cannot change while this one listing runs, so it is collected
      * once here instead of once per entry (that used to mean every entry re-walked every
@@ -3222,10 +3240,14 @@ int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap) {
     json_str(out, path);
     buf_printf(out, ",\"entries\":[");
     struct dirent *e;
-    int first = 1, count = 0;
-    while (count < 2000 && (e = readdir(d))) {
-        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || !strcmp(e->d_name, ".trash"))
+    int first = 1, count = 0, truncated = 0;
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || (at_root && !strcmp(e->d_name, ".trash")))
             continue;
+        if (count >= 2000) {
+            truncated = 1; /* at least one more real entry exists past the cap */
+            break;
+        }
         char full[PATH_MAX + 256]; /* matches the mutation functions below, so long entries stay visible */
         if (snprintf(full, sizeof(full), "%s/%s", path, e->d_name) >= (int)sizeof(full))
             continue; /* name too long to build a safe path, leave it out */
@@ -3272,8 +3294,25 @@ int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap) {
     }
     closedir(d);
     free(ppaths);
-    buf_printf(out, "]}");
+    buf_printf(out, "],\"truncated\":%s}", truncated ? "true" : "false");
     return 0;
+}
+
+/* Queues a rescan a few seconds out instead of right away, so a run of several file manager
+ * operations (drag-reorganizing a folder, say) collapses into one scan instead of stalling the
+ * panel on scan_all() after every single mutation. Only the drive the mutation touched needs a
+ * fresh walk; reuses the g_scan_only mechanism app_rescan already has for "scan just this
+ * drive", widening it to every drive if a different drive is already queued so neither change
+ * is lost. Never touches a pending explicit "Scan for games" (app_rescan sets g_manual_scan),
+ * which must still run immediately and scan what the user asked for. */
+static void fm_queue_scan(int drive) {
+    if (g_manual_scan)
+        return;
+    if (g_next_scan > time(NULL) && g_scan_only != drive)
+        g_scan_only = -1;
+    else
+        g_scan_only = drive;
+    g_next_scan = time(NULL) + 3;
 }
 
 /* --- file manager: mutations (make, rename, delete, move) ---
@@ -3281,7 +3320,13 @@ int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap) {
  * caller-checked with fm_name_ok, so it never contains '/' or "." / "..". A combined path can
  * still reach dir's 1023 chars plus a name's 240, so every buffer below is sized PATH_MAX + 256
  * and every snprintf that joins them is checked: on would-be truncation the mutation fails
- * closed instead of risking an operation on a path that isn't the one the caller asked for. */
+ * closed instead of risking an operation on a path that isn't the one the caller asked for.
+ * app_fm_rename/app_fm_delete/app_fm_move also refuse outright while g_install_busy || g_adding
+ * (install_all() pumps events, including panel requests, during that window; see app_launch's
+ * own check and fm_protected's comment above): fm_protected alone already covers a game whose
+ * files are already placed, but a pkg about to be used by a game not yet even in the catalog
+ * (its register_prepare() has not been reached this batch) is not something fm_protected can
+ * see at all, so the blanket refusal covers that case too. */
 
 int app_fm_mkdir(const char *dir, const char *name, char *msg, size_t cap) {
     char full[PATH_MAX + 256];
@@ -3294,13 +3339,17 @@ int app_fm_mkdir(const char *dir, const char *name, char *msg, size_t cap) {
         snprintf(msg, cap, err == EEXIST ? "%s already exists" : "Could not create %s", name);
         return -1;
     }
-    g_next_scan = 0;
+    fm_queue_scan(fm_drive_of(dir));
     printf("[fm] mkdir %s\n", full);
     snprintf(msg, cap, "Folder %s created", name);
     return 0;
 }
 
 int app_fm_rename(const char *path, const char *name, char *msg, size_t cap) {
+    if (g_install_busy || g_adding) {
+        snprintf(msg, cap, "Games are being added; try again in a moment");
+        return -1;
+    }
     const char *game = NULL;
     if (fm_protected(path, &game)) {
         snprintf(msg, cap, "%s is used by %s; remove the game from the library first",
@@ -3323,7 +3372,7 @@ int app_fm_rename(const char *path, const char *name, char *msg, size_t cap) {
         snprintf(msg, cap, "Could not rename: %s", strerror(err));
         return -1;
     }
-    g_next_scan = 0;
+    fm_queue_scan(fm_drive_of(path));
     printf("[fm] rename %s -> %s\n", path, dst);
     snprintf(msg, cap, "Renamed to %s", name);
     return 0;
@@ -3368,6 +3417,10 @@ static int fm_rm_tree(const char *path) {
  * fm_path_ok first), which guarantees it sits on a known drive, so fm_drive_of(path) is safe to
  * use unchecked here, same as app_fm_rename/app_fm_move already trust it. */
 int app_fm_delete(const char *path, char *msg, size_t cap) {
+    if (g_install_busy || g_adding) {
+        snprintf(msg, cap, "Games are being added; try again in a moment");
+        return -1;
+    }
     const char *game = NULL;
     if (fm_protected(path, &game)) {
         snprintf(msg, cap, "Used by %s; remove the game from the library first", game ? game : "a game");
@@ -3415,7 +3468,7 @@ int app_fm_delete(const char *path, char *msg, size_t cap) {
         write_file(meta, body, (size_t)n, 0600); /* best-effort: a missing sidecar only affects age-purge, not safety */
     } /* truncation here would risk writing a sidecar at the wrong path; skip it rather than guess */
 
-    g_next_scan = 0;
+    fm_queue_scan(di);
     printf("[fm] trashed %s -> %s\n", path, dst);
     snprintf(msg, cap, "%s moved to Trash", base);
     return 0;
@@ -3425,6 +3478,10 @@ int app_fm_delete(const char *path, char *msg, size_t cap) {
  * fm_protected and before anything destructive, so a folder is never moved into itself or one
  * of its own subfolders regardless of in-use state. */
 int app_fm_move(const char *src, const char *dst, char *msg, size_t cap) {
+    if (g_install_busy || g_adding) {
+        snprintf(msg, cap, "Games are being added; try again in a moment");
+        return -1;
+    }
     const char *game = NULL;
     if (fm_drive_of(src) != fm_drive_of(dst)) {
         snprintf(msg, cap, "Moving between drives is not supported yet");
@@ -3457,7 +3514,7 @@ int app_fm_move(const char *src, const char *dst, char *msg, size_t cap) {
         snprintf(msg, cap, "Could not move: %s", strerror(err));
         return -1;
     }
-    g_next_scan = 0;
+    fm_queue_scan(fm_drive_of(src));
     printf("[fm] move %s -> %s\n", src, full);
     snprintf(msg, cap, "Moved to %s", dst);
     return 0;

@@ -1031,6 +1031,7 @@ static void test_fm(void) {
     CHECK(!fm_is_drive_root("/mnt/usb0/games"));
     CHECK(fm_name_ok("Bloodborne v1.09.pkg") && fm_name_ok("games"));
     CHECK(!fm_name_ok("") && !fm_name_ok(".") && !fm_name_ok(".."));
+    CHECK(!fm_name_ok(".trash")); /* our own Trash bin's name: never a user-creatable folder */
     CHECK(!fm_name_ok("a/b") && !fm_name_ok("a\tb"));
     CHECK(fm_covers("/mnt/usb0/games", "/mnt/usb0/games"));
     CHECK(fm_covers("/mnt/usb0/games", "/mnt/usb0/games/sub/x.pkg"));
