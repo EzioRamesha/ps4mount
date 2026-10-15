@@ -859,6 +859,21 @@ static void test_speed_measure(void) {
     CHECK(speed_measure(path, size, 2 * SPEED_CHUNK, 20, 0, &mbps, &done) == -1);
 }
 
+static void test_playgo_bounds(void) {
+    printf("playgo: table offsets that wrap past 4 GB are refused\n");
+    uint8_t pg[0x100] = {0};
+    memcpy(pg, "plgo", 4);
+    pg[0x0a] = 1;
+    pg[0x0e] = 1;
+    /* scenario table (index 4): offset 0xFFFFFF00 + size 0x200 wraps to 0x100 in 32 bits */
+    uint8_t *e = pg + 0xc0 + 4 * 8;
+    e[0] = 0x00, e[1] = 0xff, e[2] = 0xff, e[3] = 0xff;
+    e[4] = 0x00, e[5] = 0x02;
+    buf_t b = {0};
+    CHECK(build_app_xml(&b, pg, sizeof(pg)) == -1);
+    buf_free(&b);
+}
+
 static void test_policy(void) {
     printf("policy: what to do with a game\n");
     const char *why;
@@ -1016,6 +1031,7 @@ int main(void) {
     test_space_low();
     test_speed_verdict();
     test_speed_measure();
+    test_playgo_bounds();
     test_fm();
     printf("%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;
