@@ -307,6 +307,13 @@ yourself.
 - Load PS4Mount soon after every boot. While it is not running, the console does not see the
   packages and may hide the games; they come back as soon as PS4Mount runs again.
 - Do not unplug the drive while a game is running.
+- Keep only one copy of PS4Mount in the payload manager and in the autoload list. When a second
+  copy starts while one is already running, it now says so on screen instead of stopping without
+  a word, which used to look like the payload simply had not loaded.
+- If the console shuts down or freezes while a game is being added or started, PS4Mount notices on
+  the next start and holds that game back instead of trying it again on every boot. The game says
+  so on its card in the panel; **Try again** (or **Play**, for a game that would not start) runs it
+  once more when you are ready.
 - **Two or more drives connected at the same time can make the whole console interface slow** (home
   screen, Control Center, game hubs), with or without PS4Mount: the system checks its storage devices
   more often with each extra drive or partition. A drive with extra partitions (for example a boot
