@@ -69,6 +69,23 @@ select{background:var(--panel);color:var(--fg);border:1px solid var(--line);bord
 .addons summary{cursor:pointer;color:var(--muted)}
 .addons label{display:flex;gap:8px;align-items:flex-start;padding:4px 0}
 .addons small{display:block;color:var(--muted);word-break:break-all}
+.fmbar{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-bottom:10px;color:var(--muted);font-size:13px}
+.fmbar button{min-height:32px;padding:2px 10px;font-size:13px}
+.fmlist{max-height:60vh;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.fmrow{display:flex;gap:10px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);cursor:pointer}
+.fmrow:last-child{border-bottom:none}
+.fmrow:hover{background:#1d222b}
+.fmicon{border-radius:6px;background:#0b0d11 center/cover no-repeat;flex:none;display:flex;align-items:center;justify-content:center}
+.fmrow .fmicon{width:36px;height:36px;font-size:18px}
+.fmrow .fmname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fmrow small{display:block;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fmrow .fmsize{color:var(--muted);font-size:12px;flex:none}
+/* #fmnew sits beside a Close wrapped in a display:contents form for the "method=dialog"
+   close pattern used everywhere else; that Close button is still the form's only child, so
+   the shared button:only-child{grid-column:1/-1} rule above would wrongly give it the whole
+   row. Put it back in the normal flow here so the two sit side by side like other dialogs
+   with two plain actions. */
+#fmdlg .actions button:only-child{grid-column:auto}
 table{width:100%;border-collapse:collapse;font-size:13px}
 td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-break:break-all}
 form.settings fieldset{border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:12px}
@@ -93,6 +110,7 @@ form.settings input.num{width:6em}
     <button id="rescan" class="primary">Scan for games</button>
     <button id="speedbtn" hidden>Test speed</button>
     <button id="probbtn">Problems</button>
+    <button id="filesbtn">Files</button>
     <button id="settingsbtn">Settings</button>
     <button id="logbtn">Log</button>
     <button id="diagbtn">Diagnostics</button>
@@ -179,6 +197,24 @@ form.settings input.num{width:6em}
 <p style="color:var(--muted);font-size:13px">Pkgs that are found but not used. Nothing here is deleted or changed by PS4Mount.</p>
 <div id="problems" style="max-height:60vh;overflow:auto"></div>
 <div class="actions" style="padding:10px 0 0"><form method="dialog"><button>Close</button></form></div></dialog>
+<dialog id="fmdlg"><h3>Files</h3>
+<div class="fmbar"><span id="fmcrumbs"></span><div class="warn" id="fmmovebar" style="flex-basis:100%" hidden></div></div>
+<div id="fmlist" class="fmlist"></div>
+<div class="actions" style="padding:10px 0 0">
+  <button id="fmnew">New folder</button>
+  <form method="dialog" style="display:contents"><button>Close</button></form>
+</div></dialog>
+<dialog id="fmsheet"><h3 id="fms-title"></h3>
+<div id="fms-body" style="display:flex;gap:14px;align-items:flex-start">
+  <div class="fmicon" id="fms-icon" style="width:72px;height:72px;font-size:34px"></div>
+  <div id="fms-meta" style="font-size:14px;color:var(--muted)"></div>
+</div>
+<div class="actions" style="padding:14px 0 0">
+  <button id="fms-rename">Rename</button>
+  <button id="fms-move">Move</button>
+  <button class="danger" id="fms-delete">Delete</button>
+  <form method="dialog" style="display:contents"><button>Close</button></form>
+</div></dialog>
 <div id="toast" role="status" aria-live="polite"></div>
 <script>
 var games = [], busy = {}, drives = [], selected = {}, openAddons = {}, stateFilter = '';
@@ -274,7 +310,13 @@ es: {
 'Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.': '¿Volver a usar los pkgs devueltos? Se mueven a la carpeta ps4 y se añaden en la próxima búsqueda.',
 'The PIN must be 4 to 8 digits': 'El PIN debe tener de 4 a 8 dígitos',
 'Stop PS4Mount? The games stay unavailable until it is loaded again.': '¿Detener PS4Mount? Los juegos no estarán disponibles hasta que se vuelva a cargar.',
-'Game': 'Juego', 'Update': 'Actualización',
+'Files': 'Archivos', 'New folder': 'Nueva carpeta', 'Folder name': 'Nombre de la carpeta', 'New name': 'Nuevo nombre',
+'Empty folder': 'Carpeta vacía', 'in use': 'en uso', 'Move here': 'Mover aquí', 'Move': 'Mover', 'Rename': 'Renombrar', 'Delete': 'Borrar',
+'In use by a game in the library: it cannot be moved or deleted': 'En uso por un juego de la biblioteca: no se puede mover ni borrar',
+'Delete {what}? This cannot be undone.': '¿Borrar {what}? Esto no se puede deshacer.',
+'Moving {name}. Open the destination folder and press Move here.': 'Moviendo {name}. Abre la carpeta de destino y pulsa Mover aquí.',
+'Game': 'Juego', 'Update': 'Actualización', 'Add-on': 'Complemento', 'Duplicate': 'Duplicado',
+'Orphan add-on': 'Complemento huérfano', 'Spare update': 'Actualización de repuesto', 'Orphan update': 'Actualización huérfana',
 'Games removed from the library per group (1 to {max})': 'Juegos quitados de la biblioteca por grupo (1 a {max})',
 'Games per group must be a number from 1 to {max}': 'Los juegos por grupo deben ser un número de 1 a {max}',
 '{n} game(s) selected': '{n} juego(s) seleccionado(s)',
@@ -371,7 +413,13 @@ pt: {
 'Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.': 'Usar de novo os pkgs devolvidos? Eles são movidos para a pasta ps4 e adicionados na próxima verificação.',
 'The PIN must be 4 to 8 digits': 'O PIN deve ter de 4 a 8 dígitos',
 'Stop PS4Mount? The games stay unavailable until it is loaded again.': 'Parar o PS4Mount? Os jogos ficam indisponíveis até ele ser carregado de novo.',
-'Game': 'Jogo', 'Update': 'Atualização',
+'Files': 'Arquivos', 'New folder': 'Nova pasta', 'Folder name': 'Nome da pasta', 'New name': 'Novo nome',
+'Empty folder': 'Pasta vazia', 'in use': 'em uso', 'Move here': 'Mover aqui', 'Move': 'Mover', 'Rename': 'Renomear', 'Delete': 'Apagar',
+'In use by a game in the library: it cannot be moved or deleted': 'Em uso por um jogo da biblioteca: não pode ser movido nem apagado',
+'Delete {what}? This cannot be undone.': 'Apagar {what}? Isso não pode ser desfeito.',
+'Moving {name}. Open the destination folder and press Move here.': 'Movendo {name}. Abra a pasta de destino e clique em Mover aqui.',
+'Game': 'Jogo', 'Update': 'Atualização', 'Add-on': 'Complemento', 'Duplicate': 'Duplicado',
+'Orphan add-on': 'Complemento órfão', 'Spare update': 'Atualização sobressalente', 'Orphan update': 'Atualização órfã',
 'Games removed from the library per group (1 to {max})': 'Jogos removidos da biblioteca por grupo (1 a {max})',
 'Games per group must be a number from 1 to {max}': 'Os jogos por grupo devem ser um número de 1 a {max}',
 '{n} game(s) selected': '{n} jogo(s) selecionado(s)',
@@ -468,7 +516,13 @@ fr: {
 'Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.': 'Reprendre les pkgs remis en place ? Ils sont déplacés dans le dossier ps4 et ajoutés à la prochaine recherche.',
 'The PIN must be 4 to 8 digits': 'Le PIN doit comporter 4 à 8 chiffres',
 'Stop PS4Mount? The games stay unavailable until it is loaded again.': 'Arrêter PS4Mount ? Les jeux restent indisponibles jusqu’à ce qu’il soit rechargé.',
-'Game': 'Jeu', 'Update': 'Mise à jour',
+'Files': 'Fichiers', 'New folder': 'Nouveau dossier', 'Folder name': 'Nom du dossier', 'New name': 'Nouveau nom',
+'Empty folder': 'Dossier vide', 'in use': 'utilisé', 'Move here': 'Déplacer ici', 'Move': 'Déplacer', 'Rename': 'Renommer', 'Delete': 'Supprimer',
+'In use by a game in the library: it cannot be moved or deleted': 'Utilisé par un jeu de la bibliothèque : il ne peut être déplacé ni supprimé',
+'Delete {what}? This cannot be undone.': 'Supprimer {what} ? Cela ne peut pas être annulé.',
+'Moving {name}. Open the destination folder and press Move here.': 'Déplacement de {name}. Ouvrez le dossier de destination et appuyez sur Déplacer ici.',
+'Game': 'Jeu', 'Update': 'Mise à jour', 'Add-on': 'Extension', 'Duplicate': 'Doublon',
+'Orphan add-on': 'Extension orpheline', 'Spare update': 'Mise à jour de secours', 'Orphan update': 'Mise à jour orpheline',
 'Games removed from the library per group (1 to {max})': 'Jeux retirés de la bibliothèque par groupe (1 à {max})',
 'Games per group must be a number from 1 to {max}': 'Les jeux par groupe doivent être un nombre de 1 à {max}',
 '{n} game(s) selected': '{n} jeu(x) sélectionné(s)',
@@ -839,6 +893,138 @@ $('probbtn').onclick = function () {
     $('probdlg').showModal();
   }).catch(function (e) { toast(t('Could not read the problems: {e}', {e: e.message})); });
 };
+
+/* Files dialog: browse a drive's folders. sel and moving are state for Task 6 (the file
+   sheet and move/rename/delete), not used yet. */
+var fm = {path: '', entries: [], sel: {}, moving: null, sheet: null};
+/* CAT_ROLE_* in src/catalog.h: NONE, APP, PATCH, DLC, DUPE, ORPHAN, SPARE, NOGAME. */
+var roleNames = {1: 'Game', 2: 'Update', 3: 'Add-on', 4: 'Duplicate', 5: 'Orphan add-on', 6: 'Spare update', 7: 'Orphan update'};
+
+/* A pkg's display name: add-ons carry their own title; a game or update pkg has no title
+   in the catalog, so look its game up by title_id in the games list already loaded for the
+   grid, and fall back to the file name when the title is not known there either (not yet
+   scanned, or a pkg catalog_group left ungrouped). */
+function fmPkgName(pkg, fallback) {
+  if (pkg.title) return pkg.title;
+  for (var i = 0; i < games.length; i++)
+    if (games[i].title_id === pkg.title_id) return games[i].name;
+  return fallback;
+}
+
+function fmOpen(path) {
+  api('/api/fm/list?path=' + encodeURIComponent(path)).then(function (j) {
+    fm.path = j.path; fm.entries = j.entries; fm.sel = {};
+    fmRender();
+  }).catch(function (e) { toast(t('Error: {e}', {e: e.message})); });
+}
+
+function fmRender() {
+  var parts = fm.path.split('/').filter(Boolean); /* mnt usb0 games ... */
+  var html = '', acc = '';
+  for (var i = 1; i < parts.length; i++) { /* skip "mnt": crumbs start at the drive */
+    acc = i === 1 ? '/mnt/' + parts[1] : acc + '/' + parts[i];
+    html += (i > 1 ? ' / ' : '') + '<button type="button" data-crumb="' + esc(acc) + '">' + esc(parts[i]) + '</button>';
+  }
+  $('fmcrumbs').innerHTML = html;
+  $('fmmovebar').hidden = !fm.moving;
+  if (fm.moving) {
+    $('fmmovebar').innerHTML = t('Moving {name}. Open the destination folder and press Move here.',
+      {name: esc(fm.moving.split('/').pop())}) +
+      ' <button type="button" id="fmdo">' + t('Move here') + '</button>' +
+      ' <button type="button" id="fmcancel">' + t('Cancel') + '</button>';
+  }
+  var rows = fm.entries.slice().sort(function (a, b) {
+    return (b.dir - a.dir) || a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+  }).map(function (e) {
+    var icon = e.dir ? '📁' : (e.pkg ? '' : '📄');
+    var iconStyle = e.pkg ? ' style="background-image:url(/icon/' + esc(e.pkg.title_id) + ')"' : '';
+    var label = e.pkg ? fmPkgName(e.pkg, e.name) : e.name;
+    var meta = e.dir ? '' : gb(e.size);
+    var sub = e.pkg ? t(roleNames[e.pkg.role] || 'Pkg') + (e.pkg.version ? ' v' + esc(e.pkg.version) : '') +
+      (e.pkg.protected ? ' · ' + t('in use') : '') : '';
+    return '<div class="fmrow" data-name="' + esc(e.name) + '"><span class="fmicon"' + iconStyle + '>' + icon + '</span>' +
+      '<span class="fmname">' + esc(label) + (sub || e.pkg ? '<small>' + esc(e.name) + (sub ? ' · ' + sub : '') + '</small>' : '') + '</span>' +
+      '<span class="fmsize">' + meta + '</span></div>';
+  }).join('');
+  $('fmlist').innerHTML = rows || '<div class="fmrow">' + t('Empty folder') + '</div>';
+}
+
+/* The sheet of actions for a file row: rename, move (via the "navigate then drop" bar
+   below) and delete. Protected pkgs (in the library) disable all three; the server refuses
+   them anyway, so this just saves the round-trip. */
+function fmSheet(entry) {
+  fm.sheet = entry;
+  var label = entry.pkg ? fmPkgName(entry.pkg, entry.name) : entry.name;
+  $('fms-title').textContent = label;
+  $('fms-icon').style.backgroundImage = entry.pkg ? 'url(/icon/' + encodeURIComponent(entry.pkg.title_id) + ')' : '';
+  $('fms-icon').textContent = entry.pkg ? '' : (entry.dir ? '📁' : '📄');
+  var m = [entry.name, gb(entry.size)];
+  if (entry.pkg) {
+    m.push(t(roleNames[entry.pkg.role] || 'Pkg') + (entry.pkg.version ? ' v' + entry.pkg.version : ''));
+    m.push(entry.pkg.title_id);
+    if (entry.pkg.protected) m.push(t('In use by a game in the library: it cannot be moved or deleted'));
+  }
+  $('fms-meta').innerHTML = m.map(esc).join('<br>');
+  $('fms-delete').disabled = $('fms-move').disabled = $('fms-rename').disabled = !!(entry.pkg && entry.pkg.protected);
+  $('fmsheet').showModal();
+}
+
+$('filesbtn').addEventListener('click', function () {
+  var start = drives.length ? '/mnt/' + drives[0].name : '/mnt/usb0';
+  fmOpen($('drive').value ? '/mnt/' + $('drive').value : start);
+  $('fmdlg').showModal();
+});
+$('fmcrumbs').addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-crumb]');
+  if (b) fmOpen(b.getAttribute('data-crumb'));
+});
+$('fmlist').addEventListener('click', function (e) {
+  var row = e.target.closest('.fmrow[data-name]');
+  if (!row) return;
+  var entry = fm.entries.filter(function (x) { return x.name === row.getAttribute('data-name'); })[0];
+  if (!entry) return;
+  if (entry.dir) fmOpen(fm.path + '/' + entry.name);
+  else fmSheet(entry);
+});
+$('fmnew').addEventListener('click', function () {
+  var n = prompt(t('Folder name'), '');
+  if (!n) return;
+  api('/api/fm/mkdir?path=' + encodeURIComponent(fm.path) + '&name=' + encodeURIComponent(n), 'POST')
+    .then(function (j) { toast(j.message); fmOpen(fm.path); })
+    .catch(function (e) { toast(t('Error: {e}', {e: e.message})); });
+});
+$('fms-rename').addEventListener('click', function () {
+  var n = prompt(t('New name'), fm.sheet.name);
+  if (!n || n === fm.sheet.name) return;
+  api('/api/fm/rename?path=' + encodeURIComponent(fm.path + '/' + fm.sheet.name) + '&name=' + encodeURIComponent(n), 'POST')
+    .then(function (j) { toast(j.message); $('fmsheet').close(); fmOpen(fm.path); })
+    .catch(function (e) { toast(t('Error: {e}', {e: e.message})); });
+});
+$('fms-move').addEventListener('click', function () {
+  fm.moving = fm.path + '/' + fm.sheet.name;
+  $('fmsheet').close();
+  fmRender();
+});
+$('fms-delete').addEventListener('click', function () {
+  var e = fm.sheet;
+  var what = (e.pkg ? fmPkgName(e.pkg, e.name) + ' (' + e.name + ')' : e.name) + (e.dir ? '' : ' · ' + gb(e.size));
+  if (!confirm(t('Delete {what}? This cannot be undone.', {what: what}))) return;
+  api('/api/fm/delete?path=' + encodeURIComponent(fm.path + '/' + e.name), 'POST')
+    .then(function (j) { toast(j.message); $('fmsheet').close(); fmOpen(fm.path); })
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
+});
+/* The "Move here"/"Cancel" buttons are (re)created by fmRender each time the bar shows, so
+   their clicks are delegated on the bar's own element rather than bound once per button. */
+$('fmmovebar').addEventListener('click', function (e) {
+  if (e.target.id === 'fmdo') {
+    api('/api/fm/move?src=' + encodeURIComponent(fm.moving) + '&dst=' + encodeURIComponent(fm.path), 'POST')
+      .then(function (j) { toast(j.message); fm.moving = null; fmOpen(fm.path); })
+      .catch(function (err) { toast(t('Error: {e}', {e: err.message})); });
+  } else if (e.target.id === 'fmcancel') {
+    fm.moving = null;
+    fmRender();
+  }
+});
 $('summary').addEventListener('click', function (e) {
   var st = e.target.getAttribute && e.target.getAttribute('data-state');
   if (!st) return;
