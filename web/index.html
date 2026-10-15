@@ -805,7 +805,7 @@ function load() {
     checkRelease(j.version);
     var live = {};
     games.forEach(function (g) { if (g.state !== 'internal' && g.state !== 'running') live[g.title_id] = 1; });
-    for (var t in selected) if (!live[t]) delete selected[t];
+    for (var tid in selected) if (!live[tid]) delete selected[tid];
     drivelist();
     $('paused').hidden = !j.paused;
     $('paused-msg').textContent = j.paused ?
@@ -828,21 +828,21 @@ $('grid').addEventListener('click', function (e) {
     .then(function () { delete busy[tid]; load(); });
 });
 $('grid').addEventListener('change', function (e) {
-  var t = e.target, tid;
-  if ((tid = t.getAttribute('data-sel'))) {
-    if (t.checked) selected[tid] = 1; else delete selected[tid];
-    t.closest('.card').classList.toggle('sel', t.checked);
+  var el = e.target, tid;
+  if ((tid = el.getAttribute('data-sel'))) {
+    if (el.checked) selected[tid] = 1; else delete selected[tid];
+    el.closest('.card').classList.toggle('sel', el.checked);
     selbar();
-  } else if ((tid = t.getAttribute('data-addon'))) {
+  } else if ((tid = el.getAttribute('data-addon'))) {
     var cid = tid;
-    t.disabled = true;
-    api('/api/addon?content_id=' + cid + '&on=' + (t.checked ? 1 : 0), 'POST').then(function (j) { toast(j.message); })
-      .catch(function (err) { toast('Error: ' + err.message); })
+    el.disabled = true;
+    api('/api/addon?content_id=' + cid + '&on=' + (el.checked ? 1 : 0), 'POST').then(function (j) { toast(j.message); })
+      .catch(function (err) { toast(t('Error: {e}', {e: err.message})); })
       .then(load);
-  } else if ((tid = t.getAttribute('data-upd'))) {
+  } else if ((tid = el.getAttribute('data-upd'))) {
     busy[tid] = 1; render();
-    api('/api/update?title_id=' + tid + '&version=' + encodeURIComponent(t.value), 'POST').then(function (j) { toast(j.message); })
-      .catch(function (err) { toast('Error: ' + err.message); })
+    api('/api/update?title_id=' + tid + '&version=' + encodeURIComponent(el.value), 'POST').then(function (j) { toast(j.message); })
+      .catch(function (err) { toast(t('Error: {e}', {e: err.message})); })
       .then(function () { delete busy[tid]; load(); });
   }
 });
