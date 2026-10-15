@@ -337,7 +337,8 @@ void web_handle(int fd) {
     if (!cl)
         cl = strstr(req, "content-length:");
     long want = cl ? strtol(cl + 15, NULL, 10) : 0;
-    while (want > 0 && (size_t)n < sizeof(req) - 1 && (!body || (long)(n - (body + 4 - req)) < want)) {
+    while (want > 0 && (size_t)n < sizeof(req) - 1 && (!body || (long)(n - (body + 4 - req)) < want) &&
+           time(NULL) - read_start < READ_LIMIT) {
         ssize_t m = read(fd, req + n, sizeof(req) - 1 - (size_t)n);
         if (m <= 0)
             break;

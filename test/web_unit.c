@@ -161,6 +161,31 @@ static void test_drip_client(int listen_fd) {
     close(c);
 }
 
+/* A POST whose body arrives one byte a second keeps every read() inside SO_RCVTIMEO, so only
+ * the READ_LIMIT deadline stops it from holding the main loop until the body is complete. */
+static void test_drip_body(int listen_fd) {
+    printf("client that drips the request body\n");
+    int c = connect_panel();
+    CHECK(c >= 0);
+    const char head[] = "POST /api/config HTTP/1.1\r\nContent-Length: 60\r\n\r\nx";
+    CHECK(write(c, head, sizeof(head) - 1) == (ssize_t)(sizeof(head) - 1));
+    pid_t dripper = fork();
+    if (dripper == 0) {
+        for (int i = 0; i < 20; i++) {
+            sleep(1);
+            if (write(c, "x", 1) != 1)
+                break;
+        }
+        _exit(0);
+    }
+    int s = serve_seconds(listen_fd, 15);
+    printf("  served in %d s\n", s);
+    CHECK(s >= 0 && s <= 6);
+    kill(dripper, SIGKILL);
+    waitpid(dripper, NULL, 0);
+    close(c);
+}
+
 /* Sends req and returns the whole response in out (served by a child process). */
 static void request(int listen_fd, const char *req, char *out, size_t n) {
     out[0] = 0;
@@ -488,6 +513,7 @@ int main(void) {
         test_stalled_reader(listen_fd);
         test_silent_client(listen_fd);
         test_drip_client(listen_fd);
+        test_drip_body(listen_fd);
         close(listen_fd);
     }
     printf("%d checks, %d failed\n", g_checks, g_failed);
