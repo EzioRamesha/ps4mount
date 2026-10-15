@@ -268,7 +268,7 @@ es: {
 'Incomplete: still copying or cut off; used once complete': 'Incompleto: aún copiándose o cortado; se usará cuando esté completo',
 'Ready': 'Listo', 'Running': 'En ejecución', 'Not in library': 'No está en la biblioteca',
 'Installed on console': 'Instalado en la consola', 'Adding': 'Añadiendo', 'On another drive': 'En otra unidad',
-'Failed': 'Error', 'Retrying': 'Reintentando', 'Show only these games': 'Mostrar solo estos juegos', 'Play': 'Jugar', 'Failed; trying again in {n} s': 'Falló; se reintenta en {n} s', 'Never added': 'No se añade nunca',
+'Failed': 'Error', 'Retrying': 'Reintentando', 'Show only these games': 'Mostrar solo estos juegos', 'Play': 'Jugar', 'Trying again in {n} s.': 'Se reintenta en {n} s.', 'Never added': 'No se añade nunca',
 'Wrong PIN. PIN of the PS4Mount panel:': 'PIN incorrecto. PIN del panel de PS4Mount:',
 'PIN of the PS4Mount panel:': 'PIN del panel de PS4Mount:', 'New: {tag}': 'Nueva: {tag}',
 'A newer PS4Mount is available': 'Hay una versión más reciente de PS4Mount',
@@ -371,7 +371,7 @@ pt: {
 'Incomplete: still copying or cut off; used once complete': 'Incompleto: ainda copiando ou cortado; será usado quando estiver completo',
 'Ready': 'Pronto', 'Running': 'Em execução', 'Not in library': 'Fora da biblioteca',
 'Installed on console': 'Instalado no console', 'Adding': 'Adicionando', 'On another drive': 'Em outra unidade',
-'Failed': 'Falhou', 'Retrying': 'Tentando de novo', 'Show only these games': 'Mostrar só estes jogos', 'Play': 'Jogar', 'Failed; trying again in {n} s': 'Falhou; tenta de novo em {n} s', 'Never added': 'Nunca adicionado',
+'Failed': 'Falhou', 'Retrying': 'Tentando de novo', 'Show only these games': 'Mostrar só estes jogos', 'Play': 'Jogar', 'Trying again in {n} s.': 'Tenta de novo em {n} s.', 'Never added': 'Nunca adicionado',
 'Wrong PIN. PIN of the PS4Mount panel:': 'PIN incorreto. PIN do painel do PS4Mount:',
 'PIN of the PS4Mount panel:': 'PIN do painel do PS4Mount:', 'New: {tag}': 'Nova: {tag}',
 'A newer PS4Mount is available': 'Há uma versão mais nova do PS4Mount',
@@ -474,7 +474,7 @@ fr: {
 'Incomplete: still copying or cut off; used once complete': 'Incomplet : copie en cours ou coupée ; utilisé une fois complet',
 'Ready': 'Prêt', 'Running': 'En cours', 'Not in library': 'Hors bibliothèque',
 'Installed on console': 'Installé sur la console', 'Adding': 'Ajout en cours', 'On another drive': 'Sur un autre disque',
-'Failed': 'Échec', 'Retrying': 'Nouvel essai', 'Show only these games': 'Montrer seulement ces jeux', 'Play': 'Jouer', 'Failed; trying again in {n} s': 'Échec ; nouvel essai dans {n} s', 'Never added': 'Jamais ajouté',
+'Failed': 'Échec', 'Retrying': 'Nouvel essai', 'Show only these games': 'Montrer seulement ces jeux', 'Play': 'Jouer', 'Trying again in {n} s.': 'Nouvel essai dans {n} s.', 'Never added': 'Jamais ajouté',
 'Wrong PIN. PIN of the PS4Mount panel:': 'PIN incorrect. PIN du panneau PS4Mount :',
 'PIN of the PS4Mount panel:': 'PIN du panneau PS4Mount :', 'New: {tag}': 'Nouveau : {tag}',
 'A newer PS4Mount is available': 'Une version plus récente de PS4Mount est disponible',
@@ -760,7 +760,10 @@ function render() {
         (g.dlc ? ' · ' + t('{n} add-on(s)', {n: g.dlc}) : '') + ' · ' + gb(g.size) + '</div>' +
       '<div class="meta">' + esc(g.source) + (g.mount ? ' · ' + t('mounted {how}', {how: esc(g.mount)}) : '') + '</div>' + upd + adds +
       (g.update_issue ? '<div class="warn">' + esc(g.update_issue) + '</div>' : '') +
-      (g.state === 'retrying' && g.retry_in > 0 ? '<div class="warn">' + t('Failed; trying again in {n} s', {n: g.retry_in}) + '</div>' : '') + '</div>' +
+      ((g.state === 'retrying' || g.state === 'failed') && g.fail_reason ?
+        '<div class="warn">' + esc(g.fail_reason) +
+        (g.state === 'retrying' && g.retry_in > 0 ? ' ' + t('Trying again in {n} s.', {n: g.retry_in}) : '') +
+        '</div>' : '') + '</div>' +
       '<div class="actions">' + act + '</div></div>';
   });
   $('grid').innerHTML = html;
