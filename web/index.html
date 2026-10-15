@@ -27,6 +27,8 @@ main{padding:20px;max-width:1400px;margin:0 auto}
 .summary{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;color:var(--muted)}
 .summary span{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px 12px}
 .summary span.low{background:#3a1f1d;border-color:#5c2c28;color:#ffb4ac}
+.summary span[data-state]{cursor:pointer}
+.summary span.on{border-color:var(--accent);color:var(--fg)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
 .art{aspect-ratio:1/1;background:#0b0d11 center/cover no-repeat;position:relative}
@@ -171,7 +173,7 @@ td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-b
 <div class="actions" style="padding:10px 0 0"><form method="dialog"><button>Close</button></form></div></dialog>
 <div id="toast"></div>
 <script>
-var games = [], busy = {}, drives = [], selected = {}, openAddons = {};
+var games = [], busy = {}, drives = [], selected = {}, openAddons = {}, stateFilter = '';
 var MAX_RUNNING_ADDONS = 29;
 var addonLabels = {on: 'installed', adding: 'being added', off: 'turned off', deleted: 'deleted on the console'};
 var kinds = {duplicate: 'Same game on more than one place (this copy is not used)', 'addon-without-game': 'Add-on without its game',
@@ -222,7 +224,7 @@ es: {
 'Incomplete: still copying or cut off; used once complete': 'Incompleto: aún copiándose o cortado; se usará cuando esté completo',
 'Ready': 'Listo', 'Running': 'En ejecución', 'Not in library': 'No está en la biblioteca',
 'Installed on console': 'Instalado en la consola', 'Adding': 'Añadiendo', 'On another drive': 'En otra unidad',
-'Failed': 'Error', 'Retrying': 'Reintentando', 'Failed; trying again in {n} s': 'Falló; se reintenta en {n} s', 'Never added': 'No se añade nunca',
+'Failed': 'Error', 'Retrying': 'Reintentando', 'Show only these games': 'Mostrar solo estos juegos', 'Failed; trying again in {n} s': 'Falló; se reintenta en {n} s', 'Never added': 'No se añade nunca',
 'Wrong PIN. PIN of the PS4Mount panel:': 'PIN incorrecto. PIN del panel de PS4Mount:',
 'PIN of the PS4Mount panel:': 'PIN del panel de PS4Mount:', 'New: {tag}': 'Nueva: {tag}',
 'A newer PS4Mount is available': 'Hay una versión más reciente de PS4Mount',
@@ -319,7 +321,7 @@ pt: {
 'Incomplete: still copying or cut off; used once complete': 'Incompleto: ainda copiando ou cortado; será usado quando estiver completo',
 'Ready': 'Pronto', 'Running': 'Em execução', 'Not in library': 'Fora da biblioteca',
 'Installed on console': 'Instalado no console', 'Adding': 'Adicionando', 'On another drive': 'Em outra unidade',
-'Failed': 'Falhou', 'Retrying': 'Tentando de novo', 'Failed; trying again in {n} s': 'Falhou; tenta de novo em {n} s', 'Never added': 'Nunca adicionado',
+'Failed': 'Falhou', 'Retrying': 'Tentando de novo', 'Show only these games': 'Mostrar só estes jogos', 'Failed; trying again in {n} s': 'Falhou; tenta de novo em {n} s', 'Never added': 'Nunca adicionado',
 'Wrong PIN. PIN of the PS4Mount panel:': 'PIN incorreto. PIN do painel do PS4Mount:',
 'PIN of the PS4Mount panel:': 'PIN do painel do PS4Mount:', 'New: {tag}': 'Nova: {tag}',
 'A newer PS4Mount is available': 'Há uma versão mais nova do PS4Mount',
@@ -416,7 +418,7 @@ fr: {
 'Incomplete: still copying or cut off; used once complete': 'Incomplet : copie en cours ou coupée ; utilisé une fois complet',
 'Ready': 'Prêt', 'Running': 'En cours', 'Not in library': 'Hors bibliothèque',
 'Installed on console': 'Installé sur la console', 'Adding': 'Ajout en cours', 'On another drive': 'Sur un autre disque',
-'Failed': 'Échec', 'Retrying': 'Nouvel essai', 'Failed; trying again in {n} s': 'Échec ; nouvel essai dans {n} s', 'Never added': 'Jamais ajouté',
+'Failed': 'Échec', 'Retrying': 'Nouvel essai', 'Show only these games': 'Montrer seulement ces jeux', 'Failed; trying again in {n} s': 'Échec ; nouvel essai dans {n} s', 'Never added': 'Jamais ajouté',
 'Wrong PIN. PIN of the PS4Mount panel:': 'PIN incorrect. PIN du panneau PS4Mount :',
 'PIN of the PS4Mount panel:': 'PIN du panneau PS4Mount :', 'New: {tag}': 'Nouveau : {tag}',
 'A newer PS4Mount is available': 'Une version plus récente de PS4Mount est disponible',
@@ -631,10 +633,12 @@ function render() {
     var k = by === 'state' ? (order[a.state] || 9) - (order[b.state] || 9) : by === 'source' ? (a.source < b.source ? -1 : a.source > b.source ? 1 : 0) : 0;
     return k || a.name.toLowerCase().localeCompare(b.name.toLowerCase());
   });
+  games.forEach(function (g) { counts[g.state] = (counts[g.state] || 0) + 1; });
+  if (stateFilter && !counts[stateFilter]) stateFilter = ''; /* the last game of that state is gone */
   list.forEach(function (g) {
-    counts[g.state] = (counts[g.state] || 0) + 1;
     if (q && (g.name + ' ' + g.title_id).toLowerCase().indexOf(q) < 0) return;
     if (dv && g.drive !== dv) return;
+    if (stateFilter && g.state !== stateFilter) return;
     shown++;
     var tid = g.title_id, act = '';
     if (g.state === 'removed') act = '<button class="primary" data-a="mount" data-t="' + tid + '">' + t('Add to library') + '</button>';
@@ -690,7 +694,9 @@ function render() {
   $('grid').innerHTML = html;
   $('empty').hidden = games.length > 0;
   var s = '<span>' + t('{n} game(s)', {n: games.length}) + '</span>';
-  for (var k in counts) s += '<span>' + esc(labels[k] ? t(labels[k]) : k) + ': ' + counts[k] + '</span>';
+  for (var k in counts)
+    s += '<span data-state="' + k + '"' + (stateFilter === k ? ' class="on"' : '') + ' role="button" title="' +
+      t('Show only these games') + '">' + esc(labels[k] ? t(labels[k]) : k) + ': ' + counts[k] + '</span>';
   drives.forEach(function (d) {
     if (!dv || d.name === dv)
       s += '<span' + (d.low || d.speed_state === 'slow' || d.speed_state === 'usb2' ? ' class="low"' : '') +
@@ -819,6 +825,12 @@ $('probbtn').onclick = function () {
     $('probdlg').showModal();
   }).catch(function (e) { toast(t('Could not read the problems: {e}', {e: e.message})); });
 };
+$('summary').addEventListener('click', function (e) {
+  var st = e.target.getAttribute && e.target.getAttribute('data-state');
+  if (!st) return;
+  stateFilter = stateFilter === st ? '' : st; /* click again to show all */
+  render();
+});
 $('q').addEventListener('input', render);
 $('sort').onchange = render;
 $('drive').onchange = function () { rescanLabel(); render(); };
