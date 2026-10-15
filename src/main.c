@@ -1642,16 +1642,17 @@ static int has_pkg(const char *dir) {
 static retry_t g_retry_items[MAX_TITLES];
 static retry_table_t g_retry = {g_retry_items, MAX_TITLES};
 
-/* Records a failed registration and tells the user the first and the last time. */
-static void title_failed(const char *tid, const char *name) {
-    int tries = retry_failed(&g_retry, tid, time(NULL));
+/* Records a failed registration and tells the user the first and the last time. reason
+ * is a short, plain-English sentence for why it failed this time, shown in the panel. */
+static void title_failed(const char *tid, const char *name, const char *reason) {
+    int tries = retry_failed(&g_retry, tid, time(NULL), reason);
     if (tries >= RETRY_MAX_TRIES) {
-        printf("[reg] %s: failed %d times, given up\n", tid, tries);
+        printf("[reg] %s: failed %d times, given up (%s)\n", tid, tries, reason);
         notify("Failed to add %s (%s) %d times. It is not tried again until you use Add to library or Scan "
                "for games in the panel",
                name, tid, tries);
     } else {
-        printf("[reg] %s: failure %d, next try in %d seconds\n", tid, tries, RETRY_SECONDS);
+        printf("[reg] %s: failure %d, next try in %d seconds (%s)\n", tid, tries, RETRY_SECONDS, reason);
         if (tries == 1)
             notify("Failed to add %s (%s), it is tried again in a few minutes", name, tid);
     }
@@ -1966,8 +1967,11 @@ static void scan_root(const char *root, int fresh, int reconnected) {
                 notify("Adding %d/%d: %s%s%s (%s)", done + k + 1, pending, t->name,
                        t->has_patch ? " with update" : "", extra, t->tid);
             }
-            if (src_open(&src, root, t->tid) || register_prepare(&src)) {
-                title_failed(t->tid, t->name);
+            if (src_open(&src, root, t->tid)) {
+                title_failed(t->tid, t->name, "This pkg could not be read. It may be damaged or incomplete.");
+            } else if (register_prepare(&src)) {
+                title_failed(t->tid, t->name,
+                             "The files for this game could not be prepared. Check that the drive has enough free space.");
             } else {
                 prepared[k] = 1;
                 snprintf(ids[np++], 10, "%s", t->tid);
@@ -1985,7 +1989,7 @@ static void scan_root(const char *root, int fresh, int reconnected) {
                 continue;
             if (register_finish(&src)) {
                 if (!g_halt[0]) /* paused: not the title's fault */
-                    title_failed(t->tid, t->name);
+                    title_failed(t->tid, t->name, "The console didn't accept this game. This is usually temporary.");
             } else {
                 retry_clear(&g_retry, t->tid);
                 ok++;
