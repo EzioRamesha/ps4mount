@@ -4111,12 +4111,18 @@ static void trash_purge_old(void) {
                 continue;
             char meta[PATH_MAX], item[PATH_MAX];
             snprintf(meta, sizeof(meta), "%s/%s", trash_dir, e->d_name);
-            snprintf(item, sizeof(item), "%.*s", (int)(l - 10), meta); /* meta minus ".trashmeta" */
+            size_t ml = strlen(meta); /* precision must come from the full path, not from e->d_name's
+                                        * length, or the slice lands inside trash_dir itself */
+            snprintf(item, sizeof(item), "%.*s", (int)(ml - 10), meta); /* meta minus ".trashmeta" */
+            struct stat ist;
+            if (lstat(item, &ist))
+                continue; /* no item for this name: a file legitimately named "*.trashmeta" trashed by
+                           * itself, not a real sidecar; leave it alone */
             char buf[PATH_MAX + 64];
             read_file(meta, buf, sizeof(buf));
             char *nl = strchr(buf, '\n');
             long long deleted_at = nl ? atoll(nl + 1) : 0;
-            if (deleted_at && now - (time_t)deleted_at >= TRASH_KEEP_DAYS * 86400) {
+            if (deleted_at > 0 && now - (time_t)deleted_at >= TRASH_KEEP_DAYS * 86400) {
                 fm_rm_tree(item);
                 unlink(meta);
             }
@@ -4142,15 +4148,22 @@ static void trash_reclaim(const char *root, unsigned long long *avail, unsigned 
             size_t l = strlen(e->d_name);
             if (l < 10 || strcmp(e->d_name + l - 10, ".trashmeta"))
                 continue;
-            char meta[PATH_MAX], buf[256];
+            char meta[PATH_MAX], item[PATH_MAX], buf[PATH_MAX + 64];
             snprintf(meta, sizeof(meta), "%s/%s", trash_dir, e->d_name);
+            size_t ml = strlen(meta); /* precision must come from the full path, not from e->d_name's
+                                        * length, or the slice lands inside trash_dir itself */
+            snprintf(item, sizeof(item), "%.*s", (int)(ml - 10), meta); /* meta minus ".trashmeta" */
+            struct stat ist;
+            if (lstat(item, &ist))
+                continue; /* no item for this name: a file legitimately named "*.trashmeta" trashed by
+                           * itself, not a real sidecar; leave it alone */
             read_file(meta, buf, sizeof(buf));
             char *nl = strchr(buf, '\n');
             long long ts = nl ? atoll(nl + 1) : -1;
-            if (ts >= 0 && (oldest_ts < 0 || ts < oldest_ts)) {
+            if (ts > 0 && (oldest_ts < 0 || ts < oldest_ts)) {
                 oldest_ts = ts;
                 snprintf(oldest_meta, sizeof(oldest_meta), "%s", meta);
-                snprintf(oldest_item, sizeof(oldest_item), "%.*s", (int)(l - 10), meta);
+                snprintf(oldest_item, sizeof(oldest_item), "%s", item);
             }
         }
         closedir(d);
@@ -4159,9 +4172,11 @@ static void trash_reclaim(const char *root, unsigned long long *avail, unsigned 
         printf("[fm] reclaiming trash on %s: %s\n", root, oldest_item);
         fm_rm_tree(oldest_item);
         unlink(oldest_meta);
-        unsigned long long total2;
-        if (drive_space(root, avail, &total2))
-            return;
+        unsigned long long avail2, total2;
+        if (drive_space(root, &avail2, &total2))
+            return; /* drive_space zeroes its out-params on failure: leave *avail at its last
+                      * known-good value instead of letting a transient statfs failure read as "full" */
+        *avail = avail2;
     }
 }
 
