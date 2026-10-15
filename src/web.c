@@ -111,6 +111,21 @@ static int content_param(const char *path, char *cid) {
     return (p[36] && p[36] != '&') || strncmp(cid + 7, "CUSA", 4) ? -1 : 0;
 }
 
+/* drive= of the query: usb0 to usb7 or ext0 to ext1. 1 when given and valid, 0 when absent,
+ * -1 when invalid. */
+static int drive_param(const char *path, char *drive, size_t n) {
+    const char *p = strstr(path, "drive=");
+    if (!p)
+        return 0;
+    p += 6;
+    size_t l = strcspn(p, "&");
+    if (n < 5 || l != 4 || !((!strncmp(p, "usb", 3) && p[3] >= '0' && p[3] <= '7') ||
+                             (!strncmp(p, "ext", 3) && p[3] >= '0' && p[3] <= '1')))
+        return -1;
+    snprintf(drive, n, "%.4s", p);
+    return 1;
+}
+
 /* version= of the query: "" (the highest), "none" or an APP_VER like 01.05. 0 when valid. */
 static int version_param(const char *path, char *ver, size_t n) {
     const char *p = strstr(path, "version=");
@@ -300,9 +315,15 @@ void web_handle(int fd) {
     } else if (post && !strcmp(path, "/api/resume")) {
         int rc = app_resume(msg, sizeof(msg));
         json_msg(fd, !rc, msg);
-    } else if (post && !strcmp(path, "/api/rescan")) {
-        app_rescan();
-        json_msg(fd, 1, "Scanning USB drives for games");
+    } else if (post && !strncmp(path, "/api/rescan", 11) && (path[11] == 0 || path[11] == '?')) {
+        char drive[8];
+        int rc = drive_param(path, drive, sizeof(drive));
+        if (rc < 0)
+            json_msg(fd, 0, "invalid drive");
+        else {
+            rc = app_rescan(rc ? drive : NULL, msg, sizeof(msg));
+            json_msg(fd, !rc, msg);
+        }
     } else if (post && !strncmp(path, "/api/restore", 12) && (path[12] == 0 || path[12] == '?')) {
         /* ?title_id=<one game>, body title_ids=<games, comma separated>, or neither for all */
         int rc;

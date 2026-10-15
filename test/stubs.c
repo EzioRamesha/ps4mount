@@ -24,10 +24,7 @@ int app_remove(const char *tid, char *msg, size_t cap) { return record("remove",
 int app_exclude(const char *tid, int on, char *msg, size_t cap) {
     return record(on ? "exclude" : "include", tid, msg, cap);
 }
-void app_rescan(void) {
-    char m[8];
-    record("rescan", NULL, m, sizeof(m));
-}
+int app_rescan(const char *drive, char *msg, size_t cap) { return record("rescan", drive, msg, cap); }
 int app_resume(char *msg, size_t cap) { return record("resume", NULL, msg, cap); }
 void app_stop(void) {
     char m[8];

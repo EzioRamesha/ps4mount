@@ -35,7 +35,9 @@ void app_games_json(buf_t *out) {
 }
 int app_add(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "%s", tid) < 0; }
 int app_remove(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "%s", tid) < 0; }
-void app_rescan(void) {}
+int app_rescan(const char *drive, char *msg, size_t cap) {
+    return snprintf(msg, cap, "rescan[%s]", drive ? drive : "all") < 0;
+}
 void app_diag(buf_t *out) { buf_printf(out, "diag \"line\"\n"); }
 void app_problems_json(buf_t *out) { buf_printf(out, "{\"problems\":[]}"); }
 int app_addon(const char *content_id, int on, char *msg, size_t cap) {
@@ -160,6 +162,26 @@ static void test_update_choice(int listen_fd) {
     CHECK(strstr(resp, "{\"problems\":[]}") != NULL);
 }
 
+static void test_rescan(int listen_fd) {
+    printf("scan all drives or one\n");
+    char resp[2048];
+    request(listen_fd, "POST /api/rescan HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "rescan[all]") != NULL);
+    request(listen_fd, "POST /api/rescan?drive=usb3 HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "rescan[usb3]") != NULL);
+    request(listen_fd, "POST /api/rescan?drive=ext1 HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "rescan[ext1]") != NULL);
+    static const char *const bad[] = {"usb8", "ext2", "usb", "usb10", "../x", "USB0"};
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        char req[128];
+        snprintf(req, sizeof(req), "POST /api/rescan?drive=%s HTTP/1.1\r\n\r\n", bad[i]);
+        request(listen_fd, req, resp, sizeof(resp));
+        CHECK(strstr(resp, "invalid drive") != NULL);
+    }
+    request(listen_fd, "POST /api/rescanx HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "404") != NULL);
+}
+
 static void test_addon(int listen_fd) {
     printf("add-on on/off parameters\n");
     char resp[2048];
@@ -240,6 +262,7 @@ int main(void) {
     if (listen_fd >= 0) {
         test_diag(listen_fd);
         test_update_choice(listen_fd);
+        test_rescan(listen_fd);
         test_addon(listen_fd);
         test_pin_guard(listen_fd);
         test_stalled_reader(listen_fd);
