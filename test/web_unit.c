@@ -162,6 +162,16 @@ static void test_update_choice(int listen_fd) {
     CHECK(strstr(resp, "{\"problems\":[]}") != NULL);
 }
 
+static void test_log_download(int listen_fd) {
+    printf("log download\n");
+    char resp[4096];
+    request(listen_fd, "GET /api/log.txt HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "200 OK") != NULL && strstr(resp, "text/plain") != NULL);
+    CHECK(strstr(resp, "Content-Disposition: attachment; filename=\"ps4mount-log.txt\"\r\n") != NULL);
+    char *end = strstr(resp, "\r\n\r\n");
+    CHECK(end != NULL && strstr(resp, "Connection: close\r\n\r\n") == end - 17);
+}
+
 static void test_rescan(int listen_fd) {
     printf("scan all drives or one\n");
     char resp[2048];
@@ -263,6 +273,7 @@ int main(void) {
         test_diag(listen_fd);
         test_update_choice(listen_fd);
         test_rescan(listen_fd);
+        test_log_download(listen_fd);
         test_addon(listen_fd);
         test_pin_guard(listen_fd);
         test_stalled_reader(listen_fd);

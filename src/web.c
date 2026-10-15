@@ -50,14 +50,21 @@ static void send_all(int fd, const void *p, size_t n) {
     }
 }
 
-static void reply(int fd, const char *status, const char *type, const void *body, size_t len) {
-    char head[256];
+/* extra: more header lines, each ending with \r\n ("" for none). */
+static void reply_with(int fd, const char *status, const char *type, const char *extra, const void *body, size_t len) {
+    char head[384];
     int n = snprintf(head, sizeof(head),
                      "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nCache-Control: no-store\r\n"
-                     "Connection: close\r\n\r\n",
-                     status, type, len);
+                     "%sConnection: close\r\n\r\n",
+                     status, type, len, extra);
+    if (n < 0 || (size_t)n >= sizeof(head))
+        return;
     send_all(fd, head, (size_t)n);
     send_all(fd, body, len);
+}
+
+static void reply(int fd, const char *status, const char *type, const void *body, size_t len) {
+    reply_with(fd, status, type, "", body, len);
 }
 
 static void json_msg(int fd, int ok, const char *msg) {
@@ -233,6 +240,26 @@ static void send_log(int fd) {
     buf_free(&b);
 }
 
+/* The whole log as a file to save (its last LOG_DOWNLOAD_MAX bytes if it ever grew past that). */
+#define LOG_DOWNLOAD_MAX (4 << 20)
+
+static void send_log_file(int fd) {
+    buf_t b = {0};
+    int f = open(LOG_PATH, O_RDONLY);
+    if (f >= 0) {
+        off_t end = lseek(f, 0, SEEK_END), start = end > LOG_DOWNLOAD_MAX ? end - LOG_DOWNLOAD_MAX : 0;
+        lseek(f, start, SEEK_SET);
+        char tmp[8192];
+        ssize_t n;
+        while (b.len < LOG_DOWNLOAD_MAX && (n = read(f, tmp, sizeof(tmp))) > 0)
+            buf_put(&b, tmp, (size_t)n);
+        close(f);
+    }
+    reply_with(fd, "200 OK", "text/plain; charset=utf-8",
+               "Content-Disposition: attachment; filename=\"ps4mount-log.txt\"\r\n", b.data, b.len);
+    buf_free(&b);
+}
+
 void web_serve(int listen_fd) {
     int fd = accept(listen_fd, NULL, NULL);
     if (fd >= 0)
@@ -359,6 +386,8 @@ void web_handle(int fd) {
         json_msg(fd, !rc, msg);
     } else if (!strcmp(path, "/api/log")) {
         send_log(fd);
+    } else if (!strcmp(path, "/api/log.txt")) {
+        send_log_file(fd);
     } else if (!strcmp(path, "/api/problems")) {
         buf_t b = {0};
         app_problems_json(&b);
