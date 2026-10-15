@@ -1,4 +1,4 @@
-name: PR #12 split cascade
+name: "PR #12 split cascade"
 
 # Advances the sequential split of the old PR #12 (gasb07/ps4mount) into five smaller,
 # independently reviewable PRs: split/1-stability .. split/5-file-manager. A cross-fork
