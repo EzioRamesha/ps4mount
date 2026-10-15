@@ -463,12 +463,23 @@ static void trash_purge_old(void) {
                 continue;
             char meta[PATH_MAX], item[PATH_MAX];
             snprintf(meta, sizeof(meta), "%s/%s", trash_dir, e->d_name);
-            snprintf(item, sizeof(item), "%.*s", (int)(l - 10), meta); /* meta minus ".trashmeta" */
+            /* strip the trailing ".trashmeta" from the FULL path: the precision must come from
+             * strlen(meta), not from l (the bare dirent name) — using l here takes the first
+             * l-10 bytes of the longer path instead, which for an ordinary short filename lands
+             * exactly on trash_dir and would hand the whole trash folder to fm_rm_tree */
+            size_t ml = strlen(meta);
+            snprintf(item, sizeof(item), "%.*s", (int)(ml - 10), meta);
+            struct stat ist;
+            if (stat(item, &ist))
+                continue; /* no item for this sidecar (or the "sidecar" is really a trashed
+                           * file whose own name ends in .trashmeta): leave both alone */
             char buf[PATH_MAX + 64];
             read_file(meta, buf, sizeof(buf));
             char *nl = strchr(buf, '\n');
             long long deleted_at = nl ? atoll(nl + 1) : 0;
-            if (deleted_at && now - (time_t)deleted_at >= TRASH_KEEP_DAYS * 86400) {
+            /* > 0, not just non-zero: a corrupted sidecar parsing to a negative number would
+             * otherwise make now - deleted_at exceed any threshold and force a blind delete */
+            if (deleted_at > 0 && now - (time_t)deleted_at >= TRASH_KEEP_DAYS * 86400) {
                 fm_rm_tree(item);
                 unlink(meta);
             }
@@ -498,15 +509,23 @@ static void trash_reclaim(const char *root, unsigned long long *avail, unsigned 
             size_t l = strlen(e->d_name);
             if (l < 10 || strcmp(e->d_name + l - 10, ".trashmeta"))
                 continue;
-            char meta[PATH_MAX], buf[256];
+            char meta[PATH_MAX], buf[PATH_MAX + 64];
             snprintf(meta, sizeof(meta), "%s/%s", trash_dir, e->d_name);
+            size_t ml = strlen(meta);
+            char item[PATH_MAX];
+            snprintf(item, sizeof(item), "%.*s", (int)(ml - 10), meta); /* see trash_purge_old */
+            struct stat ist;
+            if (stat(item, &ist))
+                continue; /* no item for this sidecar: leave both alone */
             read_file(meta, buf, sizeof(buf));
             char *nl = strchr(buf, '\n');
             long long ts = nl ? atoll(nl + 1) : -1;
-            if (ts >= 0 && (oldest_ts < 0 || ts < oldest_ts)) {
+            /* > 0, not >= 0: atoll returns 0 for a garbled line, and 0 would always sort as
+             * the oldest candidate, so a corrupted sidecar would be reclaimed first of all */
+            if (ts > 0 && (oldest_ts < 0 || ts < oldest_ts)) {
                 oldest_ts = ts;
                 snprintf(oldest_meta, sizeof(oldest_meta), "%s", meta);
-                snprintf(oldest_item, sizeof(oldest_item), "%.*s", (int)(l - 10), meta);
+                snprintf(oldest_item, sizeof(oldest_item), "%s", item);
             }
         }
         closedir(d);
