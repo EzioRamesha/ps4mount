@@ -31,9 +31,12 @@ int fm_path_ok(const char *path) {
             p++;
         size_t len = (size_t)(p - s);
         if (len == 0)
-            return 0; /* "//" */
+            return 0; /* unreachable: the "while (*p == '/') p++" above already skipped any
+                       * slash run before s, so a segment here is never empty; defensive only. */
         if ((len == 1 && s[0] == '.') || (len == 2 && s[0] == '.' && s[1] == '.'))
             return 0;
+        /* this is what rejects "//": do not simplify away. s[-1] and s[-2] both being '/'
+         * means the slash run just skipped had length >= 2. */
         if (s > path && s[-1] == '/' && s - 1 > path && s[-2] == '/')
             return 0;
     }

@@ -177,7 +177,7 @@ int main(void) {
     memset(huge, 'A', sizeof(huge) - 1);
     memcpy(huge, "GET /", 5);
     r = ask2(huge, sizeof(huge) - 1, NULL);
-    CHECK(status(r, "404"));
+    CHECK(status(r, "414")); /* a cut-off path is never acted on */
     char nul[] = "GET /\0api/stop HTTP/1.1\r\n\r\n";
     before = g_stub_calls;
     ask2(nul, sizeof(nul) - 1, NULL);

@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 gasb07
- * Minimal HTTP server for the PS4Mount panel. */
-/* Minimal HTTP server for the PS4Mount panel (one request per connection). */
+ * Minimal HTTP server for the PS4Mount panel (one request per connection). */
 #include "web.h"
 
 #include <ctype.h>
@@ -39,6 +38,8 @@ int web_listen(void) {
 /* The panel is served from the daemon's main loop: a client that stops reading
  * (each write may block SO_SNDTIMEO) is dropped after SEND_LIMIT seconds. */
 #define SEND_LIMIT 10
+/* a client that drips the request line is dropped after READ_LIMIT seconds */
+#define READ_LIMIT 3
 
 static void send_all(int fd, const void *p, size_t n) {
     const char *c = p;
@@ -315,6 +316,24 @@ void web_handle(int fd) {
         return;
     }
     req[n] = 0;
+    /* A long fm path (the move API can be several KB percent-encoded) may legitimately span
+     * more than one TCP segment, so the first read above can return before the request line
+     * is fully buffered. Parsing method/path against a half-arrived line would make the 414
+     * guard below misread a merely-not-yet-received target as too long. Keep reading (bounded
+     * by the same SO_RCVTIMEO as a stalled client) until a newline shows the line is complete,
+     * or the buffer is full (a genuinely over-long target, which the 414 guard then catches).
+     * The per-read SO_RCVTIMEO alone is not enough: a client that drips one byte every couple
+     * of seconds would keep every read() succeeding and stall the daemon's single-threaded
+     * main loop for as long as it likes, so this also enforces a READ_LIMIT cumulative deadline,
+     * exactly like send_all's SEND_LIMIT above. */
+    time_t read_start = time(NULL);
+    while (!memchr(req, '\n', (size_t)n) && (size_t)n < sizeof(req) - 1 && time(NULL) - read_start < READ_LIMIT) {
+        ssize_t m = read(fd, req + n, sizeof(req) - 1 - (size_t)n);
+        if (m <= 0)
+            break;
+        n += m;
+        req[n] = 0;
+    }
     /* the body of a POST may arrive after the headers */
     char *body = strstr(req, "\r\n\r\n");
     const char *cl = strstr(req, "Content-Length:");
@@ -331,8 +350,22 @@ void web_handle(int fd) {
     }
     const char *head_end = body ? body : req + n;
     body = body ? body + 4 : req + n;
-    char method[8] = "", path[256] = "", tid[10], msg[256];
-    sscanf(req, "%7s %255s", method, path);
+    /* path is sized for the fm API's worst case: /api/fm/move?src=<enc>&dst=<enc> with each
+     * path up to 1023 bytes percent-encoded (up to x3) plus the literal parts. req itself is
+     * already an 8192-byte stack buffer above, so this one keeps the same style. */
+    char method[8] = "", path[8192] = "", tid[10], msg[256];
+    int consumed = 0;
+    sscanf(req, "%7s %8191s%n", method, path, &consumed);
+    /* %8191s stops at the field width even when the real request target is longer, which
+     * would otherwise let a truncated-but-syntactically-valid path (e.g. naming the parent
+     * of the intended file) slip through and be dispatched. Refuse instead of guessing: the
+     * character right after the token we scanned must be request-line whitespace, or the
+     * target did not fit and we must not proceed. */
+    if (consumed > 0 && path[0] && req[consumed] != ' ' && req[consumed] != '\r' && req[consumed] != '\n') {
+        reply(fd, "414 URI Too Long", "text/plain", "uri too long\n", 13);
+        close(fd);
+        return;
+    }
     int post = !strcmp(method, "POST");
 
     if (!strncmp(path, "/api/", 5) && pin_guard(fd, req, head_end)) {

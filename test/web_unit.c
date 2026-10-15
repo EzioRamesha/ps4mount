@@ -138,6 +138,29 @@ static void test_silent_client(int listen_fd) {
     close(c);
 }
 
+/* A client that sends a few bytes of a request line and then nothing -- no newline ever
+ * arrives -- must not stall the daemon's single-threaded main loop: web_serve's own
+ * READ_LIMIT (3s) cumulative deadline on top of the per-read SO_RCVTIMEO (2s) must still
+ * close it out quickly, well under the 15 s used for test_stalled_reader above. */
+static void test_drip_client(int listen_fd) {
+    printf("client that drips the request line\n");
+    int c = connect_panel();
+    CHECK(c >= 0);
+    const char partial[] = "GET /x";
+    CHECK(write(c, partial, sizeof(partial) - 1) == (ssize_t)(sizeof(partial) - 1));
+    int s = serve_seconds(listen_fd, 10);
+    printf("  served in %d s\n", s);
+    CHECK(s >= 0 && s <= 5);
+    char resp[256] = {0};
+    size_t len = 0;
+    ssize_t r;
+    while (len + 1 < sizeof(resp) && (r = read(c, resp + len, sizeof(resp) - 1 - len)) > 0)
+        len += (size_t)r;
+    resp[len] = 0;
+    CHECK(strstr(resp, "414") != NULL); /* never silently dispatched with a partial path */
+    close(c);
+}
+
 /* Sends req and returns the whole response in out (served by a child process). */
 static void request(int listen_fd, const char *req, char *out, size_t n) {
     out[0] = 0;
@@ -152,6 +175,37 @@ static void request(int listen_fd, const char *req, char *out, size_t n) {
     if (pid == 0) {
         web_serve(listen_fd);
         _exit(0);
+    }
+    size_t len = 0;
+    ssize_t r;
+    while (len + 1 < n && (r = read(c, out + len, n - 1 - len)) > 0)
+        len += (size_t)r;
+    out[len] = 0;
+    close(c);
+    waitpid(pid, NULL, 0);
+}
+
+/* Like request(), but writes req1 then forks web_serve (so its first read only sees req1),
+ * then waits before writing req2 -- simulating a request line split across TCP segments. */
+static void request_split(int listen_fd, const char *req1, const char *req2, char *out, size_t n) {
+    out[0] = 0;
+    int c = connect_panel();
+    if (c < 0)
+        return;
+    if (write(c, req1, strlen(req1)) != (ssize_t)strlen(req1)) {
+        close(c);
+        return;
+    }
+    pid_t pid = fork();
+    if (pid == 0) {
+        web_serve(listen_fd);
+        _exit(0);
+    }
+    usleep(100000);
+    if (write(c, req2, strlen(req2)) != (ssize_t)strlen(req2)) {
+        close(c);
+        waitpid(pid, NULL, 0);
+        return;
     }
     size_t len = 0;
     ssize_t r;
@@ -307,6 +361,71 @@ static void test_fm_api(int listen_fd) {
     CHECK(strstr(resp, "move[/mnt/usb0/dst=a -> /mnt/usb0/games]") != NULL); /* dst param not spoofed by src value */
 }
 
+/* Regression for the request-target truncation bug: the method/path line used to be
+ * sscanf'd into a 255-byte buffer, so a real (and valid) fm path longer than that got cut
+ * mid-path into something that could still be a syntactically valid path -- e.g. the parent
+ * of the intended target -- and got dispatched anyway. web_serve now sizes that buffer for
+ * the fm API's worst case and refuses to dispatch when the target did not fit. */
+static void test_fm_long_target(int listen_fd) {
+    printf("file manager long request target\n");
+    /* 240 bytes: long enough that "/api/fm/delete?path=" (20 bytes) + path exceeds the old
+     * 255-byte request-target buffer, short enough that app_fm_delete's "delete[<path>]"
+     * reply still fits the unrelated, unchanged msg[256] reply buffer in web_serve. */
+    char path[300] = "/mnt/usb0/";
+    size_t base = strlen(path);
+    for (size_t i = base; i < 240; i++)
+        path[i] = 'a';
+    path[240] = 0;
+    CHECK(strlen(path) == 240);
+
+    char req[768], resp[4096];
+    int rl = snprintf(req, sizeof(req), "POST /api/fm/delete?path=%s HTTP/1.1\r\n\r\n", path);
+    CHECK(rl > 255 && (size_t)rl < sizeof(req)); /* the whole request target, not just the path value */
+    request(listen_fd, req, resp, sizeof(resp));
+    char want[300];
+    snprintf(want, sizeof(want), "delete[%s]", path);
+    CHECK(strstr(resp, want) != NULL); /* the full, un-truncated decoded path reached app_fm_delete */
+
+    /* An absurdly long request target (longer than the new 8192-byte path buffer) must be
+     * rejected outright with 414, never dispatched with a silently truncated path. */
+    char hugereq[20000];
+    char *p = hugereq;
+    p += snprintf(p, sizeof(hugereq) - (size_t)(p - hugereq), "POST /api/fm/delete?path=/mnt/usb0/");
+    while ((size_t)(p - hugereq) < sizeof(hugereq) - 32)
+        *p++ = 'a';
+    *p = 0;
+    strcat(hugereq, " HTTP/1.1\r\n\r\n");
+    request(listen_fd, hugereq, resp, sizeof(resp));
+    CHECK(strstr(resp, "414") != NULL);
+    CHECK(strstr(resp, "delete[") == NULL); /* never dispatched to app_fm_delete */
+}
+
+/* Regression for the 414 guard itself misfiring: a long fm request legitimately spans more
+ * than one TCP segment, and web_serve's single-shot initial read() could return before the
+ * request line was fully buffered, making the 414 guard misread "not here yet" as "too long".
+ * Splits a valid long request across two writes 100ms apart and expects it to still dispatch
+ * with the full path -- never a false 414. */
+static void test_fm_split_request(int listen_fd) {
+    printf("file manager request split across reads\n");
+    char path[300] = "/mnt/usb0/";
+    size_t base = strlen(path);
+    for (size_t i = base; i < 240; i++)
+        path[i] = 'a';
+    path[240] = 0;
+
+    char req[768];
+    int rl = snprintf(req, sizeof(req), "POST /api/fm/delete?path=%s HTTP/1.1\r\n\r\n", path);
+    CHECK(rl > 255 && (size_t)rl < sizeof(req)); /* long enough to matter; split happens well before the end */
+
+    char req1[128] = {0}, resp[4096];
+    memcpy(req1, req, 100);
+    request_split(listen_fd, req1, req + 100, resp, sizeof(resp));
+    char want[300];
+    snprintf(want, sizeof(want), "delete[%s]", path);
+    CHECK(strstr(resp, want) != NULL); /* dispatched with the full path */
+    CHECK(strstr(resp, "414") == NULL); /* not a false 414 from reading only the first chunk */
+}
+
 static void test_pin_guard(int listen_fd) {
     printf("panel PIN\n");
     char resp[2048];
@@ -365,6 +484,8 @@ int main(void) {
         test_update_choice(listen_fd);
         test_launch(listen_fd);
         test_fm_api(listen_fd);
+        test_fm_long_target(listen_fd);
+        test_fm_split_request(listen_fd);
         test_rescan(listen_fd);
         test_speedtest(listen_fd);
         test_log_download(listen_fd);
@@ -372,6 +493,7 @@ int main(void) {
         test_pin_guard(listen_fd);
         test_stalled_reader(listen_fd);
         test_silent_client(listen_fd);
+        test_drip_client(listen_fd);
         close(listen_fd);
     }
     printf("%d checks, %d failed\n", g_checks, g_failed);

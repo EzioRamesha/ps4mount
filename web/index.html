@@ -894,8 +894,8 @@ $('probbtn').onclick = function () {
   }).catch(function (e) { toast(t('Could not read the problems: {e}', {e: e.message})); });
 };
 
-/* Files dialog: browse a drive's folders. sel and moving are state for Task 6 (the file
-   sheet and move/rename/delete), not used yet. */
+/* Files dialog: browse a drive's folders. moving is state for the move sheet (src path
+   being moved); sel is reserved for Phase 2 bulk select, not used yet. */
 var fm = {path: '', entries: [], sel: {}, moving: null, sheet: null};
 /* CAT_ROLE_* in src/catalog.h: NONE, APP, PATCH, DLC, DUPE, ORPHAN, SPARE, NOGAME. */
 var roleNames = {1: 'Game', 2: 'Update', 3: 'Add-on', 4: 'Duplicate', 5: 'Orphan add-on', 6: 'Spare update', 7: 'Orphan update'};
@@ -937,7 +937,7 @@ function fmRender() {
     return (b.dir - a.dir) || a.name.toLowerCase().localeCompare(b.name.toLowerCase());
   }).map(function (e) {
     var icon = e.dir ? '📁' : (e.pkg ? '' : '📄');
-    var iconStyle = e.pkg ? ' style="background-image:url(/icon/' + esc(e.pkg.title_id) + ')"' : '';
+    var iconStyle = e.pkg ? ' style="background-image:url(/icon/' + encodeURIComponent(e.pkg.title_id) + ')"' : '';
     var label = e.pkg ? fmPkgName(e.pkg, e.name) : e.name;
     var meta = e.dir ? '' : gb(e.size);
     var sub = e.pkg ? t(roleNames[e.pkg.role] || 'Pkg') + (e.pkg.version ? ' v' + esc(e.pkg.version) : '') +

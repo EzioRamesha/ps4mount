@@ -284,12 +284,13 @@ settings. A `.pkg` you move, rename or replace yourself is picked up as usual.
 Click **Files** to browse the connected drives directly: folders, pkgs and other files, with
 breadcrumbs back to the drive root. Each pkg shows what it is (game, update or add-on, its title ID
 and version) and whether a library game is using it. From the list you can make a new folder, and
-rename, move or delete a file or folder.
+tap a file to rename, move or delete it. Folders can only be opened for now; renaming, moving and
+deleting a folder is planned for a later version.
 
 A pkg used by a game in the library cannot be renamed, moved or deleted: remove the game from the
 library first, or move its pkgs back. Moving is limited to the same drive for now; moving a file
-between drives is planned for a later version. Deleting a file or folder is permanent: there is no
-undo and no trash.
+between drives is planned for a later version. Deleting a file is permanent: there is no undo and
+no trash.
 
 ## Good to know
 
