@@ -76,7 +76,9 @@ form.settings input.num{width:6em}
 </main>
 <dialog id="setdlg"><h3>Settings</h3>
 <form class="settings" id="setform">
-  <label>Folders to search for pkgs (one per line, relative to each drive)
+  <div class="hint">Every folder of every drive is searched for pkgs, which are used where they are.</div>
+  <label class="check"><input type="checkbox" id="s-organize"> Move pkgs into the ps4 folder</label>
+  <label>Folders whose pkgs are moved (one per line, relative to each drive)
     <textarea id="s-paths" spellcheck="false"></textarea>
     <span class="hint">/ is the root of the drive. Games are moved into the ps4 folder, so it cannot be used here.</span>
   </label>
@@ -202,15 +204,18 @@ $('settingsbtn').onclick = function () {
     $('s-batch').checked = c.batch;
     $('s-size').value = c.batch_size;
     $('s-dlc').checked = c.dlc;
+    $('s-organize').checked = c.organize;
     $('s-size').disabled = !c.batch;
     maxRestore = c.max_restore_batch || 10;
     $('s-rsize').value = c.restore_batch || 5;
     var spans = document.querySelectorAll('.rmax');
     for (var i = 0; i < spans.length; i++) spans[i].textContent = maxRestore;
+    $('s-paths').disabled = !c.organize;
     $('setdlg').showModal();
   }).catch(function (e) { toast('Could not read the settings: ' + e.message); });
 };
 $('s-batch').onchange = function () { $('s-size').disabled = !this.checked; };
+$('s-organize').onchange = function () { $('s-paths').disabled = !this.checked; };
 $('s-cancel').onclick = function () { $('setdlg').close(); };
 $('s-rsize').oninput = function () {
   var v = this.value.replace(/[^0-9]/g, '');
@@ -271,7 +276,8 @@ $('setform').onsubmit = function (e) {
   e.preventDefault();
   if (!restoreSize()) return;
   var body = 'batch=' + ($('s-batch').checked ? 1 : 0) + '&batch_size=' + encodeURIComponent($('s-size').value) +
-    '&dlc=' + ($('s-dlc').checked ? 1 : 0) + '&restore_batch=' + $('s-rsize').value + '&paths=' + encodeURIComponent($('s-paths').value);
+    '&dlc=' + ($('s-dlc').checked ? 1 : 0) + '&organize=' + ($('s-organize').checked ? 1 : 0) +
+    '&restore_batch=' + $('s-rsize').value + '&paths=' + encodeURIComponent($('s-paths').value);
   fetch('/api/config', {method: 'POST', cache: 'no-store', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: body})
     .then(function (r) { return r.json(); })
     .then(function (j) { toast(j.message || j.error); if (j.ok) $('setdlg').close(); })

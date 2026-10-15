@@ -31,10 +31,12 @@ The web panel, opened from the **Media** tab:
 
 ## Features
 
-- Detects PS4 fake PKGs (game, update and add-ons) in the root of any connected USB drive, or in other
-  folders chosen in the settings.
+- Detects PS4 fake PKGs (game, update and add-ons) in every folder of every connected USB drive and
+  uses them where they are: keep one folder per game, with its update and add-ons in subfolders, or
+  any other layout.
 - Adds the games to the home screen with their icon, name and update version.
-- Applies updates: put the update `.pkg` next to the game and it is picked up automatically.
+- Applies updates: put the update `.pkg` anywhere on the same drive and it is picked up automatically.
+  With several updates of a game, the highest version is used.
 - Installs add-ons (DLC), with data or unlock-only. An add-on is matched to its game by title ID, or by
   the add-on IDs the game lists (so add-ons of another region of the same game work too).
 - Adds many games in groups, so a drive with dozens of games does not overload the console.
@@ -65,8 +67,8 @@ The web panel, opened from the **Media** tab:
 Download `ps4mount.elf` from the [Releases](https://github.com/gasb07/ps4mount/releases) page
 (or [build it](#building)).
 
-1. Copy the PS4 game `.pkg` (and its update and add-on `.pkg` files, if you have them) to the **root**
-   of the USB drive. The file names do not matter.
+1. Copy the PS4 game `.pkg` (and its update and add-on `.pkg` files, if you have them) to the USB
+   drive, in any folder. The file and folder names do not matter.
 2. Plug the drive into the PS5.
 3. Send `ps4mount.elf` to the ELF loader (port 9021). Do this after every console boot, or add it to
    the payloads your jailbreak loads automatically.
@@ -77,7 +79,24 @@ Download `ps4mount.elf` from the [Releases](https://github.com/gasb07/ps4mount/r
    - `<game name> ready to play`
 5. Start the game from the home screen.
 
-On the first run PS4Mount moves every package it uses into a folder per game on the same drive:
+PS4Mount never moves or renames the packages: it searches every folder of the drive and groups each
+game with its update and add-ons on the same drive. For example:
+
+```
+/Games/Persona 5/Persona 5.pkg       game
+/Games/Persona 5/Update/v1.10.pkg    update (optional)
+/Games/Persona 5/DLC/*.pkg           add-ons (optional)
+```
+
+Hidden folders, `System Volume Information` and `$RECYCLE.BIN` are not searched. When the same game is
+twice on a drive, the first copy (by path) is used and the scan notification says so. A game is
+reported as ready only after its add-ons are installed too. An add-on whose game is not on the same
+drive is not used; the scan notification says how many there are.
+
+To add more games later, copy their `.pkg` files to the drive.
+
+With **Move pkgs into the ps4 folder** on (see [Settings](#settings)), PS4Mount instead moves every
+package it uses into a folder per game on the same drive, as earlier versions did:
 
 ```
 /ps4/CUSAxxxxx/app.pkg                          game
@@ -85,11 +104,7 @@ On the first run PS4Mount moves every package it uses into a folder per game on 
 /ps4/CUSAxxxxx/addcont/CUSAyyyyy/<LABEL>/ac.pkg add-on (optional)
 ```
 
-A game is reported as ready only after its add-ons are installed too. An add-on whose game is not on the
-same drive stays where it is and waits: it is moved and installed as soon as its game is on the drive.
-The scan notification says how many add-ons are waiting.
-
-Keep this layout. To add more games later, copy their `.pkg` files to the root of the drive again.
+Games already in this layout keep working with the setting off.
 
 ### Web panel
 
@@ -122,10 +137,11 @@ Buttons:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| Folders to search for pkgs | `/` | Folders, relative to each drive, where new `.pkg` files are picked up (one per line). `/` is the root. The `ps4` folder cannot be used: it holds the games already moved. |
+| Move pkgs into the ps4 folder | Off | Moves new `.pkg` files into `/ps4/CUSAxxxxx/` (see [Usage](#usage)). When off, every `.pkg` is used where it is. |
+| Folders whose pkgs are moved | `/` | With the setting above on: folders, relative to each drive, whose `.pkg` files are moved (one per line). `/` is the root. The `ps4` folder cannot be used: it holds the games already moved. |
 | Add new games in groups | On | Adds many new games in groups instead of one after the other, which keeps the console stable when a drive has a lot of games. |
 | Games per group | 5 | Size of each group (1 to 50). |
-| Install add-ons (DLC) | On | Moves and installs add-on `.pkg` files. When off, add-ons are left where they are. |
+| Install add-ons (DLC) | On | Installs add-on `.pkg` files. When off, add-ons are not used. |
 
 The settings also have **Move all games back** and **Pick up moved-back pkgs again** (see below).
 
@@ -140,11 +156,12 @@ Deleting a game from the PS5 (Options > Delete on the home screen, or Settings >
 drive. A removed game comes back
 when you reconnect the drive or click **Add to library**.
 
-To delete the game for good, delete its `/ps4/CUSAxxxxx` folder from the drive on a computer.
+To delete the game for good, delete its `.pkg` files (or its `/ps4/CUSAxxxxx` folder) from the drive on
+a computer.
 
 ### Moving pkgs back
 
-PS4Mount records where every `.pkg` came from in `ps4/CUSAxxxxx/origin.txt` on the drive: the folder
+This applies to games moved into the ps4 folder. PS4Mount records where every `.pkg` came from in `ps4/CUSAxxxxx/origin.txt` on the drive: the folder
 (any of the scan folders) and the original file name. **Move pkgs back** on a game, or **Move all games
 back** in the settings, undoes the move:
 
@@ -276,6 +293,7 @@ release with `ps4mount.elf` and its SHA-256 checksum attached.
 | --- | --- |
 | `src/main.c` | Daemon: drive scan, registration, mounts, klog events, panel actions |
 | `src/pkg.c` | PKG reader and fake-key entry decryption |
+| `src/catalog.c` | Finds the `.pkg` files in every folder of a drive and groups them per game |
 | `src/build.c` | Generators for the install files (app/patch metadata, PlayGo records, license) |
 | `src/db.c` | Library rows (`app.db`, `appinfo.db`) |
 | `src/crypto.c` | SHA-256, AES-128-CBC, CRC32C, RSA-2048 |
