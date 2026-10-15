@@ -3129,28 +3129,48 @@ static int fm_protected(const char *path, const char **name) {
  * this does the same traversal once and gathers every path it would have matched). Skips a
  * game exactly where fm_protected would skip it (not registered), then collects the game pkg,
  * the resolved update (catalog_patch, which also finds a cross-drive update) and every add-on
- * (catalog_dlc_of, local and cross-drive). Returns how many paths were collected, stopping at
- * max; the paths point into the catalogs, which do not change while one listing runs. */
-static int fm_protected_paths(const char **out, int max) {
+ * (catalog_dlc_of, local and cross-drive). Returns how many paths were collected; the paths
+ * point into the catalogs, which do not change while one listing runs.
+ *
+ * *truncated is set to 1 if max was reached before every path was collected. That can happen
+ * even though max is sized from the total pkg count: with cross-drive linking on, catalog_link
+ * can link one physical pkg into more than one game (an orphan add-on's xdlc loop has no
+ * "first match wins" guard, so one add-on can serve every matching game on every other drive;
+ * pick_any_update can likewise make one cross-drive update the patch used by several
+ * drive-copies of a title), so the number of paths collected is not actually bounded by the
+ * pkg count when that fan-out happens. The caller must fall back to per-path fm_protected()
+ * checks when truncated is set, since the paths left uncollected here are still protected. */
+static int fm_protected_paths(const char **out, int max, int *truncated) {
     int n = 0;
-    for (int d = 0; d < NUM_DRIVES && n < max; d++) {
+    *truncated = 0;
+    for (int d = 0; d < NUM_DRIVES; d++) {
         const catalog_t *cat = &g_cat[d];
-        for (int gi = 0; gi < cat->ngames && n < max; gi++) {
+        for (int gi = 0; gi < cat->ngames; gi++) {
             const cat_game_t *g = &cat->games[gi];
             if (!db_is_registered(g->title_id))
                 continue;
+            if (n >= max) {
+                *truncated = 1;
+                return n;
+            }
             out[n++] = cat->pkgs[g->app].path;
-            if (n >= max)
-                break;
             const cat_pkg_t *used = catalog_patch(g_cat, cat, g);
-            if (used)
+            if (used) {
+                if (n >= max) {
+                    *truncated = 1;
+                    return n;
+                }
                 out[n++] = used->path;
-            if (n >= max)
-                break;
+            }
             const cat_pkg_t *dlc[2 * CAT_MAX_DLC];
             int dn = catalog_dlc_of(g_cat, cat, g, dlc, 2 * CAT_MAX_DLC);
-            for (int k = 0; k < dn && n < max; k++)
+            for (int k = 0; k < dn; k++) {
+                if (n >= max) {
+                    *truncated = 1;
+                    return n;
+                }
                 out[n++] = dlc[k]->path;
+            }
         }
     }
     return n;
@@ -3172,10 +3192,14 @@ int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap) {
     /* The protected-path set cannot change while this one listing runs, so it is collected
      * once here instead of once per entry (that used to mean every entry re-walked every
      * catalog, drive x games x add-ons, and re-ran db_is_registered for every game of every
-     * entry). The cap is the total pkg count across every drive's catalog, plus a little
-     * slack: each path fm_protected_paths collects names one real pkg already counted there,
-     * so that is always enough room. Skipped entirely when this folder is not on a known
-     * drive (cat is NULL), since then no entry below is ever matched to a catalog pkg either. */
+     * entry). pcap (the total pkg count across every drive's catalog, plus a little slack)
+     * assumes each collected path is one distinct physical pkg already counted in some
+     * catalog's npkgs. Cross-drive linking can break that assumption (see fm_protected_paths),
+     * so a true count is not knowable up front; if the walk below hits pcap before it is done,
+     * ppaths is dropped and the per-entry fm_protected() fallback further down is used for
+     * this listing instead, so a saturated collection never means a dropped protection.
+     * Skipped entirely when this folder is not on a known drive (cat is NULL), since then no
+     * entry below is ever matched to a catalog pkg either. */
     const char **ppaths = NULL;
     int pcount = 0;
     if (cat) {
@@ -3183,8 +3207,15 @@ int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap) {
         for (int i = 0; i < NUM_DRIVES; i++)
             pcap += g_cat[i].npkgs;
         ppaths = malloc(sizeof(*ppaths) * (size_t)pcap);
-        if (ppaths)
-            pcount = fm_protected_paths(ppaths, pcap);
+        if (ppaths) {
+            int truncated = 0;
+            pcount = fm_protected_paths(ppaths, pcap, &truncated);
+            if (truncated) {
+                free(ppaths);
+                ppaths = NULL; /* fall back to fm_protected() per entry below rather than
+                                 * report "not protected" for whatever did not fit */
+            }
+        }
     }
 
     buf_printf(out, "{\"path\":");
@@ -3228,7 +3259,9 @@ int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap) {
                         break;
                     }
             } else {
-                prot = fm_protected(full, NULL); /* ppaths malloc failed: fall back so a
+                prot = fm_protected(full, NULL); /* ppaths is NULL: either the malloc above
+                                                   * failed or the collection saturated pcap;
+                                                   * either way fall back per entry so a
                                                    * protected pkg is still never missed */
             }
             buf_printf(out, ",\"protected\":%s}", prot ? "true" : "false");
