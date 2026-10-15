@@ -699,7 +699,12 @@ function render() {
     var k = by === 'state' ? (order[a.state] || 9) - (order[b.state] || 9) : by === 'source' ? (a.source < b.source ? -1 : a.source > b.source ? 1 : 0) : 0;
     return k || a.name.toLowerCase().localeCompare(b.name.toLowerCase());
   });
-  games.forEach(function (g) { counts[g.state] = (counts[g.state] || 0) + 1; });
+  var onDrive = 0;
+  games.forEach(function (g) {
+    if (dv && g.drive !== dv) return;
+    onDrive++;
+    counts[g.state] = (counts[g.state] || 0) + 1;
+  });
   if (stateFilter && !counts[stateFilter]) stateFilter = ''; /* the last game of that state is gone */
   list.forEach(function (g) {
     if (q && (g.name + ' ' + g.title_id).toLowerCase().indexOf(q) < 0) return;
@@ -760,7 +765,7 @@ function render() {
   });
   $('grid').innerHTML = html;
   $('empty').hidden = games.length > 0;
-  var s = '<span>' + t('{n} game(s)', {n: games.length}) + '</span>';
+  var s = '<span>' + t('{n} game(s)', {n: onDrive}) + '</span>';
   for (var k in counts)
     s += '<button type="button" data-state="' + k + '" class="chip' + (stateFilter === k ? ' on' : '') + '" title="' +
       t('Show only these games') + '">' + esc(labels[k] ? t(labels[k]) : k) + ': ' + counts[k] + '</button>';
