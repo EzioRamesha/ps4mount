@@ -204,6 +204,45 @@ static size_t read_file(const char *path, char *out, size_t cap) {
     return (size_t)n;
 }
 
+#define DOING_FILE STATE_DIR "/doing.txt"
+
+/* Marks action (e.g. "adding", "launching") as in progress for tids (comma-separated,
+ * no spaces). Overwrites any previous marker: only one risky operation is ever tracked
+ * at a time, matching how the daemon actually runs them (one batch, or one launch). */
+static void doing_mark(const char *action, const char *tids) {
+    char body[512];
+    int n = snprintf(body, sizeof(body), "%s\n%s\n", action, tids);
+    write_file(DOING_FILE, body, (size_t)n, 0600);
+}
+
+/* Clears the marker. Called right after the bracketed operation returns, on every path:
+ * success, failure, or a timeout that still returned. Only a console that did not come
+ * back at all leaves this uncleared. */
+static void doing_clear(void) {
+    unlink(DOING_FILE);
+}
+
+/* Reads the marker left by a previous run that did not clear it. action/tids are sized
+ * for the same things doing_mark takes. Returns 0 (nothing was in progress) or 1 (action
+ * and tids are filled in; the caller must still doing_clear() once it has acted on this). */
+static int doing_find(char *action, size_t asz, char *tids, size_t tsz) {
+    char buf[512];
+    size_t n = read_file(DOING_FILE, buf, sizeof(buf));
+    if (!n)
+        return 0;
+    char *nl = strchr(buf, '\n');
+    if (!nl)
+        return 0;
+    *nl = 0;
+    snprintf(action, asz, "%s", buf);
+    char *tids_start = nl + 1;
+    char *nl2 = strchr(tids_start, '\n');
+    if (nl2)
+        *nl2 = 0;
+    snprintf(tids, tsz, "%s", tids_start);
+    return 1;
+}
+
 static int mounted_from(const char *mountpoint, char *from, size_t n) {
     struct statfs sf;
     if (statfs(mountpoint, &sf) || strcmp(sf.f_mntonname, mountpoint) || strcmp(sf.f_fstypename, "nullfs"))
