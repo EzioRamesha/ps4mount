@@ -2033,7 +2033,15 @@ static void scan_root(const char *root, int fresh, int reconnected) {
             if (src.app.fd > 0)
                 src_close(&src);
         }
+        char doing_tids[50 * 11] = ""; /* up to batch_size (<= 50) tids, "TID," each */
+        for (int k = 0; k < np; k++)
+            snprintf(doing_tids + strlen(doing_tids), sizeof(doing_tids) - strlen(doing_tids), "%s%s", k ? "," : "",
+                     ids[k]);
+        if (np)
+            doing_mark("adding", doing_tids);
         install_all(ids, np);
+        if (np)
+            doing_clear();
         /* own rows only after ShellCore stopped writing to its databases */
         wait_db_quiet(3, 30);
         for (int k = 0; k < n; k++) {
@@ -4305,6 +4313,23 @@ int main(void) {
     sceUserServiceInitialize(0);
     sceAppInstUtilInitialize();
     mkdirs(STATE_DIR, 0777);
+    {
+        char action[16], tids[512];
+        if (doing_find(action, sizeof(action), tids, sizeof(tids))) {
+            if (!strcmp(action, "adding")) {
+                for (char *tid = strtok(tids, ","); tid; tid = strtok(NULL, ",")) {
+                    for (int i = 0; i < RETRY_MAX_TRIES; i++)
+                        retry_failed(&g_retry, tid, time(NULL),
+                                      "Held back: the console may have shut down while this was being added "
+                                      "last time. Tap Try again once you're ready to retry.");
+                    printf("[safety] %s: held back, was being added when the console last stopped responding\n", tid);
+                }
+                notify("Some games were held back: the console may have shut down while they were being added "
+                       "last time. See the panel to try again.");
+            }
+            doing_clear();
+        }
+    }
     /* the log goes to a file, every line with its time; when it cannot be opened, stdout
      * stays as it was */
     log_trim(LOG_FILE, LOG_MAX, LOG_KEEP);
