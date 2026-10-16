@@ -3583,6 +3583,10 @@ int app_fm_copy(const char *srcs, const char *dst, int copy, int conflict, char 
                 }
                 memcpy(srcs_buf[n], seg_start, len);
                 srcs_buf[n][len] = 0;
+                if (!fm_path_ok(srcs_buf[n])) {
+                    snprintf(msg, cap, "One of the selected paths is not valid");
+                    return -1;
+                }
                 n++;
             }
             seg_start = p + 1;
