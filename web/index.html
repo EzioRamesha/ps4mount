@@ -81,6 +81,10 @@ select{background:var(--panel);color:var(--fg);border:1px solid var(--line);bord
 .fmhead{display:flex;gap:10px;align-items:center;padding:0 10px 6px;color:var(--muted);font-size:12px;font-weight:600;text-transform:uppercase}
 .fmhead .fmheadicon,.fmhead .fmheadmore{flex:0 0 36px}
 .fmhead .fmheadmore{flex:0 0 40px}
+.fmhead button.fmsortbtn{background:none;border:none;min-height:0;padding:0;margin:0;color:inherit;font:inherit;font-weight:600;font-size:12px;text-transform:uppercase;cursor:pointer;display:inline-flex;align-items:center;gap:2px}
+.fmhead button.fmsortbtn:hover:not(:disabled){color:var(--fg)}
+.fmhead button.fmsortbtn.active{color:var(--fg)}
+.fmsortarrow{font-size:10px}
 .fmlist{flex:1;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:8px}
 .fmrow{display:flex;gap:10px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);cursor:pointer;min-height:40px}
 .fmrow:last-child{border-bottom:none}
@@ -97,7 +101,11 @@ select{background:var(--panel);color:var(--fg);border:1px solid var(--line);bord
    dropped from both the header stub and the rows: there is no room for them next to a
    full-width, readable name column on a phone-sized PS5 browser window. */
 @media (max-width:600px){
-  .fmrow .fmsize,.fmrow .fmdate,.fmhead .fmsize,.fmhead .fmdate{display:none}
+  /* .fmhead button.fmsize/.fmdate matches the Task 6 sort-header buttons at the same
+     specificity as the .fmhead button.fmsortbtn rule above (two classes, one type each), so
+     this still wins on source order instead of losing to that rule's own display value. */
+  .fmrow .fmsize,.fmrow .fmdate,.fmhead .fmsize,.fmhead .fmdate,
+  .fmhead button.fmsize,.fmhead button.fmdate{display:none}
 }
 table{width:100%;border-collapse:collapse;font-size:13px}
 td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-break:break-all}
@@ -148,7 +156,8 @@ form.settings input.num{width:6em}
     <button id="fmup">Up</button>
     <button id="fmrefresh">Refresh</button>
     <button id="fmnew">New folder</button>
-    <!-- Task 6 wires sorting onto this control; left hidden and unwired until then. -->
+    <!-- Not wired by Task 6: sorting is done via the clickable column headers below
+         (task-6-brief.md). Left hidden for a later task to decide its purpose, if any. -->
     <select id="fmsort" aria-label="Sort" hidden><option value="name">Sort by name</option></select>
     <!-- Task 7 wires multi-select and these bulk actions; left hidden and unwired until then. -->
     <button id="fmselall" hidden>Select all</button>
@@ -158,11 +167,11 @@ form.settings input.num{width:6em}
   <div class="fmbar"><span id="fmcrumbs"></span></div>
   <div class="warn" id="fmmovebar" hidden></div>
   <div class="warn" id="fmerr" hidden></div>
-  <div class="fmhead">
+  <div class="fmhead" id="fmhead">
     <span class="fmheadicon"></span>
-    <span class="fmname">Name</span>
-    <span class="fmsize">Size</span>
-    <span class="fmdate">Modified</span>
+    <button type="button" class="fmname fmsortbtn" data-sort="name">Name<span class="fmsortarrow"></span></button>
+    <button type="button" class="fmsize fmsortbtn" data-sort="size">Size<span class="fmsortarrow"></span></button>
+    <button type="button" class="fmdate fmsortbtn" data-sort="time">Modified<span class="fmsortarrow"></span></button>
     <span class="fmheadmore"></span>
   </div>
   <div id="fmlist" class="fmlist"></div>
@@ -965,10 +974,39 @@ $('probbtn').onclick = function () {
   }).catch(function (e) { toast(t('Could not read the problems: {e}', {e: e.message}), true); });
 };
 
+/* Sort choice for the file manager, persisted as "key,desc" (e.g. "size,1") - plain text like
+   ps4mount-pin/ps4mount-lang, not JSON. Defaults to name ascending (today's behaviour) when
+   nothing is stored, the value is malformed, or storage is disabled. */
+function fmSortGet() {
+  try {
+    var v = (localStorage.getItem('ps4mount-fm-sort') || '').split(',');
+    if (v[0] === 'name' || v[0] === 'size' || v[0] === 'time') return {key: v[0], desc: v[1] === '1'};
+  } catch (e) {}
+  return {key: 'name', desc: false};
+}
+function fmSortPut(key, desc) { try { localStorage.setItem('ps4mount-fm-sort', key + ',' + (desc ? '1' : '0')); } catch (e) {} }
+
 /* Files view: browse a drive's folders. moving is state for the move bar (src path being
    moved); actionsFor is the name of the entry whose inline Rename/Move/Delete row is open
-   (only one at a time); sel is reserved for Phase 2 bulk select, not used yet. */
-var fm = {path: '', entries: [], sel: {}, moving: null, actionsFor: null};
+   (only one at a time); sel is reserved for Phase 2 bulk select, not used yet. sortKey/sortDesc
+   drive the column-header sort (Task 6), restored from localStorage on load. */
+var fmSortInit = fmSortGet();
+var fm = {path: '', entries: [], sel: {}, moving: null, actionsFor: null,
+  sortKey: fmSortInit.key, sortDesc: fmSortInit.desc};
+
+/* Sort comparator for fmRender: folders always before files, for every key and direction
+   (matches fm_sort's rule on the daemon side, src/fm.c) - checked first and never flipped by
+   sortDesc. Ties within a size/time sort fall back to the name comparison so order stays
+   stable and deterministic across re-renders. */
+function fmCmp(a, b) {
+  var byDir = b.dir - a.dir;
+  if (byDir) return byDir;
+  var mul = fm.sortDesc ? -1 : 1;
+  var byName = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+  if (fm.sortKey === 'size') return ((a.size || 0) - (b.size || 0)) * mul || byName;
+  if (fm.sortKey === 'time') return ((a.mtime || 0) - (b.mtime || 0)) * mul || byName;
+  return byName * mul;
+}
 /* CAT_ROLE_* in src/catalog.h: NONE, APP, PATCH, DLC, DUPE, ORPHAN, SPARE, NOGAME. */
 var roleNames = {1: 'Game', 2: 'Update', 3: 'Add-on', 4: 'Duplicate', 5: 'Orphan add-on', 6: 'Spare update', 7: 'Orphan update'};
 
@@ -1022,6 +1060,16 @@ function fmRender() {
   $('fmcrumbs').innerHTML = html;
   $('fmnew').hidden = fm.path === ''; /* nothing to create a folder in at the drive list */
   $('fmup').hidden = fm.path === ''; /* nothing above the drive list itself */
+  /* Sorting is inert at the drive list root: every row there is a drive, not a size/date-
+     bearing entry, so a "disabled" column header (same style as every other disabled button)
+     signals there is nothing to sort by here. */
+  var fmSortable = fm.path !== '';
+  [].forEach.call($('fmhead').querySelectorAll('[data-sort]'), function (btn) {
+    btn.disabled = !fmSortable;
+    var active = fmSortable && btn.getAttribute('data-sort') === fm.sortKey;
+    btn.classList.toggle('active', active);
+    btn.querySelector('.fmsortarrow').textContent = active ? (fm.sortDesc ? ' ▼' : ' ▲') : '';
+  });
   $('fmmovebar').hidden = !fm.moving;
   if (fm.moving) {
     /* The source's own parent folder is never a valid destination: "Move here" there always
@@ -1035,9 +1083,7 @@ function fmRender() {
       (fm.path === '' || fmSameFolder ? '' : ' <button type="button" id="fmdo">' + t('Move here') + '</button>') +
       ' <button type="button" id="fmcancel">' + t('Cancel') + '</button>';
   }
-  var rows = fm.entries.slice().sort(function (a, b) {
-    return (b.dir - a.dir) || a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-  }).map(function (e) {
+  var rows = fm.entries.slice().sort(fmCmp).map(function (e) {
     if (e.drive)
       return '<div class="fmrow" data-name="' + esc(e.name) + '"><span class="fmicon">📁</span>' +
         '<span class="fmname">' + t('{name}: {free} free of {total}', {name: esc(e.name), free: gb(e.free), total: gb(e.total)}) +
@@ -1139,6 +1185,18 @@ $('fmrefresh').addEventListener('click', function () { fmOpen(fm.path); });
 $('fmcrumbs').addEventListener('click', function (e) {
   var b = e.target.closest('button[data-crumb]');
   if (b) fmOpen(b.getAttribute('data-crumb'));
+});
+/* Column-header sort (Task 6): clicking the active column flips direction; clicking another
+   one switches to it, ascending. Sorting is client-side on the already-loaded fm.entries, so
+   this just persists the choice and re-renders - no server round-trip. */
+$('fmhead').addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-sort]');
+  if (!b || b.disabled) return;
+  var key = b.getAttribute('data-sort');
+  if (fm.sortKey === key) fm.sortDesc = !fm.sortDesc;
+  else { fm.sortKey = key; fm.sortDesc = false; }
+  fmSortPut(fm.sortKey, fm.sortDesc);
+  fmRender();
 });
 $('fmlist').addEventListener('click', function (e) {
   var more = e.target.closest('.fmmore[data-name]');
