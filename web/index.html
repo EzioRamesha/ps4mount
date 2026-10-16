@@ -946,9 +946,21 @@ function load() {
     $('paused-msg').textContent = j.paused ?
       t('Adding games is paused: {why}. Games already added still work. Restart the console before resuming.', {why: j.paused}) : '';
     render();
-    /* The Files view's drive list is built from this same data but is not re-rendered by
-       render(): without this, an unplugged drive stays listed until the user clicks it. */
-    if (!$('fmview').hidden && fm.path === '') fmOpen('');
+    if (!$('fmview').hidden) {
+      /* The Files view's drive list is built from this same data but is not re-rendered by
+         render(): without this, an unplugged drive stays listed until the user clicks it. */
+      if (fm.path === '') fmOpen('');
+      /* Finding 6: this tab's Files view may already have been open (not just freshly opened,
+         which is the only other place fmTaskStart is called before a Paste) when a task was
+         started elsewhere - another tab, another device on the network. Without this, this tab
+         never learns about it: the overlay never appears and every control stays enabled, so
+         the user gets a confusing already-running error on the next thing they try here.
+         Skip the check entirely while this tab's own chain is already polling - fmTaskStart
+         itself is a no-op then too (fm.taskPolling/fm.taskGen), but there is no reason to spend
+         an extra GET every 5s on top of the 1s chain already running. */
+      if (!fm.taskPolling)
+        api('/api/fm/task').then(function (j) { if (j.state === 'running') fmTaskStart(); }).catch(function () {});
+    }
   })
     .catch(function (e) { if (!pinDeclined) toast(t('Could not read the list: {e}', {e: e.message}), true); });
 }
