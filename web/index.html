@@ -85,8 +85,11 @@ select{background:var(--panel);color:var(--fg);border:1px solid var(--line);bord
 .fmhead button.fmsortbtn:hover:not(:disabled){color:var(--fg)}
 .fmhead button.fmsortbtn.active{color:var(--fg)}
 .fmsortarrow{font-size:10px}
+.fmhead .fmheadcheck{flex:0 0 24px}
 .fmlist{flex:1;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:8px}
 .fmrow{display:flex;gap:10px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);cursor:pointer;min-height:40px}
+.fmrow .fmcheck{flex:0 0 24px;display:flex;align-items:center;justify-content:center}
+.fmrow .fmcheck input{width:16px;height:16px;margin:0;cursor:pointer}
 .fmrow:last-child{border-bottom:none}
 .fmrow:hover{background:#1d222b}
 .fmicon{border-radius:6px;background:#0b0d11 center/cover no-repeat;flex:none;display:flex;align-items:center;justify-content:center}
@@ -159,15 +162,13 @@ form.settings input.num{width:6em}
     <!-- Not wired by Task 6: sorting is done via the clickable column headers below
          (task-6-brief.md). Left hidden for a later task to decide its purpose, if any. -->
     <select id="fmsort" aria-label="Sort" hidden><option value="name">Sort by name</option></select>
-    <!-- Task 7 wires multi-select and these bulk actions; left hidden and unwired until then. -->
-    <button id="fmselall" hidden>Select all</button>
-    <button id="fmbulkmove" hidden>Move</button>
-    <button class="danger" id="fmbulkdelete" hidden>Delete</button>
+    <button id="fmselall">Select all</button>
   </div>
   <div class="fmbar"><span id="fmcrumbs"></span></div>
   <div class="warn" id="fmmovebar" hidden></div>
   <div class="warn" id="fmerr" hidden></div>
   <div class="fmhead" id="fmhead">
+    <span class="fmheadcheck"></span>
     <span class="fmheadicon"></span>
     <button type="button" class="fmname fmsortbtn" data-sort="name">Name<span class="fmsortarrow"></span></button>
     <button type="button" class="fmsize fmsortbtn" data-sort="size">Size<span class="fmsortarrow"></span></button>
@@ -175,6 +176,15 @@ form.settings input.num{width:6em}
     <span class="fmheadmore"></span>
   </div>
   <div id="fmlist" class="fmlist"></div>
+  <div class="selbar" id="fmselbar" hidden><span id="fmselcount"></span>
+    <!-- Copy and Move only make sense with the clipboard model (select, Copy or Move,
+         navigate elsewhere, Paste), which Task 8 ("Copy / move with the clipboard model and
+         conflict prompts") implements. Left as inert, hidden stubs here so Task 8 has a fixed
+         place to wire them into, same as fmbulkmove was left by Task 5 for this task. -->
+    <button class="primary" id="fmbulkcopy" hidden>Copy</button>
+    <button id="fmbulkmove" hidden>Move</button>
+    <button class="danger" id="fmbulkdelete">Delete</button>
+    <button id="fmselclear">Clear</button></div>
   <!-- Task 9 fills this in with task progress/cancel UI. -->
   <div id="fmtask" hidden></div>
 </div>
@@ -372,7 +382,10 @@ es: {
 'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Solo se muestran los primeros {n} elementos. Usa subcarpetas para ver el resto.',
 'Back to library': 'Volver a la biblioteca', 'Up': 'Subir', 'Refresh': 'Actualizar',
 'Name': 'Nombre', 'Size': 'Tamaño', 'Modified': 'Modificado', 'Actions': 'Acciones',
-'folder {name}': 'la carpeta {name}'
+'folder {name}': 'la carpeta {name}',
+'Clear': 'Borrar', '{n} selected ({size})': '{n} seleccionados ({size})',
+'Delete {n} item(s)? They move to Trash and are kept for {days} days.': '¿Borrar {n} elemento(s)? Se mueven a la Papelera y se guardan durante {days} días.',
+'Deleting {i} of {n}…': 'Borrando {i} de {n}…'
 },
 pt: {
 'Search game or CUSA': 'Buscar jogo ou CUSA', 'Sort': 'Ordenar', 'Sort by name': 'Ordenar por nome',
@@ -483,7 +496,10 @@ pt: {
 'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Só são mostrados os primeiros {n} itens. Use subpastas para ver o resto.',
 'Back to library': 'Voltar à biblioteca', 'Up': 'Subir', 'Refresh': 'Atualizar',
 'Name': 'Nome', 'Size': 'Tamanho', 'Modified': 'Modificado', 'Actions': 'Ações',
-'folder {name}': 'a pasta {name}'
+'folder {name}': 'a pasta {name}',
+'Clear': 'Limpar', '{n} selected ({size})': '{n} selecionados ({size})',
+'Delete {n} item(s)? They move to Trash and are kept for {days} days.': 'Apagar {n} item(ns)? Vão para a Lixeira e ficam guardados por {days} dias.',
+'Deleting {i} of {n}…': 'Apagando {i} de {n}…'
 },
 fr: {
 'Search game or CUSA': 'Chercher un jeu ou CUSA', 'Sort': 'Trier', 'Sort by name': 'Trier par nom',
@@ -594,7 +610,10 @@ fr: {
 'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Seuls les {n} premiers éléments sont affichés ici. Utilisez des sous-dossiers pour voir le reste.',
 'Back to library': 'Retour à la bibliothèque', 'Up': 'Remonter', 'Refresh': 'Actualiser',
 'Name': 'Nom', 'Size': 'Taille', 'Modified': 'Modifié', 'Actions': 'Actions',
-'folder {name}': 'le dossier {name}'
+'folder {name}': 'le dossier {name}',
+'Clear': 'Effacer', '{n} selected ({size})': '{n} sélectionné(s) ({size})',
+'Delete {n} item(s)? They move to Trash and are kept for {days} days.': 'Supprimer {n} élément(s) ? Ils vont dans la Corbeille et y restent {days} jours.',
+'Deleting {i} of {n}…': 'Suppression de {i} sur {n}…'
 }
 };
 function langPicked() { try { return localStorage.getItem('ps4mount-lang') || ''; } catch (e) { return ''; } }
@@ -988,8 +1007,9 @@ function fmSortPut(key, desc) { try { localStorage.setItem('ps4mount-fm-sort', k
 
 /* Files view: browse a drive's folders. moving is state for the move bar (src path being
    moved); actionsFor is the name of the entry whose inline Rename/Move/Delete row is open
-   (only one at a time); sel is reserved for Phase 2 bulk select, not used yet. sortKey/sortDesc
-   drive the column-header sort (Task 6), restored from localStorage on load. */
+   (only one at a time); sel is the set of selected entry names in the current folder (Task 7
+   bulk select: name -> 1, like the game grid's "selected"). sortKey/sortDesc drive the
+   column-header sort (Task 6), restored from localStorage on load. */
 var fmSortInit = fmSortGet();
 var fm = {path: '', entries: [], sel: {}, moving: null, actionsFor: null,
   sortKey: fmSortInit.key, sortDesc: fmSortInit.desc};
@@ -1060,6 +1080,7 @@ function fmRender() {
   $('fmcrumbs').innerHTML = html;
   $('fmnew').hidden = fm.path === ''; /* nothing to create a folder in at the drive list */
   $('fmup').hidden = fm.path === ''; /* nothing above the drive list itself */
+  $('fmselall').hidden = fm.path === ''; /* drives themselves cannot be selected */
   /* Sorting is inert at the drive list root: every row there is a drive, not a size/date-
      bearing entry, so a "disabled" column header (same style as every other disabled button)
      signals there is nothing to sort by here. */
@@ -1085,7 +1106,9 @@ function fmRender() {
   }
   var rows = fm.entries.slice().sort(fmCmp).map(function (e) {
     if (e.drive)
-      return '<div class="fmrow" data-name="' + esc(e.name) + '"><span class="fmicon">📁</span>' +
+      /* Drives cannot be selected: an empty .fmcheck keeps the row's columns lined up with
+         the checkbox column of every selectable row below it. */
+      return '<div class="fmrow" data-name="' + esc(e.name) + '"><span class="fmcheck"></span><span class="fmicon">📁</span>' +
         '<span class="fmname">' + t('{name}: {free} free of {total}', {name: esc(e.name), free: gb(e.free), total: gb(e.total)}) +
         '</span></div>';
     var icon = e.dir ? '📁' : (e.pkg ? '' : '📄');
@@ -1102,7 +1125,15 @@ function fmRender() {
       truthy here when e.pkg is set, so this is the pkg-file branch; e.pkg is never set for a
       directory, so the remaining case below only ever applies to a protected folder. */
       (e.dir && e.protected ? '<small>' + esc(t('in use')) + '</small>' : '');
-    var row = '<div class="fmrow" data-name="' + esc(e.name) + '"><span class="fmicon"' + iconStyle + '>' + icon + '</span>' +
+    /* Shared by the checkbox below and the inline actions row further down: a protected pkg
+       (in the library) or a folder that contains one cannot be selected, renamed, moved or
+       deleted - the server refuses all of those anyway. */
+    var prot = (e.pkg && e.pkg.protected) || e.protected;
+    var checkTitle = prot ? ' title="' + esc(t('In use by a game in the library: it cannot be moved or deleted')) + '"' : '';
+    var row = '<div class="fmrow" data-name="' + esc(e.name) + '"><span class="fmcheck"><input type="checkbox" class="fmchk" data-name="' +
+      esc(e.name) + '"' + (fm.sel[e.name] ? ' checked' : '') + (prot ? ' disabled' : '') + checkTitle +
+      ' aria-label="' + esc(t('Select')) + '"></span>' +
+      '<span class="fmicon"' + iconStyle + '>' + icon + '</span>' +
       '<span class="fmname">' + esc(label) + small + '</span>' +
       '<span class="fmsize">' + meta + '</span><span class="fmdate">' + esc(fmDate(e.mtime)) + '</span>' +
       '<button type="button" class="fmmore" data-name="' + esc(e.name) + '" aria-label="' + esc(t('Actions')) + '">⋯</button></div>';
@@ -1114,7 +1145,7 @@ function fmRender() {
        the same reason: the server refuses either anyway, so this just saves the round-trip
        and the dead-end prompt()/confirm() that would otherwise precede the rejection. */
     if (fm.actionsFor === e.name) {
-      var dis = ((e.pkg && e.pkg.protected) || e.protected) ? ' disabled' : '';
+      var dis = prot ? ' disabled' : '';
       row += '<div class="fmactions" data-name="' + esc(e.name) + '">' +
         '<button type="button" data-act="rename"' + dis + '>' + t('Rename') + '</button>' +
         '<button type="button" data-act="move"' + dis + '>' + t('Move') + '</button>' +
@@ -1127,6 +1158,21 @@ function fmRender() {
      folder with no sign anything is missing. */
   if (fm.truncated) rows += '<div class="warn">' + esc(t('Only the first {n} items are shown here. Use subfolders to see the rest.', {n: 2000})) + '</div>';
   $('fmlist').innerHTML = rows;
+  fmSelbar();
+}
+
+/* Selection bar for the Files view: count and total size of fm.sel, shown the same way the
+   game grid's selbar() shows its own count. A folder has no size the daemon reports (app_fm_list
+   does not sum a folder's contents), so only file entries contribute to the total; a selected
+   folder still counts toward n but adds nothing to size. */
+function fmSelbar() {
+  var names = Object.keys(fm.sel), n = names.length, size = 0;
+  names.forEach(function (nm) {
+    var e = fmEntry(nm);
+    if (e && !e.dir) size += e.size || 0;
+  });
+  $('fmselbar').hidden = !n;
+  if (n) $('fmselcount').textContent = t('{n} selected ({size})', {n: n, size: gb(size)});
 }
 
 function fmEntry(name) { return fm.entries.filter(function (x) { return x.name === name; })[0]; }
@@ -1173,7 +1219,7 @@ $('filesbtn').addEventListener('click', function () {
 $('fmback').addEventListener('click', function () {
   $('fmview').hidden = true;
   $('main').hidden = false;
-  fm.moving = null; fm.actionsFor = null;
+  fm.moving = null; fm.actionsFor = null; fm.sel = {};
 });
 $('fmup').addEventListener('click', function () {
   if (fm.path === '') return;
@@ -1199,6 +1245,10 @@ $('fmhead').addEventListener('click', function (e) {
   fmRender();
 });
 $('fmlist').addEventListener('click', function (e) {
+  /* The checkbox's own "change" listener below handles selection; without this the click
+     that checks/unchecks it would also bubble into the row navigation below and open the
+     entry it just selected. */
+  if (e.target.closest('.fmcheck')) return;
   var more = e.target.closest('.fmmore[data-name]');
   if (more) {
     var nm = more.getAttribute('data-name');
@@ -1215,6 +1265,56 @@ $('fmlist').addEventListener('click', function (e) {
   if (entry.drive) fmOpen('/mnt/' + entry.name);
   else if (entry.dir) fmOpen(fm.path + '/' + entry.name);
   /* a file row's name has nothing to navigate to; its actions live behind "..." only */
+});
+/* Row checkboxes (Task 7 bulk select): kept separate from the click listener above since a
+   checkbox fires both "click" and "change", and only one of the two should act on it. */
+$('fmlist').addEventListener('change', function (e) {
+  var cb = e.target.closest('input.fmchk[data-name]');
+  if (!cb) return;
+  var nm = cb.getAttribute('data-name');
+  if (cb.checked) fm.sel[nm] = 1; else delete fm.sel[nm];
+  fmSelbar();
+});
+/* Toggles all currently visible, selectable (non-drive, non-protected) entries on or off
+   together; a full re-render is needed here (unlike a single checkbox) since many checkboxes
+   change state at once without their own "change" events. */
+$('fmselall').addEventListener('click', function () {
+  var selectable = fm.entries.filter(function (e) { return !e.drive && !((e.pkg && e.pkg.protected) || e.protected); });
+  var allSelected = selectable.length > 0 && selectable.every(function (e) { return fm.sel[e.name]; });
+  fm.sel = {};
+  if (!allSelected) selectable.forEach(function (e) { fm.sel[e.name] = 1; });
+  fmRender();
+});
+$('fmselclear').addEventListener('click', function () { fm.sel = {}; fmRender(); });
+/* Bulk delete (Task 7): one request per item, same one-at-a-time-with-a-counter pattern as the
+   game grid's data-bulk handler above, but showing live "n of m" progress in the selection
+   bar's own count element while it runs (the game grid only shows a final count). Re-filters
+   fm.sel against each entry's current protected state rather than trusting the disabled
+   checkbox alone: fm.sel can outlive a background refresh of this same folder (fmOpen only
+   resets it on navigation), so an item could in theory turn protected without a re-render
+   clearing its selection first. */
+$('fmbulkdelete').addEventListener('click', function () {
+  var list = Object.keys(fm.sel).filter(function (nm) {
+    var e = fmEntry(nm);
+    return e && !((e.pkg && e.pkg.protected) || e.protected);
+  });
+  if (!list.length) return;
+  if (!confirm(t('Delete {n} item(s)? They move to Trash and are kept for {days} days.', {n: list.length, days: 14}))) return;
+  $('fmerr').hidden = true;
+  var ok = 0, failed = 0;
+  (function next(i) {
+    if (i >= list.length) {
+      fm.sel = {};
+      toast(t('{ok} done', {ok: ok}) + (failed ? ', ' + t('{failed} failed (see Log)', {failed: failed}) : ''), failed > 0);
+      fmOpen(fm.path, true);
+      return;
+    }
+    $('fmselcount').textContent = t('Deleting {i} of {n}…', {i: i + 1, n: list.length});
+    api('/api/fm/delete?path=' + encodeURIComponent(fm.path + '/' + list[i]), 'POST')
+      .then(function () { ok++; })
+      .catch(function () { failed++; })
+      .then(function () { next(i + 1); });
+  })(0);
 });
 $('fmnew').addEventListener('click', function () {
   var n = prompt(t('Folder name'), '');
