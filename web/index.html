@@ -407,7 +407,9 @@ es: {
 'This choice applies to every item in this copy or move.': 'Esta elección se aplica a todos los elementos de esta copia o movimiento.',
 'Overwrite': 'Sobrescribir', 'Skip': 'Omitir', 'Keep both': 'Mantener ambos',
 'Copying {n} item(s)…': 'Copiando {n} elemento(s)…', 'Moving {n} item(s)…': 'Moviendo {n} elemento(s)…',
-'A file operation is already running; wait for it to finish': 'Ya hay una operación de archivos en curso; espera a que termine'
+'A file operation is already running; wait for it to finish': 'Ya hay una operación de archivos en curso; espera a que termine',
+'Select all loaded': 'Seleccionar todo lo cargado',
+'{n} selected (includes folders, size not shown)': '{n} seleccionados (incluye carpetas, tamaño no mostrado)'
 },
 pt: {
 'Search game or CUSA': 'Buscar jogo ou CUSA', 'Sort': 'Ordenar', 'Sort by name': 'Ordenar por nome',
@@ -527,7 +529,9 @@ pt: {
 'This choice applies to every item in this copy or move.': 'Esta escolha se aplica a todos os itens desta cópia ou movimentação.',
 'Overwrite': 'Substituir', 'Skip': 'Pular', 'Keep both': 'Manter os dois',
 'Copying {n} item(s)…': 'Copiando {n} item(ns)…', 'Moving {n} item(s)…': 'Movendo {n} item(ns)…',
-'A file operation is already running; wait for it to finish': 'Já há uma operação de arquivos em andamento; espere ela terminar'
+'A file operation is already running; wait for it to finish': 'Já há uma operação de arquivos em andamento; espere ela terminar',
+'Select all loaded': 'Selecionar tudo o que foi carregado',
+'{n} selected (includes folders, size not shown)': '{n} selecionados (inclui pastas, tamanho não mostrado)'
 },
 fr: {
 'Search game or CUSA': 'Chercher un jeu ou CUSA', 'Sort': 'Trier', 'Sort by name': 'Trier par nom',
@@ -647,7 +651,9 @@ fr: {
 'This choice applies to every item in this copy or move.': 'Ce choix s’applique à chaque élément de cette copie ou de ce déplacement.',
 'Overwrite': 'Remplacer', 'Skip': 'Ignorer', 'Keep both': 'Garder les deux',
 'Copying {n} item(s)…': 'Copie de {n} élément(s)…', 'Moving {n} item(s)…': 'Déplacement de {n} élément(s)…',
-'A file operation is already running; wait for it to finish': 'Une opération sur les fichiers est déjà en cours ; attendez qu’elle se termine'
+'A file operation is already running; wait for it to finish': 'Une opération sur les fichiers est déjà en cours ; attendez qu’elle se termine',
+'Select all loaded': 'Tout sélectionner (chargé)',
+'{n} selected (includes folders, size not shown)': '{n} sélectionné(s) (inclut des dossiers, taille non affichée)'
 }
 };
 function langPicked() { try { return localStorage.getItem('ps4mount-lang') || ''; } catch (e) { return ''; } }
@@ -1143,12 +1149,24 @@ function fmRender() {
   $('fmnew').disabled = fm.taskRunning; /* the daemon refuses it anyway while a task runs (Task 9) */
   $('fmup').hidden = fm.path === ''; /* nothing above the drive list itself */
   $('fmselall').hidden = fm.path === ''; /* drives themselves cannot be selected */
+  $('fmselall').disabled = fm.taskRunning; /* Finding 4: same reasoning as fmnew just above */
+  /* Finding 7 (cheap mitigation): a truncated listing (2000+ entries, fm.truncated) only has
+     the first 2000 loaded, so Select all would silently select only those while the bar's
+     count looks like a total - say "loaded" instead of pretending it covers the whole folder.
+     Full truncation-aware selection needs server-side paging and is out of scope here. */
+  $('fmselall').textContent = t(fm.truncated ? 'Select all loaded' : 'Select all');
   /* Sorting is inert at the drive list root: every row there is a drive, not a size/date-
      bearing entry, so a "disabled" column header (same style as every other disabled button)
-     signals there is nothing to sort by here. */
+     signals there is nothing to sort by here.
+     Finding 7 (cheap mitigation): on a truncated listing, sorting by Size or Modified would
+     silently show the largest/newest of only the loaded 2000, not the real folder - disable
+     those two (Name stays sortable: name order is still meaningful even truncated) and explain
+     why via the same wording already used for the truncation notice below the list. */
   var fmSortable = fm.path !== '';
   [].forEach.call($('fmhead').querySelectorAll('[data-sort]'), function (btn) {
-    btn.disabled = !fmSortable;
+    var blocked = fm.truncated && btn.getAttribute('data-sort') !== 'name';
+    btn.disabled = !fmSortable || blocked;
+    btn.title = blocked ? t('Only the first {n} items are shown here. Use subfolders to see the rest.', {n: 2000}) : '';
     var active = fmSortable && btn.getAttribute('data-sort') === fm.sortKey;
     btn.classList.toggle('active', active);
     btn.querySelector('.fmsortarrow').textContent = active ? (fm.sortDesc ? ' ▼' : ' ▲') : '';
@@ -1193,8 +1211,11 @@ function fmRender() {
        deleted - the server refuses all of those anyway. */
     var prot = (e.pkg && e.pkg.protected) || e.protected;
     var checkTitle = prot ? ' title="' + esc(t('In use by a game in the library: it cannot be moved or deleted')) + '"' : '';
+    /* Finding 4: also disabled while a task runs (Task 9), same reasoning as the per-row
+       Rename/Move/Delete row further down - the daemon would refuse a bulk Copy/Move built
+       from a selection made mid-task anyway, so this just saves the confusion up front. */
     var row = '<div class="fmrow" data-name="' + esc(e.name) + '"><span class="fmcheck"><input type="checkbox" class="fmchk" data-name="' +
-      esc(e.name) + '"' + (fm.sel[e.name] ? ' checked' : '') + (prot ? ' disabled' : '') + checkTitle +
+      esc(e.name) + '"' + (fm.sel[e.name] ? ' checked' : '') + ((prot || fm.taskRunning) ? ' disabled' : '') + checkTitle +
       ' aria-label="' + esc(t('Select')) + '"></span>' +
       '<span class="fmicon"' + iconStyle + '>' + icon + '</span>' +
       '<span class="fmname">' + esc(label) + small + '</span>' +
@@ -1228,17 +1249,28 @@ function fmRender() {
 
 /* Selection bar for the Files view: count and total size of fm.sel, shown the same way the
    game grid's selbar() shows its own count. A folder has no size the daemon reports (app_fm_list
-   does not sum a folder's contents), so only file entries contribute to the total; a selected
-   folder still counts toward n but adds nothing to size. */
+   does not sum a folder's contents), so only file entries contribute to the total.
+   Finding 3 (cheap mitigation): a selection that includes at least one folder would otherwise
+   show a byte total that silently excludes that folder's (unknown, not recursively computed)
+   contents - e.g. "3 selected (0 B)" when all three are folders. Say so plainly instead of
+   showing a number that looks complete but is not; full recursive folder sizing needs a new
+   daemon endpoint and is out of scope here. */
 function fmSelbar() {
-  var names = Object.keys(fm.sel), n = names.length, size = 0;
+  var names = Object.keys(fm.sel), n = names.length, size = 0, hasDir = false;
   names.forEach(function (nm) {
     var e = fmEntry(nm);
-    if (e && !e.dir) size += e.size || 0;
+    if (!e) return;
+    if (e.dir) hasDir = true; else size += e.size || 0;
   });
   $('fmselbar').hidden = !n;
-  if (n) $('fmselcount').textContent = t('{n} selected ({size})', {n: n, size: gb(size)});
-  $('fmbulkdelete').disabled = fm.taskRunning; /* the daemon refuses it anyway while a task runs (Task 9) */
+  if (n) $('fmselcount').textContent = hasDir ?
+    t('{n} selected (includes folders, size not shown)', {n: n}) :
+    t('{n} selected ({size})', {n: n, size: gb(size)});
+  /* Finding 4: bulk Copy/Move/Delete all refused by the daemon anyway while a task runs
+     (Task 9) - gate every bulk action the same way, not just Delete as before. */
+  $('fmbulkdelete').disabled = fm.taskRunning;
+  $('fmbulkcopy').disabled = fm.taskRunning;
+  $('fmbulkmove').disabled = fm.taskRunning;
 }
 
 function fmEntry(name) { return fm.entries.filter(function (x) { return x.name === name; })[0]; }
