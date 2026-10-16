@@ -362,7 +362,8 @@ es: {
 'Moving {name}. It is already here: open another folder to move it.': 'Moviendo {name}. Ya está aquí: abre otra carpeta para moverlo.',
 'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Solo se muestran los primeros {n} elementos. Usa subcarpetas para ver el resto.',
 'Back to library': 'Volver a la biblioteca', 'Up': 'Subir', 'Refresh': 'Actualizar',
-'Name': 'Nombre', 'Size': 'Tamaño', 'Modified': 'Modificado', 'Actions': 'Acciones'
+'Name': 'Nombre', 'Size': 'Tamaño', 'Modified': 'Modificado', 'Actions': 'Acciones',
+'folder {name}': 'la carpeta {name}'
 },
 pt: {
 'Search game or CUSA': 'Buscar jogo ou CUSA', 'Sort': 'Ordenar', 'Sort by name': 'Ordenar por nome',
@@ -472,7 +473,8 @@ pt: {
 'Moving {name}. It is already here: open another folder to move it.': 'Movendo {name}. Já está aqui: abra outra pasta para movê-lo.',
 'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Só são mostrados os primeiros {n} itens. Use subpastas para ver o resto.',
 'Back to library': 'Voltar à biblioteca', 'Up': 'Subir', 'Refresh': 'Atualizar',
-'Name': 'Nome', 'Size': 'Tamanho', 'Modified': 'Modificado', 'Actions': 'Ações'
+'Name': 'Nome', 'Size': 'Tamanho', 'Modified': 'Modificado', 'Actions': 'Ações',
+'folder {name}': 'a pasta {name}'
 },
 fr: {
 'Search game or CUSA': 'Chercher un jeu ou CUSA', 'Sort': 'Trier', 'Sort by name': 'Trier par nom',
@@ -582,7 +584,8 @@ fr: {
 'Moving {name}. It is already here: open another folder to move it.': 'Déplacement de {name}. Il est déjà ici : ouvrez un autre dossier pour le déplacer.',
 'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Seuls les {n} premiers éléments sont affichés ici. Utilisez des sous-dossiers pour voir le reste.',
 'Back to library': 'Retour à la bibliothèque', 'Up': 'Remonter', 'Refresh': 'Actualiser',
-'Name': 'Nom', 'Size': 'Taille', 'Modified': 'Modifié', 'Actions': 'Actions'
+'Name': 'Nom', 'Size': 'Taille', 'Modified': 'Modifié', 'Actions': 'Actions',
+'folder {name}': 'le dossier {name}'
 }
 };
 function langPicked() { try { return localStorage.getItem('ps4mount-lang') || ''; } catch (e) { return ''; } }
@@ -1045,16 +1048,27 @@ function fmRender() {
     var meta = e.dir ? '' : gb(e.size);
     var sub = e.pkg ? t(roleNames[e.pkg.role] || 'Pkg') + (e.pkg.version ? ' v' + esc(e.pkg.version) : '') +
       (e.pkg.protected ? ' · ' + t('in use') : '') : '';
+    /* A folder has no pkg of its own, but app_fm_list sets a top-level "protected" on it when
+       a protected pkg lives inside (see src/main.c:app_fm_list): show the same "in use"
+       context a protected pkg file gets, without repeating the folder's own name next to
+       itself the way the pkg branch repeats a pkg's file name next to its friendly title. */
+    var small = sub ? '<small>' + esc(e.name) + ' · ' + sub + '</small>' : /* sub is always
+      truthy here when e.pkg is set, so this is the pkg-file branch; e.pkg is never set for a
+      directory, so the remaining case below only ever applies to a protected folder. */
+      (e.dir && e.protected ? '<small>' + esc(t('in use')) + '</small>' : '');
     var row = '<div class="fmrow" data-name="' + esc(e.name) + '"><span class="fmicon"' + iconStyle + '>' + icon + '</span>' +
-      '<span class="fmname">' + esc(label) + (sub || e.pkg ? '<small>' + esc(e.name) + (sub ? ' · ' + sub : '') + '</small>' : '') + '</span>' +
+      '<span class="fmname">' + esc(label) + small + '</span>' +
       '<span class="fmsize">' + meta + '</span><span class="fmdate">' + esc(fmDate(e.mtime)) + '</span>' +
       '<button type="button" class="fmmore" data-name="' + esc(e.name) + '" aria-label="' + esc(t('Actions')) + '">⋯</button></div>';
     /* The inline Rename/Move/Delete row for whichever single entry is open (fm.actionsFor):
        this replaces the old per-item dialog (#fmsheet) with something a gamepad-driven,
        hover-less PS5 browser can reach from the row itself. Protected pkgs (in the library)
-       disable all three; the server refuses them anyway, so this just saves the round-trip. */
+       disable all three; a protected folder (one that directly or indirectly contains a
+       protected pkg, per the server's "protected" field on directory entries) does too, for
+       the same reason: the server refuses either anyway, so this just saves the round-trip
+       and the dead-end prompt()/confirm() that would otherwise precede the rejection. */
     if (fm.actionsFor === e.name) {
-      var dis = (e.pkg && e.pkg.protected) ? ' disabled' : '';
+      var dis = ((e.pkg && e.pkg.protected) || e.protected) ? ' disabled' : '';
       row += '<div class="fmactions" data-name="' + esc(e.name) + '">' +
         '<button type="button" data-act="rename"' + dis + '>' + t('Rename') + '</button>' +
         '<button type="button" data-act="move"' + dis + '>' + t('Move') + '</button>' +
@@ -1090,7 +1104,11 @@ function fmAction(act) {
     fm.actionsFor = null;
     fmRender();
   } else if (act === 'delete') {
-    var what = (entry.pkg ? fmPkgName(entry.pkg, entry.name) + ' (' + entry.name + ')' : entry.name) + (entry.dir ? '' : ' · ' + gb(entry.size));
+    /* A bare folder name in the confirmation ("Delete CUSA00001?") leaves it ambiguous
+       whether just the (empty-looking) folder or everything inside it is about to go to
+       Trash; say "folder" explicitly so there is no doubt it is the whole thing. */
+    var what = entry.dir ? t('folder {name}', {name: entry.name}) :
+      (entry.pkg ? fmPkgName(entry.pkg, entry.name) + ' (' + entry.name + ')' : entry.name) + ' · ' + gb(entry.size);
     if (!confirm(t('Delete {what}? It moves to Trash and is kept for {days} days.', {what: what, days: 14}))) return;
     $('fmerr').hidden = true;
     api('/api/fm/delete?path=' + encodeURIComponent(fm.path + '/' + entry.name), 'POST')

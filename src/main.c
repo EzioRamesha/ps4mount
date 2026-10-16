@@ -3288,6 +3288,26 @@ int app_fm_list(const char *path, buf_t *out, char *msg, size_t cap) {
                                                    * protected pkg is still never missed */
             }
             buf_printf(out, ",\"protected\":%s}", prot ? "true" : "false");
+        } else if (cat && S_ISDIR(st.st_mode)) {
+            /* A folder is "protected" exactly when some protected pkg lives inside it (at any
+             * depth): fm_covers(dir, pkg_path) is true when dir is a prefix of pkg_path, so the
+             * same check (and fm_protected() fallback) used for a pkg file above also answers
+             * this for a directory path, unchanged. Emitted as a top-level field rather than
+             * nested in "pkg" (folders have none), so the panel can disable Rename/Move/Delete
+             * for a folder that directly contains a protected pkg, not just the pkg file
+             * itself. */
+            int prot;
+            if (ppaths) {
+                prot = 0;
+                for (int i = 0; i < pcount; i++)
+                    if (fm_covers(full, ppaths[i])) {
+                        prot = 1;
+                        break;
+                    }
+            } else {
+                prot = fm_protected(full, NULL);
+            }
+            buf_printf(out, ",\"protected\":%s", prot ? "true" : "false");
         }
         buf_printf(out, "}");
         first = 0;
