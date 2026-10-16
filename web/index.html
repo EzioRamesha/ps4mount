@@ -100,6 +100,12 @@ select{background:var(--panel);color:var(--fg);border:1px solid var(--line);bord
 .fmrow .fmdate{color:var(--muted);font-size:12px;flex:0 0 100px;text-align:right}
 .fmmore{flex:0 0 40px;min-width:40px;padding:6px 4px}
 .fmactions{display:flex;flex-wrap:wrap;gap:8px;padding:10px;border-bottom:1px solid var(--line);background:#0b0d11}
+/* Task 9: the live task progress overlay (#fmtask), shown only while a copy/move task runs. */
+#fmtask{display:flex;flex-direction:column;align-items:flex-start;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.fmtaskwhat{width:100%;color:var(--muted);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fmtaskbar{width:100%;height:8px;border-radius:999px;background:#0b0d11;border:1px solid var(--line);overflow:hidden}
+.fmtaskfill{height:100%;background:var(--accent)}
+.fmtaskmeta{width:100%;display:flex;flex-wrap:wrap;gap:12px;color:var(--muted);font-size:13px}
 /* Below 600px (the panel's narrow-screen breakpoint) the Size and Modified columns are
    dropped from both the header stub and the rows: there is no room for them next to a
    full-width, readable name column on a phone-sized PS5 browser window. */
@@ -390,6 +396,7 @@ es: {
 'Deleting {i} of {n}…': 'Borrando {i} de {n}…',
 '{n} item(s) ready to copy. Open a folder and press Paste.': '{n} elemento(s) listo(s) para copiar. Abre una carpeta y pulsa Pegar.',
 '{n} item(s) ready to move. Open a folder and press Paste.': '{n} elemento(s) listo(s) para mover. Abre una carpeta y pulsa Pegar.',
+'{n} of {m} items': '{n} de {m} elementos', 'ETA {t}': 'Tiempo restante: {t}',
 'Paste': 'Pegar', 'If something already exists': 'Si algo ya existe',
 'This choice applies to every item in this copy or move.': 'Esta elección se aplica a todos los elementos de esta copia o movimiento.',
 'Overwrite': 'Sobrescribir', 'Skip': 'Omitir', 'Keep both': 'Mantener ambos',
@@ -509,6 +516,7 @@ pt: {
 'Deleting {i} of {n}…': 'Apagando {i} de {n}…',
 '{n} item(s) ready to copy. Open a folder and press Paste.': '{n} item(ns) pronto(s) para copiar. Abra uma pasta e clique em Colar.',
 '{n} item(s) ready to move. Open a folder and press Paste.': '{n} item(ns) pronto(s) para mover. Abra uma pasta e clique em Colar.',
+'{n} of {m} items': '{n} de {m} itens', 'ETA {t}': 'Tempo restante: {t}',
 'Paste': 'Colar', 'If something already exists': 'Se algo já existir',
 'This choice applies to every item in this copy or move.': 'Esta escolha se aplica a todos os itens desta cópia ou movimentação.',
 'Overwrite': 'Substituir', 'Skip': 'Pular', 'Keep both': 'Manter os dois',
@@ -628,6 +636,7 @@ fr: {
 'Deleting {i} of {n}…': 'Suppression de {i} sur {n}…',
 '{n} item(s) ready to copy. Open a folder and press Paste.': '{n} élément(s) prêt(s) à être copié(s). Ouvrez un dossier et appuyez sur Coller.',
 '{n} item(s) ready to move. Open a folder and press Paste.': '{n} élément(s) prêt(s) à être déplacé(s). Ouvrez un dossier et appuyez sur Coller.',
+'{n} of {m} items': '{n} sur {m} élément(s)', 'ETA {t}': 'Temps restant : {t}',
 'Paste': 'Coller', 'If something already exists': 'Si quelque chose existe déjà',
 'This choice applies to every item in this copy or move.': 'Ce choix s’applique à chaque élément de cette copie ou de ce déplacement.',
 'Overwrite': 'Remplacer', 'Skip': 'Ignorer', 'Keep both': 'Garder les deux',
@@ -1034,8 +1043,19 @@ function fmSortPut(key, desc) { try { localStorage.setItem('ps4mount-fm-sort', k
    grid's "selected"). sortKey/sortDesc drive the column-header sort (Task 6), restored from
    localStorage on load. */
 var fmSortInit = fmSortGet();
+/* taskTimer/taskPolling/taskGen/taskRunning (Task 9): taskTimer is the pending setTimeout id
+   of the next GET /api/fm/task poll, cleared by fmback so closing the Files view stops the
+   client's polling (the task itself keeps running server-side regardless). taskPolling guards
+   against ever having two polling chains alive at once: fmTaskStart (the only way a chain
+   begins, called after a successful Paste and once when the Files view opens) is a no-op while
+   it is already true. taskGen is bumped by every fmTaskStart and closed over by the chain's own
+   fmTaskPoll calls, so a response from a chain fmback already abandoned can never reschedule
+   itself after a later chain superseded it (see fmTaskPoll's comment). taskRunning mirrors the
+   last state seen, so fmRender can disable the actions the daemon would refuse anyway while a
+   task runs (New folder, Paste, bulk delete, the per-row Rename/Move/Delete). */
 var fm = {path: '', entries: [], sel: {}, clipboard: null, actionsFor: null,
-  sortKey: fmSortInit.key, sortDesc: fmSortInit.desc};
+  sortKey: fmSortInit.key, sortDesc: fmSortInit.desc,
+  taskTimer: null, taskPolling: false, taskGen: 0, taskRunning: false};
 
 /* Sort comparator for fmRender: folders always before files, for every key and direction
    (matches fm_sort's rule on the daemon side, src/fm.c) - checked first and never flipped by
@@ -1102,6 +1122,7 @@ function fmRender() {
   }
   $('fmcrumbs').innerHTML = html;
   $('fmnew').hidden = fm.path === ''; /* nothing to create a folder in at the drive list */
+  $('fmnew').disabled = fm.taskRunning; /* the daemon refuses it anyway while a task runs (Task 9) */
   $('fmup').hidden = fm.path === ''; /* nothing above the drive list itself */
   $('fmselall').hidden = fm.path === ''; /* drives themselves cannot be selected */
   /* Sorting is inert at the drive list root: every row there is a drive, not a size/date-
@@ -1125,7 +1146,7 @@ function fmRender() {
     var clipN = fm.clipboard.items.length;
     $('fmclipbar').innerHTML =
       t(fm.clipboard.copy ? '{n} item(s) ready to copy. Open a folder and press Paste.' : '{n} item(s) ready to move. Open a folder and press Paste.', {n: clipN}) +
-      ' <button type="button" id="fmpaste"' + (fm.path === '' ? ' disabled' : '') + '>' + t('Paste') + '</button>' +
+      ' <button type="button" id="fmpaste"' + (fm.path === '' || fm.taskRunning ? ' disabled' : '') + '>' + t('Paste') + '</button>' +
       ' <button type="button" id="fmclipcancel">' + t('Cancel') + '</button>';
   }
   var rows = fm.entries.slice().sort(fmCmp).map(function (e) {
@@ -1169,7 +1190,9 @@ function fmRender() {
        the same reason: the server refuses either anyway, so this just saves the round-trip
        and the dead-end prompt()/confirm() that would otherwise precede the rejection. */
     if (fm.actionsFor === e.name) {
-      var dis = prot ? ' disabled' : '';
+      /* Also disabled while a task runs (Task 9): the daemon refuses rename/move/delete the
+         same way it refuses them for a protected entry, so this reuses the same flag. */
+      var dis = (prot || fm.taskRunning) ? ' disabled' : '';
       row += '<div class="fmactions" data-name="' + esc(e.name) + '">' +
         '<button type="button" data-act="rename"' + dis + '>' + t('Rename') + '</button>' +
         '<button type="button" data-act="move"' + dis + '>' + t('Move') + '</button>' +
@@ -1197,6 +1220,7 @@ function fmSelbar() {
   });
   $('fmselbar').hidden = !n;
   if (n) $('fmselcount').textContent = t('{n} selected ({size})', {n: n, size: gb(size)});
+  $('fmbulkdelete').disabled = fm.taskRunning; /* the daemon refuses it anyway while a task runs (Task 9) */
 }
 
 function fmEntry(name) { return fm.entries.filter(function (x) { return x.name === name; })[0]; }
@@ -1237,6 +1261,10 @@ $('filesbtn').addEventListener('click', function () {
   $('main').hidden = true;
   $('fmview').hidden = false;
   fmOpen(''); /* always start at the drive list: never guess which drive the user wants */
+  /* Task 9: one poll to pick up a task that outlives a browser reload. If it is idle,
+     fmTaskPoll hides the overlay and stops right away; if it is still running, the overlay
+     appears and the chain continues on its own every second from here. */
+  fmTaskStart();
 });
 /* There is no native dialog "close" event for a plain full-screen view, so the cleanup that
    used to run there (forget a pending Move, close any open sheet) happens directly here. */
@@ -1244,6 +1272,9 @@ $('fmback').addEventListener('click', function () {
   $('fmview').hidden = true;
   $('main').hidden = false;
   fm.clipboard = null; fm.actionsFor = null; fm.sel = {};
+  /* Task 9: stop the client's own polling - the task itself (if any) keeps running
+     server-side; reopening Files picks it back up via fmTaskStart above. */
+  clearTimeout(fm.taskTimer); fm.taskTimer = null; fm.taskPolling = false;
 });
 $('fmup').addEventListener('click', function () {
   if (fm.path === '') return;
@@ -1397,6 +1428,7 @@ function fmPaste(conflict) {
       fm.clipboard = null;
       toast(t(copy ? 'Copying {n} item(s)…' : 'Moving {n} item(s)…', {n: n}));
       fmRender();
+      fmTaskStart(); /* Task 9: pick up live progress for the task Paste just started */
     })
     .catch(function (e) { toast(t('Error: {e}', {e: e.message}), true); }); /* clipboard kept on failure, so retrying needs no reselecting */
 }
@@ -1404,6 +1436,90 @@ $('cf-cancel').addEventListener('click', function () { $('conflictdlg').close();
 $('cf-overwrite').addEventListener('click', function () { $('conflictdlg').close(); fmPaste(1); });
 $('cf-skip').addEventListener('click', function () { $('conflictdlg').close(); fmPaste(2); });
 $('cf-keep').addEventListener('click', function () { $('conflictdlg').close(); fmPaste(3); });
+
+/* Task 9: the live task progress overlay. fmTaskStart is the only entrypoint that begins a
+   polling chain (after a successful Paste above, and once when the Files view opens below, so
+   a task started before a page reload is picked up again) - it is a no-op while fm.taskPolling
+   is already true, which is what keeps two chains from ever running at the same time. fmTaskPoll
+   reschedules itself (fm.taskTimer) only while the task is still running; any terminal state
+   (done/failed/cancelled) or idle stops the chain outright, never calling setTimeout again.
+   fm.taskGen guards a narrower race than the taskPolling flag alone can: fmback stops a chain
+   (taskPolling = false) but cannot cancel its GET already in flight; if the Files view is
+   reopened before that response lands, fmTaskStart sees taskPolling false and happily starts a
+   second, genuinely new chain - at which point taskPolling is true again, so the old chain's
+   stale response would sail past a plain "if (!fm.taskPolling) return" check and reschedule its
+   own setTimeout too. Each fmTaskPoll call instead closes over the generation it was started
+   with and compares it against the current fm.taskGen (bumped by every fmTaskStart): a response
+   from an abandoned chain never matches and is dropped instead of reviving that chain. */
+function fmTaskStart() {
+  if (fm.taskPolling) return;
+  fm.taskPolling = true;
+  fm.taskGen++;
+  fmTaskPoll(fm.taskGen);
+}
+function fmTaskPoll(gen) {
+  fm.taskTimer = null;
+  api('/api/fm/task').then(function (j) {
+    if (gen !== fm.taskGen || !fm.taskPolling) return; /* abandoned by fmback, maybe superseded */
+    var running = j.state === 'running', changed = running !== fm.taskRunning;
+    fm.taskRunning = running;
+    if (running) {
+      fmTaskRender(j);
+      $('fmtask').hidden = false;
+      if (changed) fmRender(); /* un/disables New folder, Paste, bulk delete and row actions */
+      fm.taskTimer = setTimeout(function () { fmTaskPoll(gen); }, 1000);
+      return;
+    }
+    fm.taskPolling = false;
+    $('fmtask').hidden = true;
+    if (j.state === 'idle') { if (changed) fmRender(); return; } /* nothing to report */
+    /* done/failed/cancelled (Step 3): the message is the task's own, green for done, amber
+       otherwise - toast() already draws that distinction for every other caller in this view.
+       fmOpen's own fmRender() picks the now-enabled actions back up, so no extra call here. */
+    toast(j.msg || '', j.state !== 'done');
+    fmOpen(fm.path, true);
+  }).catch(function () {
+    if (gen !== fm.taskGen || !fm.taskPolling) return; /* same staleness check as above */
+    /* A transient fetch error (PIN prompt declined, network blip) should not spin forever:
+       stop here. Reopening Files or retrying Paste starts a fresh chain. */
+    fm.taskPolling = false;
+    if (fm.taskRunning) { fm.taskRunning = false; fmRender(); }
+  });
+}
+/* Not run through t(), deliberately: like gb()'s KB/MB/GB suffixes just above, these are short
+   unit letters rather than full sentences, and read the same in every language this panel has. */
+function fmDuration(s) {
+  s = Math.max(0, Math.round(s || 0));
+  if (s < 60) return s + 's';
+  return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+}
+/* total_bytes is deliberately left at 0 by the daemon for a same-drive move (fmgr.c does not
+   track bytes there - see the Task 2 review): the byte progress bar, speed and ETA all divide
+   by it, so they are hidden and only the item count is shown in that case. */
+function fmTaskRender(d) {
+  var hasBytes = d.total_bytes > 0;
+  var html = '<div class="fmtaskwhat">' + esc(d.what || '') + '</div>' +
+    '<div>' + t('{n} of {m} items', {n: d.done_items, m: d.total_items}) + '</div>';
+  if (hasBytes) {
+    var pct = Math.min(100, Math.floor(d.done_bytes / d.total_bytes * 100));
+    html += '<div class="fmtaskbar"><div class="fmtaskfill" style="width:' + pct + '%"></div></div>' +
+      '<div class="fmtaskmeta"><span>' + esc(gb(d.done_bytes) + ' / ' + gb(d.total_bytes)) + '</span>' +
+      '<span>' + esc(gb(d.speed) + '/s') + '</span>' +
+      '<span>' + esc(t('ETA {t}', {t: fmDuration(d.eta)})) + '</span></div>';
+  }
+  html += '<button type="button" id="fmtaskcancel">' + t('Cancel') + '</button>';
+  $('fmtask').innerHTML = html;
+}
+/* The Cancel button is (re)created by fmTaskRender each poll, same delegation pattern as the
+   clipboard bar's Paste/Cancel above. Disabling it immediately (before the response even comes
+   back) stops a second click from firing while the first request is still in flight; there is
+   no need to re-enable it since the overlay itself disappears once the task reaches a terminal
+   state, taking the button with it. */
+$('fmtask').addEventListener('click', function (e) {
+  if (e.target.id !== 'fmtaskcancel') return;
+  e.target.disabled = true;
+  api('/api/fm/cancel', 'POST').catch(function (e) { toast(t('Error: {e}', {e: e.message}), true); });
+});
 $('summary').addEventListener('click', function (e) {
   var st = e.target.getAttribute && e.target.getAttribute('data-state');
   if (!st) return;
