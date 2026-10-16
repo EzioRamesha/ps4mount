@@ -35,7 +35,10 @@
 #include <unistd.h>
 
 #define FMGR_JOIN_MAX 1536 /* room for a 1023-byte input path plus nested child names */
-#define FMGR_MAX_DEPTH 64  /* guards against pathological nesting (and runaway recursion) */
+#define FMGR_MAX_DEPTH 32  /* guards against pathological nesting (and runaway recursion):
+                            * each recursion frame holds two FMGR_JOIN_MAX (1536 B) buffers,
+                            * so 32 deep is already a worst case of ~100 KB of thread stack,
+                            * which no real game-drive tree ever gets close to nesting */
 #define FMGR_CHUNK (4u << 20) /* 4 MB: the brief's cancel-check and progress granularity */
 
 enum { PROC_OK = 0, PROC_SKIP = 1, PROC_FAIL = 2, PROC_CANCEL = 3 };
@@ -611,6 +614,38 @@ int fmgr_start(char (*srcs)[1024], int n, const char *dst, int copy, int conflic
             snprintf(msg, cap, "A selected item is not a file or folder");
             return -1;
         }
+        /* resolve_clash decides "free or occupied" with a plain lstat(), which cannot tell
+         * a pre-existing destination entry from one this same task already placed there a
+         * moment ago. Two sources sharing a basename would otherwise let the second one
+         * silently overwrite (or rename over) what the first just placed -- losing the
+         * first source's only copy on OVERWRITE, and even on a same-drive move's rename().
+         * Refuse the whole request up front instead: O(n^2) with n <= FMGR_MAX_SRCS is free,
+         * and this fails closed before a single byte moves. */
+        for (int j = 0; j < i; j++) {
+            if (!strcmp(base_name(srcs[i]), base_name(srcs[j]))) {
+                snprintf(msg, cap, "Two selected items are both named '%s'", base_name(srcs[i]));
+                return -1;
+            }
+        }
+        if (S_ISDIR(sst.st_mode)) {
+            /* A folder landing back in the folder that already contains it would have to
+             * merge into itself: under FMGR_OVERWRITE that means creating ".part" files
+             * inside the very directory being readdir'd, which POSIX leaves unspecified.
+             * fm_covers(src, dst) above only catches dst equal to or inside src; this is the
+             * other direction (dst is src's immediate parent). */
+            const char *slash = strrchr(srcs[i], '/');
+            if (slash) {
+                size_t parent_len = (size_t)(slash - srcs[i]);
+                size_t dst_len = strlen(dst);
+                if (dst_len > 0 && dst[dst_len - 1] == '/')
+                    dst_len--; /* tolerate a drive-root dst spelled with a trailing slash */
+                if (parent_len > 0 && dst_len == parent_len && strncmp(dst, srcs[i], parent_len) == 0) {
+                    snprintf(msg, cap, "Cannot %s a folder into the folder that already contains it",
+                             copy ? "copy" : "move");
+                    return -1;
+                }
+            }
+        }
 
         int same_drive = !copy && fm_drive_of(srcs[i]) == dst_drive;
         const char *name = base_name(srcs[i]);
@@ -665,9 +700,18 @@ int fmgr_start(char (*srcs)[1024], int n, const char *dst, int copy, int conflic
     g_cancel = 0;
     pthread_t th;
     if (pthread_create(&th, NULL, fmgr_worker, NULL)) {
-        fmgr_worker(NULL); /* no thread: run it here */
-    } else {
-        pthread_detach(th);
+        /* Unlike install_all_start's install (seconds), a copy or move can run for hours.
+         * Running fmgr_worker inline here, on the only thread that also serves the panel and
+         * delivers fmgr_cancel(), would make the task both unresponsive and uncancellable
+         * for its whole duration -- degrading is worse than refusing. Roll back the RUNNING
+         * state set above so fmgr_busy() does not get stuck forever with no worker to ever
+         * finish and clear it. */
+        pthread_mutex_lock(&g_lock);
+        g_task.state = FMGR_IDLE;
+        pthread_mutex_unlock(&g_lock);
+        snprintf(msg, cap, "Could not start the background copy, try again");
+        return -1;
     }
+    pthread_detach(th);
     return 0;
 }
