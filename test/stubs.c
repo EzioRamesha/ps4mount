@@ -51,6 +51,13 @@ int app_fm_move(const char *src, const char *dst, char *msg, size_t cap) {
     snprintf(arg, sizeof(arg), "%s -> %s", src, dst);
     return record("fm_move", arg, msg, cap);
 }
+void app_fm_task_json(buf_t *out) { buf_printf(out, "{\"state\":\"idle\"}"); }
+int app_fm_copy(const char *srcs, const char *dst, int copy, int conflict, char *msg, size_t cap) {
+    char arg[4096];
+    snprintf(arg, sizeof(arg), "%s -> %s copy=%d conflict=%d", srcs, dst, copy, conflict);
+    return record("fm_copy", arg, msg, cap);
+}
+int app_fm_cancel(char *msg, size_t cap) { return record("fm_cancel", NULL, msg, cap); }
 int app_resume(char *msg, size_t cap) { return record("resume", NULL, msg, cap); }
 void app_stop(void) {
     char m[8];

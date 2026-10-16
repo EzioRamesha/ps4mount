@@ -460,6 +460,34 @@ void web_handle(int fd) {
             int rc = app_fm_move(s, d, msg, sizeof(msg));
             json_msg(fd, !rc, msg);
         }
+    } else if (!post && !strcmp(path, "/api/fm/task")) {
+        buf_t b = {0};
+        app_fm_task_json(&b);
+        reply(fd, "200 OK", "application/json; charset=utf-8", b.data, b.len);
+        buf_free(&b);
+    } else if (post && !strncmp(path, "/api/fm/copy", 12)) {
+        /* srcs come in the body (not the query): a multi-select copy of many long pkg paths
+         * can easily outgrow a query string. copy/conflict are required, not defaulted, same
+         * strict style as every other fm route below. */
+        char d[1024], cp[4], cf[4];
+        ssize_t body_len = n - (body - req);
+        if (fm_param(path, "dst", d, sizeof(d)) || !fm_path_ok(d) ||
+            fm_param(path, "copy", cp, sizeof(cp)) || cp[0] < '0' || cp[0] > '1' || cp[1] ||
+            fm_param(path, "conflict", cf, sizeof(cf)) || cf[0] < '0' || cf[0] > '3' || cf[1])
+            json_msg(fd, 0, "invalid path");
+        else if (want > 0 && body_len < want)
+            /* The body is shorter than its own declared Content-Length: the client stalled
+             * or the srcs list did not fit before the read deadline. Processing it anyway
+             * would silently start a real copy/move on a smaller set of files than the user
+             * selected, so refuse instead of guessing. */
+            json_msg(fd, 0, "Too many files selected at once, try fewer");
+        else {
+            int rc = app_fm_copy(body, d, cp[0] - '0', cf[0] - '0', msg, sizeof(msg));
+            json_msg(fd, !rc, msg);
+        }
+    } else if (post && !strcmp(path, "/api/fm/cancel")) {
+        int rc = app_fm_cancel(msg, sizeof(msg));
+        json_msg(fd, !rc, msg);
     } else if (post && (!strncmp(path, "/api/exclude", 12) || !strncmp(path, "/api/include", 12))) {
         if (title_param(path, tid))
             json_msg(fd, 0, "invalid title_id");

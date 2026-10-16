@@ -31,6 +31,15 @@ int app_fm_rename(const char *path, const char *name, char *msg, size_t cap);
 int app_fm_delete(const char *path, char *msg, size_t cap);
 /* Moves the file or folder at src into the folder dst on the same drive. 0 on success. */
 int app_fm_move(const char *src, const char *dst, char *msg, size_t cap);
+/* {"state":"idle|running|done|failed|cancelled","what":"...","done_items":N,"total_items":N,
+ *  "done_bytes":N,"total_bytes":N,"speed":N,"eta":N,"msg":"..."} */
+void app_fm_task_json(buf_t *out);
+/* Starts a background copy or move of one or more items into dst. srcs is one or more paths
+ * separated by '\n'. copy: 1 copy, 0 move. conflict: FMGR_ASK=0, FMGR_OVERWRITE=1, FMGR_SKIP=2,
+ * FMGR_KEEP_BOTH=3 (see fmgr.h). 0 when the task started. */
+int app_fm_copy(const char *srcs, const char *dst, int copy, int conflict, char *msg, size_t cap);
+/* Asks the running background copy/move task to stop. 0 on success. */
+int app_fm_cancel(char *msg, size_t cap);
 /* Lets games be added again after a database corruption report paused it. 0 on success. */
 int app_resume(char *msg, size_t cap);
 void app_stop(void);

@@ -83,6 +83,11 @@ int app_fm_delete(const char *path, char *msg, size_t cap) {
 int app_fm_move(const char *src, const char *dst, char *msg, size_t cap) {
     return snprintf(msg, cap, "move[%s -> %s]", src, dst) < 0;
 }
+void app_fm_task_json(buf_t *out) { buf_printf(out, "{\"state\":\"idle\"}"); }
+int app_fm_copy(const char *srcs, const char *dst, int copy, int conflict, char *msg, size_t cap) {
+    return snprintf(msg, cap, "copy[%s -> %s copy=%d conflict=%d]", srcs, dst, copy, conflict) < 0;
+}
+int app_fm_cancel(char *msg, size_t cap) { return snprintf(msg, cap, "cancelled") < 0; }
 
 static int connect_panel(void) {
     int c = socket(AF_INET, SOCK_STREAM, 0);
@@ -386,6 +391,54 @@ static void test_fm_api(int listen_fd) {
     CHECK(strstr(resp, "move[/mnt/usb0/dst=a -> /mnt/usb0/games]") != NULL); /* dst param not spoofed by src value */
 }
 
+static void test_fm_copy_api(int listen_fd) {
+    printf("file manager copy/move task endpoints\n");
+    char resp[4096];
+    request(listen_fd, "GET /api/fm/task HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "{\"state\":\"idle\"}") != NULL);
+
+    const char *body = "/mnt/usb0/a.pkg\n/mnt/usb0/b.pkg";
+    char req[512];
+    snprintf(req, sizeof(req),
+             "POST /api/fm/copy?dst=/mnt/usb0/games&copy=1&conflict=0 HTTP/1.1\r\nContent-Length: %zu\r\n\r\n%s",
+             strlen(body), body);
+    request(listen_fd, req, resp, sizeof(resp));
+    /* json_msg strips control characters (including the '\n' between sources), so check the
+     * pieces either side of it rather than the literal joined string. */
+    CHECK(strstr(resp, "copy[/mnt/usb0/a.pkg") != NULL);
+    CHECK(strstr(resp, "/mnt/usb0/b.pkg -> /mnt/usb0/games copy=1 conflict=0]") != NULL);
+
+    request(listen_fd,
+            "POST /api/fm/copy?dst=/data/ps4mount&copy=1&conflict=0 HTTP/1.1\r\nContent-Length: 4\r\n\r\nabcd", resp,
+            sizeof(resp));
+    CHECK(strstr(resp, "invalid path") != NULL); /* /data/ps4mount is never a valid fm path */
+
+    request(listen_fd, "POST /api/fm/cancel HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "cancelled") != NULL);
+
+    request(listen_fd, "GET /api/fm/copy?dst=/mnt/usb0&copy=1&conflict=0 HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "404") != NULL); /* mutations are POST only */
+    request(listen_fd, "GET /api/fm/cancel HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "404") != NULL);
+}
+
+/* Regression for a copy/move request whose body is cut short of its own declared
+ * Content-Length (the client stalled, or many long selected paths did not fit the request
+ * buffer): the srcs list must never be silently processed short -- that would start a real
+ * copy/move on a different, smaller set of files than the user selected. */
+static void test_fm_copy_truncated(int listen_fd) {
+    printf("file manager copy request body shorter than Content-Length\n");
+    char resp[4096];
+    const char *sent = "/mnt/usb0/a.pkg"; /* 15 bytes actually written */
+    char req[512];
+    snprintf(req, sizeof(req),
+             "POST /api/fm/copy?dst=/mnt/usb0/games&copy=1&conflict=0 HTTP/1.1\r\nContent-Length: %zu\r\n\r\n%s",
+             strlen(sent) + 50, sent); /* claims 50 bytes more than actually sent */
+    request(listen_fd, req, resp, sizeof(resp));
+    CHECK(strstr(resp, "Too many files selected at once") != NULL);
+    CHECK(strstr(resp, "copy[") == NULL); /* never dispatched with the partial list */
+}
+
 /* Regression for the request-target truncation bug: the method/path line used to be
  * sscanf'd into a 255-byte buffer, so a real (and valid) fm path longer than that got cut
  * mid-path into something that could still be a syntactically valid path -- e.g. the parent
@@ -509,6 +562,8 @@ int main(void) {
         test_update_choice(listen_fd);
         test_launch(listen_fd);
         test_fm_api(listen_fd);
+        test_fm_copy_api(listen_fd);
+        test_fm_copy_truncated(listen_fd);
         test_fm_long_target(listen_fd);
         test_fm_split_request(listen_fd);
         test_rescan(listen_fd);
