@@ -1472,6 +1472,10 @@ function fmTaskPoll(gen) {
     }
     fm.taskPolling = false;
     $('fmtask').hidden = true;
+    /* Finding 2: drop the "built already" markers so the next task's first fmTaskRender call
+       rebuilds fresh markup (and a fresh Cancel button) instead of reusing this task's. */
+    $('fmtask').removeAttribute('data-live');
+    $('fmtask').removeAttribute('data-hasbytes');
     if (j.state === 'idle') { if (changed) fmRender(); return; } /* nothing to report */
     /* done/failed/cancelled (Step 3): the message is the task's own, green for done, amber
        otherwise - toast() already draws that distinction for every other caller in this view.
@@ -1495,26 +1499,46 @@ function fmDuration(s) {
 }
 /* total_bytes is deliberately left at 0 by the daemon for a same-drive move (fmgr.c does not
    track bytes there - see the Task 2 review): the byte progress bar, speed and ETA all divide
-   by it, so they are hidden and only the item count is shown in that case. */
+   by it, so they are hidden and only the item count is shown in that case.
+   Finding 2 fix: fmTaskPoll calls this every ~1s for the task's whole duration, so rebuilding
+   the overlay's innerHTML on every tick (the old behavior) made #fmtaskcancel a brand-new DOM
+   node every second - a gamepad's focus kept falling back to <body> with nothing to press.
+   The markup (including the Cancel button) is now built exactly once per task, tagged with
+   data-live so a later tick can tell it is already there; every tick after that only updates
+   text content and the bar's width in place, so the Cancel button (and whatever has focus on
+   it) survives for the task's entire duration. data-hasbytes guards the one legitimate shape
+   change mid-task: total_bytes starting at 0 (same-drive move) can never grow a byte bar out of
+   nowhere, but treat it as a rebuild trigger anyway rather than assume that invariant forever. */
 function fmTaskRender(d) {
   var hasBytes = d.total_bytes > 0;
-  var html = '<div class="fmtaskwhat">' + esc(d.what || '') + '</div>' +
-    '<div>' + t('{n} of {m} items', {n: d.done_items, m: d.total_items}) + '</div>';
+  var el = $('fmtask');
+  if (el.getAttribute('data-live') !== '1' || el.getAttribute('data-hasbytes') !== (hasBytes ? '1' : '0')) {
+    var html = '<div class="fmtaskwhat"></div><div class="fmtaskcount"></div>';
+    if (hasBytes) {
+      html += '<div class="fmtaskbar"><div class="fmtaskfill"></div></div>' +
+        '<div class="fmtaskmeta"><span class="fmtaskbytes"></span><span class="fmtaskspeed"></span><span class="fmtasketa"></span></div>';
+    }
+    html += '<button type="button" id="fmtaskcancel">' + t('Cancel') + '</button>';
+    el.innerHTML = html;
+    el.setAttribute('data-live', '1');
+    el.setAttribute('data-hasbytes', hasBytes ? '1' : '0');
+  }
+  el.querySelector('.fmtaskwhat').textContent = d.what || '';
+  el.querySelector('.fmtaskcount').textContent = t('{n} of {m} items', {n: d.done_items, m: d.total_items});
   if (hasBytes) {
     var pct = Math.min(100, Math.floor(d.done_bytes / d.total_bytes * 100));
-    html += '<div class="fmtaskbar"><div class="fmtaskfill" style="width:' + pct + '%"></div></div>' +
-      '<div class="fmtaskmeta"><span>' + esc(gb(d.done_bytes) + ' / ' + gb(d.total_bytes)) + '</span>' +
-      '<span>' + esc(gb(d.speed) + '/s') + '</span>' +
-      '<span>' + esc(t('ETA {t}', {t: fmDuration(d.eta)})) + '</span></div>';
+    el.querySelector('.fmtaskfill').style.width = pct + '%';
+    el.querySelector('.fmtaskbytes').textContent = gb(d.done_bytes) + ' / ' + gb(d.total_bytes);
+    el.querySelector('.fmtaskspeed').textContent = gb(d.speed) + '/s';
+    el.querySelector('.fmtasketa').textContent = t('ETA {t}', {t: fmDuration(d.eta)});
   }
-  html += '<button type="button" id="fmtaskcancel">' + t('Cancel') + '</button>';
-  $('fmtask').innerHTML = html;
 }
-/* The Cancel button is (re)created by fmTaskRender each poll, same delegation pattern as the
-   clipboard bar's Paste/Cancel above. Disabling it immediately (before the response even comes
-   back) stops a second click from firing while the first request is still in flight; there is
-   no need to re-enable it since the overlay itself disappears once the task reaches a terminal
-   state, taking the button with it. */
+/* The Cancel button is now created once per task (see fmTaskRender's comment above) and
+   reused by every delegated click here, same delegation pattern as the clipboard bar's
+   Paste/Cancel above. Disabling it immediately (before the response even comes back) stops a
+   second click from firing while the first request is still in flight; there is no need to
+   re-enable it since the overlay itself disappears once the task reaches a terminal state,
+   taking the button with it. */
 $('fmtask').addEventListener('click', function (e) {
   if (e.target.id !== 'fmtaskcancel') return;
   e.target.disabled = true;
