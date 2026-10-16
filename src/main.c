@@ -42,6 +42,7 @@
 #include "crypto.h"
 #include "db.h"
 #include "fm.h"
+#include "fmgr.h"
 #include "fw.h"
 #include "logfile.h"
 #include "logts.h"
@@ -3321,14 +3322,24 @@ static void fm_queue_scan(int drive) {
  * still reach dir's 1023 chars plus a name's 240, so every buffer below is sized PATH_MAX + 256
  * and every snprintf that joins them is checked: on would-be truncation the mutation fails
  * closed instead of risking an operation on a path that isn't the one the caller asked for.
- * app_fm_rename/app_fm_delete/app_fm_move also refuse outright while g_install_busy || g_adding
- * (install_all() pumps events, including panel requests, during that window; see app_launch's
- * own check and fm_protected's comment above): fm_protected alone already covers a game whose
- * files are already placed, but a pkg about to be used by a game not yet even in the catalog
- * (its register_prepare() has not been reached this batch) is not something fm_protected can
- * see at all, so the blanket refusal covers that case too. */
+ * app_fm_mkdir/app_fm_rename/app_fm_delete/app_fm_move also refuse outright while g_install_busy
+ * || g_adding (install_all() pumps events, including panel requests, during that window; see
+ * app_launch's own check and fm_protected's comment above): fm_protected alone already covers a
+ * game whose files are already placed, but a pkg about to be used by a game not yet even in the
+ * catalog (its register_prepare() has not been reached this batch) is not something fm_protected
+ * can see at all, so the blanket refusal covers that case too. Each of the four also refuses
+ * while fmgr_busy(): a background copy/move task (see fmgr.[ch]) may right now be reading from
+ * or writing into the very folder a single-file mutation is about to touch. */
 
 int app_fm_mkdir(const char *dir, const char *name, char *msg, size_t cap) {
+    if (g_install_busy || g_adding) {
+        snprintf(msg, cap, "Games are being added; try again in a moment");
+        return -1;
+    }
+    if (fmgr_busy()) {
+        snprintf(msg, cap, "A file operation is already running; wait for it to finish");
+        return -1;
+    }
     char full[PATH_MAX + 256];
     if (snprintf(full, sizeof(full), "%s/%s", dir, name) >= (int)sizeof(full)) {
         snprintf(msg, cap, "Path too long");
@@ -3348,6 +3359,10 @@ int app_fm_mkdir(const char *dir, const char *name, char *msg, size_t cap) {
 int app_fm_rename(const char *path, const char *name, char *msg, size_t cap) {
     if (g_install_busy || g_adding) {
         snprintf(msg, cap, "Games are being added; try again in a moment");
+        return -1;
+    }
+    if (fmgr_busy()) {
+        snprintf(msg, cap, "A file operation is already running; wait for it to finish");
         return -1;
     }
     const char *game = NULL;
@@ -3421,6 +3436,10 @@ int app_fm_delete(const char *path, char *msg, size_t cap) {
         snprintf(msg, cap, "Games are being added; try again in a moment");
         return -1;
     }
+    if (fmgr_busy()) {
+        snprintf(msg, cap, "A file operation is already running; wait for it to finish");
+        return -1;
+    }
     const char *game = NULL;
     if (fm_protected(path, &game)) {
         snprintf(msg, cap, "Used by %s; remove the game from the library first", game ? game : "a game");
@@ -3482,6 +3501,10 @@ int app_fm_move(const char *src, const char *dst, char *msg, size_t cap) {
         snprintf(msg, cap, "Games are being added; try again in a moment");
         return -1;
     }
+    if (fmgr_busy()) {
+        snprintf(msg, cap, "A file operation is already running; wait for it to finish");
+        return -1;
+    }
     const char *game = NULL;
     if (fm_drive_of(src) != fm_drive_of(dst)) {
         snprintf(msg, cap, "Moving between drives is not supported yet");
@@ -3518,6 +3541,129 @@ int app_fm_move(const char *src, const char *dst, char *msg, size_t cap) {
     printf("[fm] move %s -> %s\n", src, full);
     snprintf(msg, cap, "Moved to %s", dst);
     return 0;
+}
+
+/* --- file manager: background copy/move task (see fmgr.[ch]) ---
+ * app_fm_copy only validates the request and calls fmgr_start(); the actual copy or move runs
+ * later, entirely on fmgr's own worker thread. Isolation (deliberate, see the Phase 2 plan):
+ * this file never calls a catalog_* write function, a registration/mount/unmount function, or
+ * touches g_retry for this task, and touches g_cat only through the existing read-only
+ * fm_protected() helper, same as the single-file mutations above. g_fm_task_drive remembers the
+ * destination drive of the task just started; g_fm_task_seen_state remembers the FMGR_* state
+ * app_fm_task_json last reported, so the first poll that observes the task land in a terminal
+ * state can queue exactly one rescan of that drive (see app_fm_task_json below). */
+static int g_fm_task_drive = -1;
+static int g_fm_task_seen_state = FMGR_IDLE;
+
+int app_fm_copy(const char *srcs, const char *dst, int copy, int conflict, char *msg, size_t cap) {
+    if (g_install_busy || g_adding) {
+        snprintf(msg, cap, "Games are being added; try again in a moment");
+        return -1;
+    }
+    if (fmgr_busy()) {
+        snprintf(msg, cap, "A file operation is already running; wait for it to finish");
+        return -1;
+    }
+
+    /* Split srcs on '\n'; empty segments (a trailing newline, or none at all) are skipped. */
+    char srcs_buf[FMGR_MAX_SRCS][1024];
+    int n = 0;
+    const char *seg_start = srcs;
+    for (const char *p = srcs;; p++) {
+        if (*p == '\n' || *p == '\0') {
+            size_t len = (size_t)(p - seg_start);
+            if (len > 0) {
+                if (n >= FMGR_MAX_SRCS) {
+                    snprintf(msg, cap, "Too many items selected (limit %d)", FMGR_MAX_SRCS);
+                    return -1;
+                }
+                if (len >= sizeof(srcs_buf[0])) {
+                    snprintf(msg, cap, "A source path is too long");
+                    return -1;
+                }
+                memcpy(srcs_buf[n], seg_start, len);
+                srcs_buf[n][len] = 0;
+                n++;
+            }
+            seg_start = p + 1;
+            if (*p == '\0')
+                break;
+        }
+    }
+    if (n == 0) {
+        snprintf(msg, cap, "Nothing selected");
+        return -1;
+    }
+
+    const char *game = NULL;
+    for (int i = 0; i < n; i++) {
+        if (fm_protected(srcs_buf[i], &game)) {
+            snprintf(msg, cap, "Used by %s; remove the game from the library first", game ? game : "a game");
+            return -1;
+        }
+    }
+    if (fm_protected(dst, &game)) {
+        snprintf(msg, cap, "Used by %s; remove the game from the library first", game ? game : "a game");
+        return -1;
+    }
+
+    int dd = fm_drive_of(dst);
+    unsigned long long free_bytes = 0, total_bytes = 0;
+    if (dd >= 0) {
+        char root[32];
+        drive_root(dd, root, sizeof(root));
+        drive_space(root, &free_bytes, &total_bytes);
+    }
+
+    if (fmgr_start(srcs_buf, n, dst, copy, conflict, free_bytes, msg, cap))
+        return -1;
+
+    g_fm_task_drive = dd;
+    g_fm_task_seen_state = FMGR_RUNNING;
+    printf("[fm] %s %d item(s) -> %s\n", copy ? "copy" : "move", n, dst);
+    return 0;
+}
+
+int app_fm_cancel(char *msg, size_t cap) {
+    if (!fmgr_busy()) {
+        snprintf(msg, cap, "No file operation is running");
+        return -1;
+    }
+    fmgr_cancel();
+    snprintf(msg, cap, "Cancelling");
+    return 0;
+}
+
+/* Writes the running (or just-finished) task's status for the panel. The worker thread already
+ * did the actual filesystem work; the ONLY thing done here, on the first poll that sees the
+ * task land in a terminal state after having been running, is to queue a rescan of the
+ * destination drive -- not a catalog update, not registration, nothing else -- so a scan the
+ * daemon would have run anyway is the one and only way this task's result reaches the library,
+ * keeping the isolation described above. */
+void app_fm_task_json(buf_t *out) {
+    fmgr_status_t s;
+    fmgr_status(&s);
+
+    if (g_fm_task_seen_state == FMGR_RUNNING &&
+        (s.state == FMGR_DONE || s.state == FMGR_FAILED || s.state == FMGR_CANCELLED)) {
+        if (g_fm_task_drive >= 0)
+            fm_queue_scan(g_fm_task_drive);
+    }
+    g_fm_task_seen_state = s.state;
+
+    const char *state = s.state == FMGR_RUNNING ? "running"
+                         : s.state == FMGR_DONE  ? "done"
+                         : s.state == FMGR_FAILED ? "failed"
+                         : s.state == FMGR_CANCELLED ? "cancelled"
+                                                      : "idle";
+    buf_printf(out, "{\"state\":\"%s\",\"what\":", state);
+    json_str(out, s.what);
+    buf_printf(out,
+               ",\"done_items\":%d,\"total_items\":%d,\"done_bytes\":%llu,\"total_bytes\":%llu,"
+               "\"speed\":%llu,\"eta\":%ld,\"msg\":",
+               s.done_items, s.total_items, s.done_bytes, s.total_bytes, s.bytes_per_sec, s.eta_seconds);
+    json_str(out, s.msg);
+    buf_printf(out, "}");
 }
 
 static void pump_events(int ms); /* defined with the main loop below */
