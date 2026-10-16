@@ -1944,9 +1944,19 @@ static int scan_prepare(const char *root, int fresh, int reconnected) {
     if (reconnected)
         clear_removed_dlc();
     if (g_cfg.organize && has_candidates(root)) {
-        int moved = adopt_root_pkgs(root);
-        if (moved && !fresh)
-            notify("%s: %d new package(s) found", root + 5, moved);
+        /* adopt_root_pkgs() renames pkgs into place; the file manager's background copy/move
+         * worker (fmgr.c) independently renames/copies/deletes files on the same drives from
+         * its own thread. Both ultimately run from the single main loop thread except for that
+         * detached worker, so skip adoption for this scan cycle while it is running rather than
+         * race it -- has_candidates(root) stays true until something is actually adopted, so
+         * this is only ever deferred to the next scan, never dropped. */
+        if (fmgr_busy()) {
+            printf("[scan] %s: a file operation is running; adoption deferred to the next scan\n", root);
+        } else {
+            int moved = adopt_root_pkgs(root);
+            if (moved && !fresh)
+                notify("%s: %d new package(s) found", root + 5, moved);
+        }
     }
     if (!catalog_update(cat, root, fresh)) {
         if (fresh)
