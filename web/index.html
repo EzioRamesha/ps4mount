@@ -409,7 +409,9 @@ es: {
 'Copying {n} item(s)…': 'Copiando {n} elemento(s)…', 'Moving {n} item(s)…': 'Moviendo {n} elemento(s)…',
 'A file operation is already running; wait for it to finish': 'Ya hay una operación de archivos en curso; espera a que termine',
 'Select all loaded': 'Seleccionar todo lo cargado',
-'{n} selected (includes folders, size not shown)': '{n} seleccionados (incluye carpetas, tamaño no mostrado)'
+'{n} selected (includes folders, size not shown)': '{n} seleccionados (incluye carpetas, tamaño no mostrado)',
+'Replace the {n} item(s) already waiting to copy?': '¿Reemplazar los {n} elemento(s) que ya esperan para copiarse?',
+'Replace the {n} item(s) already waiting to move?': '¿Reemplazar los {n} elemento(s) que ya esperan para moverse?'
 },
 pt: {
 'Search game or CUSA': 'Buscar jogo ou CUSA', 'Sort': 'Ordenar', 'Sort by name': 'Ordenar por nome',
@@ -531,7 +533,9 @@ pt: {
 'Copying {n} item(s)…': 'Copiando {n} item(ns)…', 'Moving {n} item(s)…': 'Movendo {n} item(ns)…',
 'A file operation is already running; wait for it to finish': 'Já há uma operação de arquivos em andamento; espere ela terminar',
 'Select all loaded': 'Selecionar tudo o que foi carregado',
-'{n} selected (includes folders, size not shown)': '{n} selecionados (inclui pastas, tamanho não mostrado)'
+'{n} selected (includes folders, size not shown)': '{n} selecionados (inclui pastas, tamanho não mostrado)',
+'Replace the {n} item(s) already waiting to copy?': 'Substituir o(s) {n} item(ns) que já esperam para ser copiado(s)?',
+'Replace the {n} item(s) already waiting to move?': 'Substituir o(s) {n} item(ns) que já esperam para ser movido(s)?'
 },
 fr: {
 'Search game or CUSA': 'Chercher un jeu ou CUSA', 'Sort': 'Trier', 'Sort by name': 'Trier par nom',
@@ -653,7 +657,9 @@ fr: {
 'Copying {n} item(s)…': 'Copie de {n} élément(s)…', 'Moving {n} item(s)…': 'Déplacement de {n} élément(s)…',
 'A file operation is already running; wait for it to finish': 'Une opération sur les fichiers est déjà en cours ; attendez qu’elle se termine',
 'Select all loaded': 'Tout sélectionner (chargé)',
-'{n} selected (includes folders, size not shown)': '{n} sélectionné(s) (inclut des dossiers, taille non affichée)'
+'{n} selected (includes folders, size not shown)': '{n} sélectionné(s) (inclut des dossiers, taille non affichée)',
+'Replace the {n} item(s) already waiting to copy?': 'Remplacer le(s) {n} élément(s) déjà en attente de copie ?',
+'Replace the {n} item(s) already waiting to move?': 'Remplacer le(s) {n} élément(s) déjà en attente de déplacement ?'
 }
 };
 function langPicked() { try { return localStorage.getItem('ps4mount-lang') || ''; } catch (e) { return ''; } }
@@ -1290,8 +1296,8 @@ function fmAction(act) {
       .then(function (j) { toast(j.message); return fmOpen(fm.path, true); })
       .catch(function (e) { toast(t('Error: {e}', {e: e.message}), true); });
   } else if (act === 'move') {
-    fm.clipboard = {items: [fm.path + '/' + entry.name], copy: false};
     fm.actionsFor = null;
+    fmSetClipboard([fm.path + '/' + entry.name], false); /* Finding 5: shared helper, see its comment */
     fmRender();
   } else if (act === 'delete') {
     /* A bare folder name in the confirmation ("Delete CUSA00001?") leaves it ambiguous
@@ -1391,14 +1397,33 @@ $('fmselall').addEventListener('click', function () {
   fmRender();
 });
 $('fmselclear').addEventListener('click', function () { fm.sel = {}; fmRender(); });
-/* Copy/Move (Task 8): puts the current selection on the clipboard (see fm.clipboard's comment
-   above fm's declaration) and clears the selection - it is now on the clipboard, not selected.
-   Full paths are built the same way fmAction above builds them for Rename/Delete. */
-function fmClip(copy) {
-  var items = Object.keys(fm.sel).map(function (nm) { return fm.path + '/' + nm; });
+/* Finding 5: shared by every entrypoint that can set fm.clipboard (bulk Copy/Move below, and
+   the per-row "..." Move in fmAction) so both mitigations apply everywhere, not just one call
+   site. (a) a freshly-set clipboard also clears fm.sel: without this, the selection bar
+   ("2 selected") and the clipboard bar ("1 item ready to move") could show at the same time,
+   which is confusing. (b) overwriting an already-pending clipboard is confirmed first - it was
+   otherwise silently replaced with no way back for a user who forgot about an earlier Move.
+   Does not render on its own; callers already render afterwards for their own reasons (closing
+   the per-row actions area, or just picking up the new clipboard/selection state), and still
+   need to do so even when the user declines the confirm (to close whatever UI they had open). */
+function fmSetClipboard(items, copy) {
   if (!items.length) return;
+  if (fm.clipboard && fm.clipboard.items.length &&
+      !confirm(fm.clipboard.copy ?
+        t('Replace the {n} item(s) already waiting to copy?', {n: fm.clipboard.items.length}) :
+        t('Replace the {n} item(s) already waiting to move?', {n: fm.clipboard.items.length})))
+    return;
   fm.clipboard = {items: items, copy: copy};
   fm.sel = {};
+}
+/* Copy/Move (Task 8): puts the current selection on the clipboard (see fm.clipboard's comment
+   above fm's declaration). Full paths are built the same way fmAction above builds them for
+   Rename/Delete. Finding 4: also refuses while a task runs, as defense in depth - fmbulkcopy/
+   fmbulkmove are already disabled then (fmSelbar), but nothing stops a stale click event. */
+function fmClip(copy) {
+  if (fm.taskRunning) return;
+  var items = Object.keys(fm.sel).map(function (nm) { return fm.path + '/' + nm; });
+  fmSetClipboard(items, copy);
   fmRender();
 }
 $('fmbulkcopy').addEventListener('click', function () { fmClip(true); });
