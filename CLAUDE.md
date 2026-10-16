@@ -47,7 +47,13 @@ other module avoids PS5 syscalls so it can be compiled and tested on the host (m
   speed verdicts) plus the `kv_*` helpers for the tab-separated state files in `/data/ps4mount/`.
   Deliberately has no system calls; put new decision rules here so they get host tests.
 - `src/fm.[ch]` — path and name rules for the panel's file manager (drive-of, path and name
-  validity, folder-covers-path), also system-call-free so it gets host tests.
+  validity, folder-covers-path, listing sort order, the "keep both" name for a copy), also
+  system-call-free so it gets host tests.
+- `src/fmgr.[ch]` — the file manager's background copy/move engine: one task at a time, on its
+  own thread, with progress, speed, ETA and cancel. Reads the catalog only through `fm_protected`
+  and knows nothing about drives or mounts (`main.c` passes in the destination's free space); its
+  only effect outside its own thread is asking `main.c` to queue a rescan when a task finishes.
+  Makes real filesystem syscalls on real user data, so it has no host test.
 - `src/build.[ch]` — generates the files a real install would leave (app/patch metadata, PlayGo
   records from the `tools/pdb_*_template.bin` layouts, the decrypted fake license).
 - `src/pkg.[ch]` + `src/crypto.[ch]` + `src/keys.h` — PKG reading and fake-key entry decryption

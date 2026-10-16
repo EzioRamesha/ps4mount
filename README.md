@@ -285,15 +285,25 @@ settings. A `.pkg` you move, rename or replace yourself is picked up as usual.
 
 ### Files
 
-Click **Files** to browse the connected drives directly: folders, pkgs and other files, with
-breadcrumbs back to the drive root. Each pkg shows what it is (game, update or add-on, its title ID
-and version) and whether a library game is using it. From the list you can make a new folder, and
-tap a file to rename, move or delete it. Folders can only be opened for now; renaming, moving and
-deleting a folder is planned for a later version.
+Click **Files** for a full-screen file manager over the connected drives: folders, pkgs and other
+files, with breadcrumbs back to the drive root and an Up button. Each pkg shows what it is (game,
+update or add-on, its title ID and version) and whether a library game is using it. Sort by name,
+size or date by tapping a column; the choice is remembered. Tap a file or folder's **⋯** to rename,
+move or delete it; tick several items to select them, and use the selection bar to delete many at
+once or see their combined size.
 
-A pkg used by a game in the library cannot be renamed, moved or deleted: remove the game from the
-library first, or move its pkgs back. Moving is limited to the same drive for now; moving a file
-between drives is planned for a later version.
+To copy or move, select one or more items, press **Copy** or **Move**, open the destination folder,
+and press **Paste**. A copy or cross-drive move runs in the background with a progress bar, speed,
+time remaining and a Cancel button; it keeps running even if the browser is closed, and reopening
+Files picks the progress back up. A same-drive move is instant. If something already exists with
+the same name, you choose once whether to overwrite it, skip it, or keep both, for every item in
+that operation.
+
+A pkg (or a folder containing one) used by a game in the library cannot be renamed, moved or
+deleted: remove the game from the library first, or move its pkgs back.
+
+Not yet possible from the panel: downloading or uploading a file (use FTP for that), extracting an
+archive, and editing a text file.
 
 Deleting a file does not remove it straight away: it moves into a hidden `.trash` folder on the
 same drive and stays there for 14 days, so a delete by mistake is not the end of it. The folder is
@@ -450,6 +460,7 @@ PS4Mount does not contain code copied from other projects except where noted bel
 | [SQLite](https://sqlite.org) | SQLite authors | Public domain | `third_party/sqlite/` (amalgamation 3.46.1), used to write the library databases |
 | [ShadowMountPlus](https://github.com/drakmor/ShadowMountPlus) | drakmor | GPL-3.0 | Inspiration for auto-mounting games from USB drives and for registering titles with `sceAppInstUtilAppInstallAll` on firmware 12.00+. No code was used. |
 | [ps5-app-dumper](https://github.com/EchoStretch/ps5-app-dumper) | EchoStretch | see project | Reference for the Media tab shortcut (`applicationCategoryType` 65536 with `deeplinkUri`). No code was used. |
+| [ps5-web-file-manager](https://github.com/owendswang/ps5-web-file-manager) | owendswang | GPL-3.0 | Model for the Files panel's layout, task model and copy/move interaction (select, then paste into the open folder). Same license as PS4Mount; no code was used. |
 
 ## License
 
