@@ -1036,6 +1036,32 @@ static void test_fm(void) {
     CHECK(fm_covers("/mnt/usb0/games", "/mnt/usb0/games"));
     CHECK(fm_covers("/mnt/usb0/games", "/mnt/usb0/games/sub/x.pkg"));
     CHECK(!fm_covers("/mnt/usb0/games", "/mnt/usb0/games2/x.pkg"));
+
+    printf("file manager sorting and names\n");
+    fm_row_t rows[5] = {
+        {"beta.pkg", 0, 300, 100},
+        {"Alpha", 1, 0, 50},
+        {"gamma.pkg", 0, 100, 300},
+        {"delta", 1, 0, 200},
+        {"Epsilon.pkg", 0, 200, 150},
+    };
+    fm_sort(rows, 5, FM_SORT_NAME, 0);
+    CHECK(rows[0].dir && rows[1].dir);                       /* folders first */
+    CHECK(!strcmp(rows[0].name, "Alpha") && !strcmp(rows[1].name, "delta")); /* case-insensitive */
+    CHECK(!strcmp(rows[2].name, "beta.pkg") && !strcmp(rows[4].name, "gamma.pkg"));
+    fm_sort(rows, 5, FM_SORT_SIZE, 1);
+    CHECK(rows[0].dir && rows[1].dir);                       /* folders still first */
+    CHECK(rows[2].size == 300 && rows[4].size == 100);       /* biggest file first */
+    fm_sort(rows, 5, FM_SORT_TIME, 1);
+    CHECK(rows[2].mtime == 300 && rows[4].mtime == 100);     /* newest file first */
+
+    char kb[FM_NAME_MAX];
+    CHECK(!fm_keep_both_name("x.pkg", 2, kb, sizeof(kb)) && !strcmp(kb, "x (2).pkg"));
+    CHECK(!fm_keep_both_name("x (2).pkg", 3, kb, sizeof(kb)) && !strcmp(kb, "x (3).pkg"));
+    CHECK(!fm_keep_both_name("noext", 2, kb, sizeof(kb)) && !strcmp(kb, "noext (2)"));
+    CHECK(!fm_keep_both_name("a.tar.gz", 2, kb, sizeof(kb)) && !strcmp(kb, "a.tar (2).gz")); /* last dot wins */
+    char tiny[8];
+    CHECK(fm_keep_both_name("averylongname.pkg", 2, tiny, sizeof(tiny)) == -1); /* no room */
 }
 
 int main(void) {
