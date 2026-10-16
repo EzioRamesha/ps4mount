@@ -4798,6 +4798,16 @@ int main(void) {
             readd_title(tid);
             continue;
         }
+        {
+            /* Queue the fast rescan the moment a copy/move task finishes, from the main loop
+             * itself, instead of only when app_fm_task_json() happens to observe the same
+             * transition on some client's HTTP poll (which never happens if nobody has the
+             * Files tab open). fm_queue_scan() is harmless to call twice for the same task: the
+             * one in app_fm_task_json() stays, unchanged, for its own purpose (see there). */
+            int fin_drive = fmgr_take_finished_drive();
+            if (fin_drive >= 0)
+                fm_queue_scan(fin_drive);
+        }
         if (time(NULL) >= g_next_scan && !g_deleting) {
             /* not 0 during the scan: a panel request served meanwhile sets 0 and is kept */
             g_next_scan = time(NULL) + g_cfg.interval;

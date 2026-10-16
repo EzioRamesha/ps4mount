@@ -39,3 +39,8 @@ void fmgr_status(fmgr_status_t *out);
 void fmgr_cancel(void);
 /* 1 while a task is running: the daemon refuses other file changes meanwhile. */
 int fmgr_busy(void);
+/* Returns the destination drive index of the task that most recently reached a terminal state
+ * (done/failed/cancelled) since the last call, and clears that record -- or -1 if no task has
+ * finished since the last call. Meant to be polled once per main loop iteration so a rescan can
+ * be queued promptly without depending on a client polling fmgr_status() over HTTP. */
+int fmgr_take_finished_drive(void);

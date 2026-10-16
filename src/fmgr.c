@@ -51,6 +51,13 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 /* Written only by fmgr_cancel(), read only by the worker thread. */
 static volatile int g_cancel;
 
+/* The destination drive of the task that most recently reached a terminal state, not yet
+ * taken by fmgr_take_finished_drive(); -1 when there is nothing to report. Guarded by g_lock,
+ * same as g_task: the worker sets it right after setting g_task.state to a terminal value (see
+ * fmgr_worker below), and fmgr_take_finished_drive() clears it when read, so each finished task
+ * is reported at most once. */
+static int g_finished_drive = -1;
+
 /* The running task's inputs: written by fmgr_start() before the worker thread is created,
  * read-only for the worker from then on (fmgr_start refuses a new task while one is already
  * running, so there is never a second writer). No lock needed, same as g_install_tids. */
@@ -529,6 +536,11 @@ static void *fmgr_worker(void *arg) {
         else
             snprintf(g_task.msg, sizeof(g_task.msg), "%s %d item%s", verb, g_ok, g_ok == 1 ? "" : "s");
     }
+    /* Record that a task just reached a terminal state, for the main loop to pick up on its
+     * own (see fmgr_take_finished_drive()) instead of relying on a client's HTTP poll to notice
+     * the same transition in app_fm_task_json(). g_job.dst_drive is set by fmgr_start() before
+     * this thread was created and never written again, so it is safe to read here. */
+    g_finished_drive = g_job.dst_drive;
     pthread_mutex_unlock(&g_lock);
     return NULL;
 }
@@ -538,6 +550,14 @@ int fmgr_busy(void) {
     int busy = (g_task.state == FMGR_RUNNING);
     pthread_mutex_unlock(&g_lock);
     return busy;
+}
+
+int fmgr_take_finished_drive(void) {
+    pthread_mutex_lock(&g_lock);
+    int drive = g_finished_drive;
+    g_finished_drive = -1;
+    pthread_mutex_unlock(&g_lock);
+    return drive;
 }
 
 void fmgr_status(fmgr_status_t *out) {
