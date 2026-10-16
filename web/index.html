@@ -165,7 +165,7 @@ form.settings input.num{width:6em}
     <button id="fmselall">Select all</button>
   </div>
   <div class="fmbar"><span id="fmcrumbs"></span></div>
-  <div class="warn" id="fmmovebar" hidden></div>
+  <div class="warn" id="fmclipbar" hidden></div>
   <div class="warn" id="fmerr" hidden></div>
   <div class="fmhead" id="fmhead">
     <span class="fmheadcheck"></span>
@@ -177,12 +177,8 @@ form.settings input.num{width:6em}
   </div>
   <div id="fmlist" class="fmlist"></div>
   <div class="selbar" id="fmselbar" hidden><span id="fmselcount"></span>
-    <!-- Copy and Move only make sense with the clipboard model (select, Copy or Move,
-         navigate elsewhere, Paste), which Task 8 ("Copy / move with the clipboard model and
-         conflict prompts") implements. Left as inert, hidden stubs here so Task 8 has a fixed
-         place to wire them into, same as fmbulkmove was left by Task 5 for this task. -->
-    <button class="primary" id="fmbulkcopy" hidden>Copy</button>
-    <button id="fmbulkmove" hidden>Move</button>
+    <button class="primary" id="fmbulkcopy">Copy</button>
+    <button id="fmbulkmove">Move</button>
     <button class="danger" id="fmbulkdelete">Delete</button>
     <button id="fmselclear">Clear</button></div>
   <!-- Task 9 fills this in with task progress/cancel UI. -->
@@ -245,6 +241,14 @@ form.settings input.num{width:6em}
 <div class="hint" id="p-info"></div>
 <div class="row" style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
   <button type="button" id="p-cancel">Cancel</button><button type="button" class="danger" id="p-go" disabled>Move selected back</button>
+</div></dialog>
+<dialog id="conflictdlg"><h3>If something already exists</h3>
+<p class="hint">This choice applies to every item in this copy or move.</p>
+<div class="row" style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:10px">
+  <button type="button" id="cf-cancel">Cancel</button>
+  <button type="button" id="cf-skip">Skip</button>
+  <button type="button" id="cf-keep">Keep both</button>
+  <button type="button" class="primary" id="cf-overwrite">Overwrite</button>
 </div></dialog>
 <dialog id="logdlg"><h3>Log</h3><pre id="log"></pre>
 <div class="actions" style="padding:10px 0 0"><button class="primary" id="logsave">Download the whole log</button><form method="dialog"><button>Close</button></form></div></dialog>
@@ -354,10 +358,9 @@ es: {
 'Stop PS4Mount? The games stay unavailable until it is loaded again.': '¿Detener PS4Mount? Los juegos no estarán disponibles hasta que se vuelva a cargar.',
 'Files': 'Archivos', 'New folder': 'Nueva carpeta', 'Folder name': 'Nombre de la carpeta', 'New name': 'Nuevo nombre',
 'Drives': 'Unidades', 'No drives connected': 'No hay unidades conectadas',
-'Empty folder': 'Carpeta vacía', 'in use': 'en uso', 'Move here': 'Mover aquí', 'Move': 'Mover', 'Rename': 'Renombrar', 'Delete': 'Borrar',
+'Empty folder': 'Carpeta vacía', 'in use': 'en uso', 'Move': 'Mover', 'Rename': 'Renombrar', 'Delete': 'Borrar',
 'In use by a game in the library: it cannot be moved or deleted': 'En uso por un juego de la biblioteca: no se puede mover ni borrar',
 'Delete {what}? It moves to Trash and is kept for {days} days.': '¿Borrar {what}? Se mueve a la Papelera y se guarda durante {days} días.',
-'Moving {name}. Open the destination folder and press Move here.': 'Moviendo {name}. Abre la carpeta de destino y pulsa Mover aquí.',
 'Game': 'Juego', 'Update': 'Actualización', 'Add-on': 'Complemento', 'Duplicate': 'Duplicado',
 'Orphan add-on': 'Complemento huérfano', 'Spare update': 'Actualización de repuesto', 'Orphan update': 'Actualización huérfana',
 'Games removed from the library per group (1 to {max})': 'Juegos quitados de la biblioteca por grupo (1 a {max})',
@@ -378,14 +381,20 @@ es: {
 'Select all': 'Seleccionar todo',
 'Move selected back': 'Devolver los seleccionados',
 'Could not refresh this folder: {e}. Open it again.': 'No se pudo actualizar esta carpeta: {e}. Ábrela otra vez.',
-'Moving {name}. It is already here: open another folder to move it.': 'Moviendo {name}. Ya está aquí: abre otra carpeta para moverlo.',
 'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Solo se muestran los primeros {n} elementos. Usa subcarpetas para ver el resto.',
 'Back to library': 'Volver a la biblioteca', 'Up': 'Subir', 'Refresh': 'Actualizar',
 'Name': 'Nombre', 'Size': 'Tamaño', 'Modified': 'Modificado', 'Actions': 'Acciones',
 'folder {name}': 'la carpeta {name}',
 'Clear': 'Borrar', '{n} selected ({size})': '{n} seleccionados ({size})',
 'Delete {n} item(s)? They move to Trash and are kept for {days} days.': '¿Borrar {n} elemento(s)? Se mueven a la Papelera y se guardan durante {days} días.',
-'Deleting {i} of {n}…': 'Borrando {i} de {n}…'
+'Deleting {i} of {n}…': 'Borrando {i} de {n}…',
+'{n} item(s) ready to copy. Open a folder and press Paste.': '{n} elemento(s) listo(s) para copiar. Abre una carpeta y pulsa Pegar.',
+'{n} item(s) ready to move. Open a folder and press Paste.': '{n} elemento(s) listo(s) para mover. Abre una carpeta y pulsa Pegar.',
+'Paste': 'Pegar', 'If something already exists': 'Si algo ya existe',
+'This choice applies to every item in this copy or move.': 'Esta elección se aplica a todos los elementos de esta copia o movimiento.',
+'Overwrite': 'Sobrescribir', 'Skip': 'Omitir', 'Keep both': 'Mantener ambos',
+'Copying {n} item(s)…': 'Copiando {n} elemento(s)…', 'Moving {n} item(s)…': 'Moviendo {n} elemento(s)…',
+'A file operation is already running; wait for it to finish': 'Ya hay una operación de archivos en curso; espera a que termine'
 },
 pt: {
 'Search game or CUSA': 'Buscar jogo ou CUSA', 'Sort': 'Ordenar', 'Sort by name': 'Ordenar por nome',
@@ -468,10 +477,9 @@ pt: {
 'Stop PS4Mount? The games stay unavailable until it is loaded again.': 'Parar o PS4Mount? Os jogos ficam indisponíveis até ele ser carregado de novo.',
 'Files': 'Arquivos', 'New folder': 'Nova pasta', 'Folder name': 'Nome da pasta', 'New name': 'Novo nome',
 'Drives': 'Unidades', 'No drives connected': 'Nenhuma unidade conectada',
-'Empty folder': 'Pasta vazia', 'in use': 'em uso', 'Move here': 'Mover aqui', 'Move': 'Mover', 'Rename': 'Renomear', 'Delete': 'Apagar',
+'Empty folder': 'Pasta vazia', 'in use': 'em uso', 'Move': 'Mover', 'Rename': 'Renomear', 'Delete': 'Apagar',
 'In use by a game in the library: it cannot be moved or deleted': 'Em uso por um jogo da biblioteca: não pode ser movido nem apagado',
 'Delete {what}? It moves to Trash and is kept for {days} days.': 'Apagar {what}? Vai para a Lixeira e fica guardado por {days} dias.',
-'Moving {name}. Open the destination folder and press Move here.': 'Movendo {name}. Abra a pasta de destino e clique em Mover aqui.',
 'Game': 'Jogo', 'Update': 'Atualização', 'Add-on': 'Complemento', 'Duplicate': 'Duplicado',
 'Orphan add-on': 'Complemento órfão', 'Spare update': 'Atualização sobressalente', 'Orphan update': 'Atualização órfã',
 'Games removed from the library per group (1 to {max})': 'Jogos removidos da biblioteca por grupo (1 a {max})',
@@ -492,14 +500,20 @@ pt: {
 'Select all': 'Selecionar tudo',
 'Move selected back': 'Devolver os selecionados',
 'Could not refresh this folder: {e}. Open it again.': 'Não foi possível atualizar esta pasta: {e}. Abra-a de novo.',
-'Moving {name}. It is already here: open another folder to move it.': 'Movendo {name}. Já está aqui: abra outra pasta para movê-lo.',
 'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Só são mostrados os primeiros {n} itens. Use subpastas para ver o resto.',
 'Back to library': 'Voltar à biblioteca', 'Up': 'Subir', 'Refresh': 'Atualizar',
 'Name': 'Nome', 'Size': 'Tamanho', 'Modified': 'Modificado', 'Actions': 'Ações',
 'folder {name}': 'a pasta {name}',
 'Clear': 'Limpar', '{n} selected ({size})': '{n} selecionados ({size})',
 'Delete {n} item(s)? They move to Trash and are kept for {days} days.': 'Apagar {n} item(ns)? Vão para a Lixeira e ficam guardados por {days} dias.',
-'Deleting {i} of {n}…': 'Apagando {i} de {n}…'
+'Deleting {i} of {n}…': 'Apagando {i} de {n}…',
+'{n} item(s) ready to copy. Open a folder and press Paste.': '{n} item(ns) pronto(s) para copiar. Abra uma pasta e clique em Colar.',
+'{n} item(s) ready to move. Open a folder and press Paste.': '{n} item(ns) pronto(s) para mover. Abra uma pasta e clique em Colar.',
+'Paste': 'Colar', 'If something already exists': 'Se algo já existir',
+'This choice applies to every item in this copy or move.': 'Esta escolha se aplica a todos os itens desta cópia ou movimentação.',
+'Overwrite': 'Substituir', 'Skip': 'Pular', 'Keep both': 'Manter os dois',
+'Copying {n} item(s)…': 'Copiando {n} item(ns)…', 'Moving {n} item(s)…': 'Movendo {n} item(ns)…',
+'A file operation is already running; wait for it to finish': 'Já há uma operação de arquivos em andamento; espere ela terminar'
 },
 fr: {
 'Search game or CUSA': 'Chercher un jeu ou CUSA', 'Sort': 'Trier', 'Sort by name': 'Trier par nom',
@@ -582,10 +596,9 @@ fr: {
 'Stop PS4Mount? The games stay unavailable until it is loaded again.': 'Arrêter PS4Mount ? Les jeux restent indisponibles jusqu’à ce qu’il soit rechargé.',
 'Files': 'Fichiers', 'New folder': 'Nouveau dossier', 'Folder name': 'Nom du dossier', 'New name': 'Nouveau nom',
 'Drives': 'Lecteurs', 'No drives connected': 'Aucun lecteur connecté',
-'Empty folder': 'Dossier vide', 'in use': 'utilisé', 'Move here': 'Déplacer ici', 'Move': 'Déplacer', 'Rename': 'Renommer', 'Delete': 'Supprimer',
+'Empty folder': 'Dossier vide', 'in use': 'utilisé', 'Move': 'Déplacer', 'Rename': 'Renommer', 'Delete': 'Supprimer',
 'In use by a game in the library: it cannot be moved or deleted': 'Utilisé par un jeu de la bibliothèque : il ne peut être déplacé ni supprimé',
 'Delete {what}? It moves to Trash and is kept for {days} days.': 'Supprimer {what} ? Il va dans la Corbeille et y reste {days} jours.',
-'Moving {name}. Open the destination folder and press Move here.': 'Déplacement de {name}. Ouvrez le dossier de destination et appuyez sur Déplacer ici.',
 'Game': 'Jeu', 'Update': 'Mise à jour', 'Add-on': 'Extension', 'Duplicate': 'Doublon',
 'Orphan add-on': 'Extension orpheline', 'Spare update': 'Mise à jour de secours', 'Orphan update': 'Mise à jour orpheline',
 'Games removed from the library per group (1 to {max})': 'Jeux retirés de la bibliothèque par groupe (1 à {max})',
@@ -606,14 +619,20 @@ fr: {
 'Select all': 'Tout sélectionner',
 'Move selected back': 'Remettre la sélection',
 'Could not refresh this folder: {e}. Open it again.': 'Impossible d’actualiser ce dossier : {e}. Ouvrez-le à nouveau.',
-'Moving {name}. It is already here: open another folder to move it.': 'Déplacement de {name}. Il est déjà ici : ouvrez un autre dossier pour le déplacer.',
 'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Seuls les {n} premiers éléments sont affichés ici. Utilisez des sous-dossiers pour voir le reste.',
 'Back to library': 'Retour à la bibliothèque', 'Up': 'Remonter', 'Refresh': 'Actualiser',
 'Name': 'Nom', 'Size': 'Taille', 'Modified': 'Modifié', 'Actions': 'Actions',
 'folder {name}': 'le dossier {name}',
 'Clear': 'Effacer', '{n} selected ({size})': '{n} sélectionné(s) ({size})',
 'Delete {n} item(s)? They move to Trash and are kept for {days} days.': 'Supprimer {n} élément(s) ? Ils vont dans la Corbeille et y restent {days} jours.',
-'Deleting {i} of {n}…': 'Suppression de {i} sur {n}…'
+'Deleting {i} of {n}…': 'Suppression de {i} sur {n}…',
+'{n} item(s) ready to copy. Open a folder and press Paste.': '{n} élément(s) prêt(s) à être copié(s). Ouvrez un dossier et appuyez sur Coller.',
+'{n} item(s) ready to move. Open a folder and press Paste.': '{n} élément(s) prêt(s) à être déplacé(s). Ouvrez un dossier et appuyez sur Coller.',
+'Paste': 'Coller', 'If something already exists': 'Si quelque chose existe déjà',
+'This choice applies to every item in this copy or move.': 'Ce choix s’applique à chaque élément de cette copie ou de ce déplacement.',
+'Overwrite': 'Remplacer', 'Skip': 'Ignorer', 'Keep both': 'Garder les deux',
+'Copying {n} item(s)…': 'Copie de {n} élément(s)…', 'Moving {n} item(s)…': 'Déplacement de {n} élément(s)…',
+'A file operation is already running; wait for it to finish': 'Une opération sur les fichiers est déjà en cours ; attendez qu’elle se termine'
 }
 };
 function langPicked() { try { return localStorage.getItem('ps4mount-lang') || ''; } catch (e) { return ''; } }
@@ -1005,13 +1024,17 @@ function fmSortGet() {
 }
 function fmSortPut(key, desc) { try { localStorage.setItem('ps4mount-fm-sort', key + ',' + (desc ? '1' : '0')); } catch (e) {} }
 
-/* Files view: browse a drive's folders. moving is state for the move bar (src path being
-   moved); actionsFor is the name of the entry whose inline Rename/Move/Delete row is open
-   (only one at a time); sel is the set of selected entry names in the current folder (Task 7
-   bulk select: name -> 1, like the game grid's "selected"). sortKey/sortDesc drive the
-   column-header sort (Task 6), restored from localStorage on load. */
+/* Files view: browse a drive's folders. clipboard (Task 8) is the copy/move clipboard model
+   that replaced the old one-file "Move here" bar: {items: [full paths], copy: true/false} or
+   null when empty. Unlike actionsFor/sel below, it deliberately survives navigating to another
+   folder (select, Copy or Move, go find the destination, Paste) - it only clears on Paste, on
+   Cancel, or when the Files view itself closes ("Back to library"). actionsFor is the name of
+   the entry whose inline Rename/Move/Delete row is open (only one at a time); sel is the set of
+   selected entry names in the current folder (Task 7 bulk select: name -> 1, like the game
+   grid's "selected"). sortKey/sortDesc drive the column-header sort (Task 6), restored from
+   localStorage on load. */
 var fmSortInit = fmSortGet();
-var fm = {path: '', entries: [], sel: {}, moving: null, actionsFor: null,
+var fm = {path: '', entries: [], sel: {}, clipboard: null, actionsFor: null,
   sortKey: fmSortInit.key, sortDesc: fmSortInit.desc};
 
 /* Sort comparator for fmRender: folders always before files, for every key and direction
@@ -1053,7 +1076,7 @@ function fmOpen(path, keepMsg) {
   if (!keepMsg) $('fmerr').hidden = true;
   fm.actionsFor = null;
   if (!path) { /* root: the drive list, built from /api/games' drives, no API call */
-    fm.path = ''; fm.sel = {}; fm.moving = null; fm.truncated = false;
+    fm.path = ''; fm.sel = {}; fm.truncated = false;
     fm.entries = drives.map(function (d) { return {name: d.name, drive: true, dir: true, free: d.free, total: d.total}; });
     fmRender();
     return Promise.resolve();
@@ -1091,18 +1114,19 @@ function fmRender() {
     btn.classList.toggle('active', active);
     btn.querySelector('.fmsortarrow').textContent = active ? (fm.sortDesc ? ' ▼' : ' ▲') : '';
   });
-  $('fmmovebar').hidden = !fm.moving;
-  if (fm.moving) {
-    /* The source's own parent folder is never a valid destination: "Move here" there always
-       fails with "already exists there". Tell the user to open another folder instead of
-       offering a button that cannot succeed. */
-    var fmSrcParent = fm.moving.slice(0, fm.moving.lastIndexOf('/'));
-    var fmSameFolder = fm.path !== '' && fm.path === fmSrcParent;
-    $('fmmovebar').innerHTML = (fmSameFolder ?
-      t('Moving {name}. It is already here: open another folder to move it.', {name: esc(fm.moving.split('/').pop())}) :
-      t('Moving {name}. Open the destination folder and press Move here.', {name: esc(fm.moving.split('/').pop())})) +
-      (fm.path === '' || fmSameFolder ? '' : ' <button type="button" id="fmdo">' + t('Move here') + '</button>') +
-      ' <button type="button" id="fmcancel">' + t('Cancel') + '</button>';
+  /* The clipboard bar (Task 8): shown whenever fm.clipboard holds items, in every folder -
+     unlike the old one-file move bar, the clipboard is meant to survive navigating to find a
+     destination, so there is no "same folder" special case to port forward here. Paste itself
+     is still disabled at the drive-list root (Step 3 of the brief): there is nothing to paste
+     into there. Whether a task is already running is checked once, at Paste click time
+     (fmPasteClick), not rendered here - persistent polling is Task 9's job. */
+  $('fmclipbar').hidden = !fm.clipboard;
+  if (fm.clipboard) {
+    var clipN = fm.clipboard.items.length;
+    $('fmclipbar').innerHTML =
+      t(fm.clipboard.copy ? '{n} item(s) ready to copy. Open a folder and press Paste.' : '{n} item(s) ready to move. Open a folder and press Paste.', {n: clipN}) +
+      ' <button type="button" id="fmpaste"' + (fm.path === '' ? ' disabled' : '') + '>' + t('Paste') + '</button>' +
+      ' <button type="button" id="fmclipcancel">' + t('Cancel') + '</button>';
   }
   var rows = fm.entries.slice().sort(fmCmp).map(function (e) {
     if (e.drive)
@@ -1178,9 +1202,9 @@ function fmSelbar() {
 function fmEntry(name) { return fm.entries.filter(function (x) { return x.name === name; })[0]; }
 function fmDate(ts) { return ts ? new Date(ts * 1000).toLocaleDateString() : ''; }
 
-/* Rename, Move (via the "navigate then drop" bar below) and Delete for whichever entry's
-   inline actions row (fm.actionsFor) is open. Ported verbatim from the old #fmsheet handlers:
-   same prompt()/confirm() flows, same API calls, same wording. */
+/* Rename, Move (puts this single entry on the clipboard, Task 8) and Delete for whichever
+   entry's inline actions row (fm.actionsFor) is open. Rename and Delete are ported verbatim
+   from the old #fmsheet handlers: same prompt()/confirm() flows, same API calls, same wording. */
 function fmAction(act) {
   var entry = fmEntry(fm.actionsFor);
   if (!entry) return;
@@ -1192,7 +1216,7 @@ function fmAction(act) {
       .then(function (j) { toast(j.message); return fmOpen(fm.path, true); })
       .catch(function (e) { toast(t('Error: {e}', {e: e.message}), true); });
   } else if (act === 'move') {
-    fm.moving = fm.path + '/' + entry.name;
+    fm.clipboard = {items: [fm.path + '/' + entry.name], copy: false};
     fm.actionsFor = null;
     fmRender();
   } else if (act === 'delete') {
@@ -1219,7 +1243,7 @@ $('filesbtn').addEventListener('click', function () {
 $('fmback').addEventListener('click', function () {
   $('fmview').hidden = true;
   $('main').hidden = false;
-  fm.moving = null; fm.actionsFor = null; fm.sel = {};
+  fm.clipboard = null; fm.actionsFor = null; fm.sel = {};
 });
 $('fmup').addEventListener('click', function () {
   if (fm.path === '') return;
@@ -1286,6 +1310,18 @@ $('fmselall').addEventListener('click', function () {
   fmRender();
 });
 $('fmselclear').addEventListener('click', function () { fm.sel = {}; fmRender(); });
+/* Copy/Move (Task 8): puts the current selection on the clipboard (see fm.clipboard's comment
+   above fm's declaration) and clears the selection - it is now on the clipboard, not selected.
+   Full paths are built the same way fmAction above builds them for Rename/Delete. */
+function fmClip(copy) {
+  var items = Object.keys(fm.sel).map(function (nm) { return fm.path + '/' + nm; });
+  if (!items.length) return;
+  fm.clipboard = {items: items, copy: copy};
+  fm.sel = {};
+  fmRender();
+}
+$('fmbulkcopy').addEventListener('click', function () { fmClip(true); });
+$('fmbulkmove').addEventListener('click', function () { fmClip(false); });
 /* Bulk delete (Task 7): one request per item, same one-at-a-time-with-a-counter pattern as the
    game grid's data-bulk handler above, but showing live "n of m" progress in the selection
    bar's own count element while it runs (the game grid only shows a final count). Re-filters
@@ -1324,24 +1360,50 @@ $('fmnew').addEventListener('click', function () {
     .then(function (j) { toast(j.message); return fmOpen(fm.path, true); })
     .catch(function (e) { toast(t('Error: {e}', {e: e.message}), true); });
 });
-/* The "Move here"/"Cancel" buttons are (re)created by fmRender each time the bar shows, so
+/* The Paste/Cancel buttons are (re)created by fmRender each time the clipboard bar shows, so
    their clicks are delegated on the bar's own element rather than bound once per button. */
-$('fmmovebar').addEventListener('click', function (e) {
-  if (e.target.id === 'fmdo') {
-    $('fmerr').hidden = true;
-    api('/api/fm/move?src=' + encodeURIComponent(fm.moving) + '&dst=' + encodeURIComponent(fm.path), 'POST')
-      .then(function (j) { toast(j.message); fm.moving = null; return fmOpen(fm.path, true); })
-      .catch(function (err) {
-        toast(t('Error: {e}', {e: err.message}), true);
-        /* A pending move that cannot complete should not linger as a half-forgotten state. */
-        fm.moving = null;
-        fmRender();
-      });
-  } else if (e.target.id === 'fmcancel') {
-    fm.moving = null;
-    fmRender();
-  }
+$('fmclipbar').addEventListener('click', function (e) {
+  if (e.target.id === 'fmpaste') fmPasteClick();
+  else if (e.target.id === 'fmclipcancel') { fm.clipboard = null; fmRender(); }
 });
+/* Paste (Task 8), step 1 of 2: a one-shot GET /api/fm/task check refuses up front, with the
+   same wording the server itself uses, when a task is already running - a single check at
+   click time, not a persistent poll (Task 9 owns the live progress overlay and the polling
+   that comes with it). The clipboard is left untouched on this refusal so the user can retry
+   without reselecting anything. Defense in depth: fm.path === '' and an empty clipboard should
+   already be unreachable (Paste is disabled/hidden in those states), but both are checked
+   again here since nothing stops a stale click event from firing after the state changed. */
+function fmPasteClick() {
+  if (!fm.clipboard || !fm.clipboard.items.length || fm.path === '') return;
+  $('fmerr').hidden = true;
+  api('/api/fm/task').then(function (j) {
+    if (j.state === 'running') {
+      toast(t('A file operation is already running; wait for it to finish'), true);
+      return;
+    }
+    $('conflictdlg').showModal();
+  }).catch(function (e) { toast(t('Error: {e}', {e: e.message}), true); });
+}
+/* Paste, step 2 of 2: fired once the conflict dialog's Overwrite/Skip/Keep both choice (the
+   policy for every clashing name in this task, asked once up front per the brief) closes the
+   dialog. Starts the background task and gives a one-time acknowledgment toast - not a
+   progress bar: Task 9 builds the live overlay on top of this in the very next task, and will
+   refresh this folder's listing itself once the task actually finishes. */
+function fmPaste(conflict) {
+  var items = fm.clipboard.items, copy = fm.clipboard.copy, n = items.length;
+  api('/api/fm/copy?dst=' + encodeURIComponent(fm.path) + '&copy=' + (copy ? 1 : 0) + '&conflict=' + conflict,
+      'POST', items.join('\n'))
+    .then(function () {
+      fm.clipboard = null;
+      toast(t(copy ? 'Copying {n} item(s)…' : 'Moving {n} item(s)…', {n: n}));
+      fmRender();
+    })
+    .catch(function (e) { toast(t('Error: {e}', {e: e.message}), true); }); /* clipboard kept on failure, so retrying needs no reselecting */
+}
+$('cf-cancel').addEventListener('click', function () { $('conflictdlg').close(); });
+$('cf-overwrite').addEventListener('click', function () { $('conflictdlg').close(); fmPaste(1); });
+$('cf-skip').addEventListener('click', function () { $('conflictdlg').close(); fmPaste(2); });
+$('cf-keep').addEventListener('click', function () { $('conflictdlg').close(); fmPaste(3); });
 $('summary').addEventListener('click', function (e) {
   var st = e.target.getAttribute && e.target.getAttribute('data-state');
   if (!st) return;
