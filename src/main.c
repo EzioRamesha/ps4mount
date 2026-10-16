@@ -3548,6 +3548,10 @@ int app_fm_move(const char *src, const char *dst, char *msg, size_t cap) {
         snprintf(msg, cap, "Used by %s; remove the game from the library first", game ? game : "a game");
         return -1;
     }
+    if (fm_protected(dst, &game)) {
+        snprintf(msg, cap, "Used by %s; remove the game from the library first", game ? game : "a game");
+        return -1;
+    }
     struct stat st;
     if (stat(dst, &st) || !S_ISDIR(st.st_mode)) {
         snprintf(msg, cap, "The destination is not a folder");
