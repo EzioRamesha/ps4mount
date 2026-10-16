@@ -25,6 +25,12 @@ button{font:inherit;font-size:14px;font-weight:500;color:var(--fg);background:#2
 button:hover{border-color:var(--accent)}
 button:not(:disabled):active{filter:brightness(1.2)}
 button:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* Finding 9: #fmlist is given tabindex="-1" so it can receive a programmatic focus() (never a
+   Tab stop) as somewhere stable to land a gamepad user's focus when the control they were on
+   is removed from the document - plain :focus rather than :focus-visible since this follow-up
+   focus() call has no keyboard/pointer interaction of its own for the browser's heuristic to
+   key off of, and would otherwise get no visible ring at all here. */
+#fmlist:focus{outline:2px solid var(--accent);outline-offset:-2px}
 button.primary{background:var(--accent);border-color:var(--accent)}
 button.danger{background:#3a1f1d;border-color:#5c2c28}
 button.danger:hover{border-color:var(--bad)}
@@ -181,7 +187,7 @@ form.settings input.num{width:6em}
     <button type="button" class="fmdate fmsortbtn" data-sort="time">Modified<span class="fmsortarrow"></span></button>
     <span class="fmheadmore"></span>
   </div>
-  <div id="fmlist" class="fmlist"></div>
+  <div id="fmlist" class="fmlist" tabindex="-1"></div>
   <div class="selbar" id="fmselbar" hidden><span id="fmselcount"></span>
     <button class="primary" id="fmbulkcopy">Copy</button>
     <button id="fmbulkmove">Move</button>
@@ -1425,6 +1431,13 @@ function fmPaste(conflict) {
   api('/api/fm/copy?dst=' + encodeURIComponent(fm.path) + '&copy=' + (copy ? 1 : 0) + '&conflict=' + conflict,
       'POST', items.join('\n'))
     .then(function () {
+      /* Finding 9: closing the conflict dialog restores focus to #fmpaste, which this is
+         about to remove from the document (nulling fm.clipboard hides #fmclipbar, #fmpaste's
+         own parent) - move focus to something that survives the render first, or a gamepad
+         user is left with nothing focused at all. #fmlist (tabindex="-1" above) is never
+         rebuilt wholesale by fmRender, only its children, so the div itself keeps the focus
+         fmRender gives it here. */
+      $('fmlist').focus();
       fm.clipboard = null;
       toast(t(copy ? 'Copying {n} item(s)…' : 'Moving {n} item(s)…', {n: n}));
       fmRender();
