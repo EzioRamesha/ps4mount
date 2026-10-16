@@ -70,23 +70,35 @@ select{background:var(--panel);color:var(--fg);border:1px solid var(--line);bord
 .addons summary{cursor:pointer;color:var(--muted)}
 .addons label{display:flex;gap:8px;align-items:flex-start;padding:4px 0}
 .addons small{display:block;color:var(--muted);word-break:break-all}
+/* The full-screen Files view: a sibling of <main> that takes its place (only one of the two
+   is ever unhidden), not a layered overlay. It fills the space below the sticky header the
+   same way <main> does (same padding/width), and its own list grows to fill the rest so the
+   list scrolls internally instead of the whole page. */
+.fmview{padding:20px;max-width:1400px;margin:0 auto;display:flex;flex-direction:column;gap:10px;min-height:calc(100vh - 69px)}
+.fmtoolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .fmbar{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-bottom:10px;color:var(--muted);font-size:13px}
 .fmbar button{min-height:32px;padding:2px 10px;font-size:13px}
-.fmlist{max-height:60vh;overflow:auto;border:1px solid var(--line);border-radius:8px}
-.fmrow{display:flex;gap:10px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);cursor:pointer}
+.fmhead{display:flex;gap:10px;align-items:center;padding:0 10px 6px;color:var(--muted);font-size:12px;font-weight:600;text-transform:uppercase}
+.fmhead .fmheadicon,.fmhead .fmheadmore{flex:0 0 36px}
+.fmhead .fmheadmore{flex:0 0 40px}
+.fmlist{flex:1;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.fmrow{display:flex;gap:10px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);cursor:pointer;min-height:40px}
 .fmrow:last-child{border-bottom:none}
 .fmrow:hover{background:#1d222b}
 .fmicon{border-radius:6px;background:#0b0d11 center/cover no-repeat;flex:none;display:flex;align-items:center;justify-content:center}
 .fmrow .fmicon{width:36px;height:36px;font-size:18px}
 .fmrow .fmname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fmrow small{display:block;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.fmrow .fmsize{color:var(--muted);font-size:12px;flex:none}
-/* #fmnew sits beside a Close wrapped in a display:contents form for the "method=dialog"
-   close pattern used everywhere else; that Close button is still the form's only child, so
-   the shared button:only-child{grid-column:1/-1} rule above would wrongly give it the whole
-   row. Put it back in the normal flow here so the two sit side by side like other dialogs
-   with two plain actions. */
-#fmdlg .actions button:only-child{grid-column:auto}
+.fmrow .fmsize{color:var(--muted);font-size:12px;flex:0 0 70px;text-align:right}
+.fmrow .fmdate{color:var(--muted);font-size:12px;flex:0 0 100px;text-align:right}
+.fmmore{flex:0 0 40px;min-width:40px;padding:6px 4px}
+.fmactions{display:flex;flex-wrap:wrap;gap:8px;padding:10px;border-bottom:1px solid var(--line);background:#0b0d11}
+/* Below 600px (the panel's narrow-screen breakpoint) the Size and Modified columns are
+   dropped from both the header stub and the rows: there is no room for them next to a
+   full-width, readable name column on a phone-sized PS5 browser window. */
+@media (max-width:600px){
+  .fmrow .fmsize,.fmrow .fmdate,.fmhead .fmsize,.fmhead .fmdate{display:none}
+}
 table{width:100%;border-collapse:collapse;font-size:13px}
 td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);word-break:break-all}
 form.settings fieldset{border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:12px}
@@ -119,7 +131,7 @@ form.settings input.num{width:6em}
     <button id="pinbtn" class="primary" hidden>Enter PIN</button>
   </div>
 </header>
-<main>
+<main id="main">
   <div class="paused" id="paused" hidden><span id="paused-msg"></span><button class="primary" id="resume">Resume adding games</button></div>
   <div class="summary" id="summary"></div>
   <div class="grid" id="grid"></div>
@@ -130,6 +142,33 @@ form.settings input.num{width:6em}
     <button data-bulk="exclude">Never add selected</button>
     <button id="selclear">Clear selection</button></div>
 </main>
+<div class="fmview" id="fmview" hidden>
+  <div class="fmtoolbar">
+    <button id="fmback">Back to library</button>
+    <button id="fmup">Up</button>
+    <button id="fmrefresh">Refresh</button>
+    <button id="fmnew">New folder</button>
+    <!-- Task 6 wires sorting onto this control; left hidden and unwired until then. -->
+    <select id="fmsort" aria-label="Sort" hidden><option value="name">Sort by name</option></select>
+    <!-- Task 7 wires multi-select and these bulk actions; left hidden and unwired until then. -->
+    <button id="fmselall" hidden>Select all</button>
+    <button id="fmbulkmove" hidden>Move</button>
+    <button class="danger" id="fmbulkdelete" hidden>Delete</button>
+  </div>
+  <div class="fmbar"><span id="fmcrumbs"></span></div>
+  <div class="warn" id="fmmovebar" hidden></div>
+  <div class="warn" id="fmerr" hidden></div>
+  <div class="fmhead">
+    <span class="fmheadicon"></span>
+    <span class="fmname">Name</span>
+    <span class="fmsize">Size</span>
+    <span class="fmdate">Modified</span>
+    <span class="fmheadmore"></span>
+  </div>
+  <div id="fmlist" class="fmlist"></div>
+  <!-- Task 9 fills this in with task progress/cancel UI. -->
+  <div id="fmtask" hidden></div>
+</div>
 <dialog id="setdlg"><h3>Settings</h3>
 <form class="settings" id="setform">
   <label>Language
@@ -198,26 +237,6 @@ form.settings input.num{width:6em}
 <p style="color:var(--muted);font-size:13px">Pkgs that are found but not used. Nothing here is deleted or changed by PS4Mount.</p>
 <div id="problems" style="max-height:60vh;overflow:auto"></div>
 <div class="actions" style="padding:10px 0 0"><form method="dialog"><button>Close</button></form></div></dialog>
-<dialog id="fmdlg"><h3>Files</h3>
-<div class="fmbar"><span id="fmcrumbs"></span><div class="warn" id="fmmovebar" style="flex-basis:100%" hidden></div></div>
-<div class="warn" id="fmerr" hidden></div>
-<div id="fmlist" class="fmlist"></div>
-<div class="actions" style="padding:10px 0 0">
-  <button id="fmnew">New folder</button>
-  <form method="dialog" style="display:contents"><button>Close</button></form>
-</div></dialog>
-<dialog id="fmsheet"><h3 id="fms-title"></h3>
-<div id="fms-body" style="display:flex;gap:14px;align-items:flex-start">
-  <div class="fmicon" id="fms-icon" style="width:72px;height:72px;font-size:34px"></div>
-  <div id="fms-meta" style="font-size:14px;color:var(--muted)"></div>
-</div>
-<div class="warn" id="fmserr" hidden></div>
-<div class="actions" style="padding:14px 0 0">
-  <button id="fms-rename">Rename</button>
-  <button id="fms-move">Move</button>
-  <button class="danger" id="fms-delete">Delete</button>
-  <form method="dialog" style="display:contents"><button>Close</button></form>
-</div></dialog>
 <div id="toast" role="status" aria-live="polite"></div>
 <script>
 var games = [], busy = {}, drives = [], selected = {}, openAddons = {}, stateFilter = '';
@@ -341,7 +360,9 @@ es: {
 'Move selected back': 'Devolver los seleccionados',
 'Could not refresh this folder: {e}. Open it again.': 'No se pudo actualizar esta carpeta: {e}. Ábrela otra vez.',
 'Moving {name}. It is already here: open another folder to move it.': 'Moviendo {name}. Ya está aquí: abre otra carpeta para moverlo.',
-'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Solo se muestran los primeros {n} elementos. Usa subcarpetas para ver el resto.'
+'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Solo se muestran los primeros {n} elementos. Usa subcarpetas para ver el resto.',
+'Back to library': 'Volver a la biblioteca', 'Up': 'Subir', 'Refresh': 'Actualizar',
+'Name': 'Nombre', 'Size': 'Tamaño', 'Modified': 'Modificado', 'Actions': 'Acciones'
 },
 pt: {
 'Search game or CUSA': 'Buscar jogo ou CUSA', 'Sort': 'Ordenar', 'Sort by name': 'Ordenar por nome',
@@ -449,7 +470,9 @@ pt: {
 'Move selected back': 'Devolver os selecionados',
 'Could not refresh this folder: {e}. Open it again.': 'Não foi possível atualizar esta pasta: {e}. Abra-a de novo.',
 'Moving {name}. It is already here: open another folder to move it.': 'Movendo {name}. Já está aqui: abra outra pasta para movê-lo.',
-'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Só são mostrados os primeiros {n} itens. Use subpastas para ver o resto.'
+'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Só são mostrados os primeiros {n} itens. Use subpastas para ver o resto.',
+'Back to library': 'Voltar à biblioteca', 'Up': 'Subir', 'Refresh': 'Atualizar',
+'Name': 'Nome', 'Size': 'Tamanho', 'Modified': 'Modificado', 'Actions': 'Ações'
 },
 fr: {
 'Search game or CUSA': 'Chercher un jeu ou CUSA', 'Sort': 'Trier', 'Sort by name': 'Trier par nom',
@@ -557,7 +580,9 @@ fr: {
 'Move selected back': 'Remettre la sélection',
 'Could not refresh this folder: {e}. Open it again.': 'Impossible d’actualiser ce dossier : {e}. Ouvrez-le à nouveau.',
 'Moving {name}. It is already here: open another folder to move it.': 'Déplacement de {name}. Il est déjà ici : ouvrez un autre dossier pour le déplacer.',
-'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Seuls les {n} premiers éléments sont affichés ici. Utilisez des sous-dossiers pour voir le reste.'
+'Only the first {n} items are shown here. Use subfolders to see the rest.': 'Seuls les {n} premiers éléments sont affichés ici. Utilisez des sous-dossiers pour voir le reste.',
+'Back to library': 'Retour à la bibliothèque', 'Up': 'Remonter', 'Refresh': 'Actualiser',
+'Name': 'Nom', 'Size': 'Taille', 'Modified': 'Modifié', 'Actions': 'Actions'
 }
 };
 function langPicked() { try { return localStorage.getItem('ps4mount-lang') || ''; } catch (e) { return ''; } }
@@ -618,14 +643,15 @@ function gb(n) {
   if (n < 1073741824) return (n / 1048576).toFixed(n >= 10485760 ? 0 : 1) + ' MB';
   return (n / 1073741824).toFixed(n >= 10737418240 ? 0 : 1) + ' GB';
 }
-/* While the Files dialog (or its file sheet) is open, it sits in the browser's top layer and
-   paints over #toast, which is a plain fixed div outside both dialogs. Route the message to a
-   message area inside whichever of the two is open instead, so it is not silently hidden.
-   isErr (default false, i.e. a normal/success message) only changes which style that area gets:
-   the amber .warn look for a real failure, or the green .ok look otherwise. Existing single-
-   argument call sites keep working unchanged, reading as a success/neutral message. */
+/* While the full-screen Files view is open, its own messages belong inside the view (#fmerr)
+   rather than the bottom-right #toast: that is what lets fmOpen's keepMsg refresh a folder and
+   still show the result, and it reads better next to the action that caused it than a popup
+   that times out on its own. isErr (default false, i.e. a normal/success message) only changes
+   which style that area gets: the amber .warn look for a real failure, or the green .ok look
+   otherwise. Existing single-argument call sites keep working unchanged, reading as a
+   success/neutral message. */
 function toast(msg, isErr) {
-  var box = $('fmsheet').open ? $('fmserr') : ($('fmdlg').open ? $('fmerr') : null);
+  var box = $('fmview').hidden ? null : $('fmerr');
   if (box) { box.className = isErr ? 'warn' : 'ok'; box.textContent = msg; box.hidden = false; return; }
   var t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(function () { t.style.display = 'none'; }, 4000);
 }
@@ -855,9 +881,9 @@ function load() {
     $('paused-msg').textContent = j.paused ?
       t('Adding games is paused: {why}. Games already added still work. Restart the console before resuming.', {why: j.paused}) : '';
     render();
-    /* The Files dialog's drive list is built from this same data but is not re-rendered by
+    /* The Files view's drive list is built from this same data but is not re-rendered by
        render(): without this, an unplugged drive stays listed until the user clicks it. */
-    if ($('fmdlg').open && fm.path === '') fmOpen('');
+    if (!$('fmview').hidden && fm.path === '') fmOpen('');
   })
     .catch(function (e) { if (!pinDeclined) toast(t('Could not read the list: {e}', {e: e.message}), true); });
 }
@@ -936,9 +962,10 @@ $('probbtn').onclick = function () {
   }).catch(function (e) { toast(t('Could not read the problems: {e}', {e: e.message}), true); });
 };
 
-/* Files dialog: browse a drive's folders. moving is state for the move sheet (src path
-   being moved); sel is reserved for Phase 2 bulk select, not used yet. */
-var fm = {path: '', entries: [], sel: {}, moving: null, sheet: null};
+/* Files view: browse a drive's folders. moving is state for the move bar (src path being
+   moved); actionsFor is the name of the entry whose inline Rename/Move/Delete row is open
+   (only one at a time); sel is reserved for Phase 2 bulk select, not used yet. */
+var fm = {path: '', entries: [], sel: {}, moving: null, actionsFor: null};
 /* CAT_ROLE_* in src/catalog.h: NONE, APP, PATCH, DLC, DUPE, ORPHAN, SPARE, NOGAME. */
 var roleNames = {1: 'Game', 2: 'Update', 3: 'Add-on', 4: 'Duplicate', 5: 'Orphan add-on', 6: 'Spare update', 7: 'Orphan update'};
 
@@ -956,10 +983,14 @@ function fmPkgName(pkg, fallback) {
 /* keepMsg is true only when the caller just toasted its own success message and is now
    refreshing the same folder to show the result: clearing #fmerr here would wipe that message
    before the browser ever paints it (it is the same element, reused for both). Genuine
-   navigation (crumbs, opening a folder or drive, reopening the dialog, the background drive
-   refresh in load()) always calls this without it, which clears any leftover message. */
+   navigation (crumbs, opening a folder or drive, reopening the view, the background drive
+   refresh in load()) always calls this without it, which clears any leftover message.
+   Every call, with or without keepMsg, closes any open per-row actions area: it belongs to a
+   row of the folder being left, and a refresh of the same folder just finished whatever the
+   open action was doing anyway. */
 function fmOpen(path, keepMsg) {
   if (!keepMsg) $('fmerr').hidden = true;
+  fm.actionsFor = null;
   if (!path) { /* root: the drive list, built from /api/games' drives, no API call */
     fm.path = ''; fm.sel = {}; fm.moving = null; fm.truncated = false;
     fm.entries = drives.map(function (d) { return {name: d.name, drive: true, dir: true, free: d.free, total: d.total}; });
@@ -987,6 +1018,7 @@ function fmRender() {
   }
   $('fmcrumbs').innerHTML = html;
   $('fmnew').hidden = fm.path === ''; /* nothing to create a folder in at the drive list */
+  $('fmup').hidden = fm.path === ''; /* nothing above the drive list itself */
   $('fmmovebar').hidden = !fm.moving;
   if (fm.moving) {
     /* The source's own parent folder is never a valid destination: "Move here" there always
@@ -1013,9 +1045,22 @@ function fmRender() {
     var meta = e.dir ? '' : gb(e.size);
     var sub = e.pkg ? t(roleNames[e.pkg.role] || 'Pkg') + (e.pkg.version ? ' v' + esc(e.pkg.version) : '') +
       (e.pkg.protected ? ' · ' + t('in use') : '') : '';
-    return '<div class="fmrow" data-name="' + esc(e.name) + '"><span class="fmicon"' + iconStyle + '>' + icon + '</span>' +
+    var row = '<div class="fmrow" data-name="' + esc(e.name) + '"><span class="fmicon"' + iconStyle + '>' + icon + '</span>' +
       '<span class="fmname">' + esc(label) + (sub || e.pkg ? '<small>' + esc(e.name) + (sub ? ' · ' + sub : '') + '</small>' : '') + '</span>' +
-      '<span class="fmsize">' + meta + '</span></div>';
+      '<span class="fmsize">' + meta + '</span><span class="fmdate">' + esc(fmDate(e.mtime)) + '</span>' +
+      '<button type="button" class="fmmore" data-name="' + esc(e.name) + '" aria-label="' + esc(t('Actions')) + '">⋯</button></div>';
+    /* The inline Rename/Move/Delete row for whichever single entry is open (fm.actionsFor):
+       this replaces the old per-item dialog (#fmsheet) with something a gamepad-driven,
+       hover-less PS5 browser can reach from the row itself. Protected pkgs (in the library)
+       disable all three; the server refuses them anyway, so this just saves the round-trip. */
+    if (fm.actionsFor === e.name) {
+      var dis = (e.pkg && e.pkg.protected) ? ' disabled' : '';
+      row += '<div class="fmactions" data-name="' + esc(e.name) + '">' +
+        '<button type="button" data-act="rename"' + dis + '>' + t('Rename') + '</button>' +
+        '<button type="button" data-act="move"' + dis + '>' + t('Move') + '</button>' +
+        '<button type="button" class="danger" data-act="delete"' + dis + '>' + t('Delete') + '</button></div>';
+    }
+    return row;
   }).join('');
   rows = rows || '<div class="fmrow">' + (fm.path === '' ? t('No drives connected') : t('Empty folder')) + '</div>';
   /* The daemon caps a listing at 2000 entries; say so rather than silently showing a partial
@@ -1024,47 +1069,76 @@ function fmRender() {
   $('fmlist').innerHTML = rows;
 }
 
-/* The sheet of actions for a file row: rename, move (via the "navigate then drop" bar
-   below) and delete. Protected pkgs (in the library) disable all three; the server refuses
-   them anyway, so this just saves the round-trip. */
-function fmSheet(entry) {
-  fm.sheet = entry;
-  $('fmserr').hidden = true;
-  var label = entry.pkg ? fmPkgName(entry.pkg, entry.name) : entry.name;
-  $('fms-title').textContent = label;
-  $('fms-icon').style.backgroundImage = entry.pkg ? 'url(/icon/' + encodeURIComponent(entry.pkg.title_id) + ')' : '';
-  $('fms-icon').textContent = entry.pkg ? '' : (entry.dir ? '📁' : '📄');
-  var m = [entry.name, gb(entry.size)];
-  if (entry.pkg) {
-    m.push(t(roleNames[entry.pkg.role] || 'Pkg') + (entry.pkg.version ? ' v' + entry.pkg.version : ''));
-    m.push(entry.pkg.title_id);
-    if (entry.pkg.protected) m.push(t('In use by a game in the library: it cannot be moved or deleted'));
+function fmEntry(name) { return fm.entries.filter(function (x) { return x.name === name; })[0]; }
+function fmDate(ts) { return ts ? new Date(ts * 1000).toLocaleDateString() : ''; }
+
+/* Rename, Move (via the "navigate then drop" bar below) and Delete for whichever entry's
+   inline actions row (fm.actionsFor) is open. Ported verbatim from the old #fmsheet handlers:
+   same prompt()/confirm() flows, same API calls, same wording. */
+function fmAction(act) {
+  var entry = fmEntry(fm.actionsFor);
+  if (!entry) return;
+  if (act === 'rename') {
+    var n = prompt(t('New name'), entry.name);
+    if (!n || n === entry.name) return;
+    $('fmerr').hidden = true;
+    api('/api/fm/rename?path=' + encodeURIComponent(fm.path + '/' + entry.name) + '&name=' + encodeURIComponent(n), 'POST')
+      .then(function (j) { toast(j.message); return fmOpen(fm.path, true); })
+      .catch(function (e) { toast(t('Error: {e}', {e: e.message}), true); });
+  } else if (act === 'move') {
+    fm.moving = fm.path + '/' + entry.name;
+    fm.actionsFor = null;
+    fmRender();
+  } else if (act === 'delete') {
+    var what = (entry.pkg ? fmPkgName(entry.pkg, entry.name) + ' (' + entry.name + ')' : entry.name) + (entry.dir ? '' : ' · ' + gb(entry.size));
+    if (!confirm(t('Delete {what}? It moves to Trash and is kept for {days} days.', {what: what, days: 14}))) return;
+    $('fmerr').hidden = true;
+    api('/api/fm/delete?path=' + encodeURIComponent(fm.path + '/' + entry.name), 'POST')
+      .then(function (j) { toast(j.message); return fmOpen(fm.path, true); })
+      .catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); });
   }
-  $('fms-meta').innerHTML = m.map(esc).join('<br>');
-  $('fms-delete').disabled = $('fms-move').disabled = $('fms-rename').disabled = !!(entry.pkg && entry.pkg.protected);
-  $('fmsheet').showModal();
 }
 
 $('filesbtn').addEventListener('click', function () {
+  $('main').hidden = true;
+  $('fmview').hidden = false;
   fmOpen(''); /* always start at the drive list: never guess which drive the user wants */
-  $('fmdlg').showModal();
 });
-/* Closing the dialog (its native Close button, or Esc) does not go through fmOpen(''), so a
-   pending Move must be forgotten here too: otherwise it survives and the user can relocate a
-   file they have long forgotten about. */
-$('fmdlg').addEventListener('close', function () { fm.moving = null; fm.sheet = null; });
+/* There is no native dialog "close" event for a plain full-screen view, so the cleanup that
+   used to run there (forget a pending Move, close any open sheet) happens directly here. */
+$('fmback').addEventListener('click', function () {
+  $('fmview').hidden = true;
+  $('main').hidden = false;
+  fm.moving = null; fm.actionsFor = null;
+});
+$('fmup').addEventListener('click', function () {
+  if (fm.path === '') return;
+  /* A drive root (/mnt/<name>, no further segments) has nothing above it but the drive list. */
+  if (/^\/mnt\/[^/]+$/.test(fm.path)) fmOpen('');
+  else fmOpen(fm.path.slice(0, fm.path.lastIndexOf('/')));
+});
+$('fmrefresh').addEventListener('click', function () { fmOpen(fm.path); });
 $('fmcrumbs').addEventListener('click', function (e) {
   var b = e.target.closest('button[data-crumb]');
   if (b) fmOpen(b.getAttribute('data-crumb'));
 });
 $('fmlist').addEventListener('click', function (e) {
+  var more = e.target.closest('.fmmore[data-name]');
+  if (more) {
+    var nm = more.getAttribute('data-name');
+    fm.actionsFor = fm.actionsFor === nm ? null : nm; /* only one row's actions open at a time */
+    fmRender();
+    return;
+  }
+  var act = e.target.closest('[data-act]');
+  if (act) { fmAction(act.getAttribute('data-act')); return; }
   var row = e.target.closest('.fmrow[data-name]');
   if (!row) return;
-  var entry = fm.entries.filter(function (x) { return x.name === row.getAttribute('data-name'); })[0];
+  var entry = fmEntry(row.getAttribute('data-name'));
   if (!entry) return;
   if (entry.drive) fmOpen('/mnt/' + entry.name);
   else if (entry.dir) fmOpen(fm.path + '/' + entry.name);
-  else fmSheet(entry);
+  /* a file row's name has nothing to navigate to; its actions live behind "..." only */
 });
 $('fmnew').addEventListener('click', function () {
   var n = prompt(t('Folder name'), '');
@@ -1073,31 +1147,6 @@ $('fmnew').addEventListener('click', function () {
   api('/api/fm/mkdir?path=' + encodeURIComponent(fm.path) + '&name=' + encodeURIComponent(n), 'POST')
     .then(function (j) { toast(j.message); return fmOpen(fm.path, true); })
     .catch(function (e) { toast(t('Error: {e}', {e: e.message}), true); });
-});
-$('fms-rename').addEventListener('click', function () {
-  var n = prompt(t('New name'), fm.sheet.name);
-  if (!n || n === fm.sheet.name) return;
-  $('fmserr').hidden = true;
-  api('/api/fm/rename?path=' + encodeURIComponent(fm.path + '/' + fm.sheet.name) + '&name=' + encodeURIComponent(n), 'POST')
-    /* Close the sheet BEFORE toasting: toast() picks its target by which dialog is open, and
-       the sheet closing takes #fmserr off screen with it. Closing first makes #fmdlg the open
-       dialog so the success message lands in #fmerr, where it survives the refresh below. */
-    .then(function (j) { $('fmsheet').close(); toast(j.message); return fmOpen(fm.path, true); })
-    .catch(function (e) { toast(t('Error: {e}', {e: e.message}), true); });
-});
-$('fms-move').addEventListener('click', function () {
-  fm.moving = fm.path + '/' + fm.sheet.name;
-  $('fmsheet').close();
-  fmRender();
-});
-$('fms-delete').addEventListener('click', function () {
-  var e = fm.sheet;
-  var what = (e.pkg ? fmPkgName(e.pkg, e.name) + ' (' + e.name + ')' : e.name) + (e.dir ? '' : ' · ' + gb(e.size));
-  if (!confirm(t('Delete {what}? It moves to Trash and is kept for {days} days.', {what: what, days: 14}))) return;
-  $('fmserr').hidden = true;
-  api('/api/fm/delete?path=' + encodeURIComponent(fm.path + '/' + e.name), 'POST')
-    .then(function (j) { $('fmsheet').close(); toast(j.message); return fmOpen(fm.path, true); })
-    .catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); });
 });
 /* The "Move here"/"Cancel" buttons are (re)created by fmRender each time the bar shows, so
    their clicks are delegated on the bar's own element rather than bound once per button. */
