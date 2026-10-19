@@ -6,12 +6,18 @@ const fs = require('fs');
 const { JSDOM, VirtualConsole } = require('jsdom');
 const W = require('path').join(__dirname, '..', '..', 'web') + '/';
 const GAMES = [
-  { title_id: 'CUSA00791', name: 'N++', version: '01.10', has_patch: true, size: 4e9, state: 'ready', mount: 'rw', source: '/mnt/usb0/ps4/CUSA00791', dlc: 0, update_issue: '' },
-  { title_id: 'CUSA28732', name: 'Civ VII', version: '01.16', has_patch: true, size: 9e9, state: 'running', mount: 'rw', source: '/mnt/usb0/ps4/CUSA28732', dlc: 35, update_issue: '' },
+  { title_id: 'CUSA00791', name: 'N++', version: '01.10', has_patch: true, size: 4e9, state: 'ready', mount: 'rw', source: '/mnt/usb0/ps4/CUSA00791', dlc: 0, dlc_total: 0, updates: 2, update_issue: '' },
+  { title_id: 'CUSA28732', name: 'Civ VII', version: '01.16', has_patch: true, size: 9e9, state: 'running', mount: 'rw', source: '/mnt/usb0/ps4/CUSA28732', dlc: 35, dlc_total: 35, updates: 2, update_issue: '' },
   { title_id: 'CUSA00190', name: 'Killzone', version: '01.00', has_patch: false, size: 9e9, state: 'internal', mount: '', source: '/mnt/usb0/ps4/CUSA00190', dlc: 0, update_issue: '' },
-  { title_id: 'CUSA41712', name: 'Soulstice', version: '01.03', has_patch: false, size: 9e9, state: 'ready', mount: 'rw', source: '/mnt/usb0/ps4/CUSA41712', dlc: 1, update_issue: '' }];
+  { title_id: 'CUSA41712', name: 'Soulstice', version: '01.03', has_patch: false, size: 9e9, state: 'ready', mount: 'rw', source: '/mnt/usb0/ps4/CUSA41712', dlc: 1, dlc_total: 3, updates: 0, update_issue: '' }];
 const CFG = { batch: true, batch_size: 5, dlc: true, restore_batch: 5, max_restore_batch: 10, paths: ['/'] };
+const DETAIL = { title_id: 'CUSA41712', name: 'Soulstice', dlc_limit: 2,
+  updates: [{ file: 'patch.pkg', version: '01.03', name: 'b.pkg', active: true }, { file: 'replaced/patch-1.pkg', version: '01.02', name: 'a.pkg', active: false }],
+  dlcs: [{ content_id: 'EP0001-CUSA41712_00-AAAAAAAAAAAAAAAA', name: 'Pack A', on: true, data: true },
+         { content_id: 'EP0001-CUSA41712_00-BBBBBBBBBBBBBBBB', name: 'Pack B', on: false, data: false },
+         { content_id: 'EP0001-CUSA41712_00-CCCCCCCCCCCCCCCC', name: 'Pack C', on: false, data: true }] };
 function reply(url) {
+  if (url.indexOf('/api/game?') === 0) return DETAIL;
   return url.indexOf('/api/log') === 0 ? { log: 'a\nb' } : url.indexOf('/api/config') === 0 ? CFG :
     url.indexOf('/api/games') === 0 ? { version: 'PS4Mount test', games: GAMES } : { ok: true, message: 'ok ' + url };
 }
@@ -115,6 +121,29 @@ function parses(code, version) {
   reqs.length = 0; rs.value = '7';
   d.getElementById('setform').dispatchEvent(new w.Event('submit', { cancelable: true })); await tick();
   ok(reqs[0] && reqs[0].url === '/api/config' && reqs[0].body.includes('restore_batch=7'), 'Save sends restore_batch');
+
+  // updates, add-ons and the play button
+  ok(d.querySelector('.play[data-t="CUSA00791"]') !== null && d.querySelector('.play[data-t="CUSA28732"]') === null, 'play button on ready games only');
+  ok(d.querySelector('[data-a="updates"][data-t="CUSA00791"]') !== null && d.querySelector('[data-a="updates"][data-t="CUSA41712"]') === null, 'Updates button only with two or more updates');
+  ok(d.querySelector('[data-a="dlcs"][data-t="CUSA41712"]') !== null && d.querySelector('[data-a="dlcs"][data-t="CUSA00791"]') === null, 'Add-ons button only with add-ons');
+  ok(d.querySelector('[data-a="dlcs"][data-t="CUSA28732"]').disabled, 'running game: add-ons cannot be changed');
+  ok(d.querySelector('.card:nth-child(4) .meta').textContent.includes('1 of 3 add-ons'), 'card shows add-ons on of total');
+  reqs.length = 0; d.querySelector('.play[data-t="CUSA00791"]').click(); await tick();
+  ok(reqs[0].url === '/api/launch?title_id=CUSA00791' && reqs[0].method === 'POST', 'play starts the game');
+  d.querySelector('[data-a="updates"][data-t="CUSA00791"]').click(); await tick();
+  ok(d.getElementById('upddlg').hasAttribute('open') && d.querySelectorAll('#u-rows tr').length === 2, 'updates dialog lists both');
+  ok(d.getElementById('u-go').disabled, 'the update in use cannot be chosen again');
+  d.querySelectorAll('#u-rows input')[1].checked = true; d.getElementById('u-rows').dispatchEvent(new w.Event('change', { bubbles: true }));
+  reqs.length = 0; d.getElementById('u-go').click(); await tick();
+  ok(reqs[0].url === '/api/update?title_id=CUSA41712' && reqs[0].body === 'file=replaced%2Fpatch-1.pkg', 'update choice sent');
+  d.querySelector('[data-a="dlcs"][data-t="CUSA41712"]').click(); await tick();
+  const db = d.querySelectorAll('#d-rows input');
+  ok(db.length === 3 && db[0].checked && !db[1].checked, 'add-ons dialog shows which are on');
+  db[2].checked = true; d.getElementById('d-rows').dispatchEvent(new w.Event('change', { bubbles: true }));
+  ok(db[1].disabled && d.getElementById('d-info').textContent.includes('limit reached'), 'past the limit the others cannot be turned on');
+  reqs.length = 0; d.getElementById('d-go').click(); await tick();
+  ok(reqs[0].url === '/api/dlc?title_id=CUSA41712' &&
+     reqs[0].body === 'on=' + encodeURIComponent('EP0001-CUSA41712_00-AAAAAAAAAAAAAAAA,EP0001-CUSA41712_00-CCCCCCCCCCCCCCCC'), 'add-on choice sent');
 
   // --- legacy page
   p = page('legacy.html', {}); ({ w, d, reqs } = p);
