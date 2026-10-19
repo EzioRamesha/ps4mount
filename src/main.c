@@ -162,6 +162,24 @@ static int layers_on(const char *path) {
     return count;
 }
 
+/* Mounts of the game's package images (/mnt/sandbox/pfsmnt/<TID>-app0 and others). The
+ * system releases them a while after the game process ended. */
+static int pfs_mounts(const char *tid) {
+    int n = getfsstat(NULL, 0, MNT_NOWAIT), count = 0;
+    if (n <= 0)
+        return 0;
+    struct statfs *list = malloc(sizeof(*list) * (size_t)(n + 16));
+    if (!list)
+        return 0;
+    char tag[32];
+    snprintf(tag, sizeof(tag), "/pfsmnt/%s-", tid);
+    n = getfsstat(list, (long)(sizeof(*list) * (size_t)(n + 16)), MNT_NOWAIT);
+    for (int i = 0; i < n; i++)
+        count += strstr(list[i].f_mntonname, tag) != NULL;
+    free(list);
+    return count;
+}
+
 /* A layer is on path but cannot be read: its drive was disconnected (and maybe
  * connected again, which gives it a new mount). */
 static int dead_layer(const char *path) {
@@ -2509,14 +2527,12 @@ static void apply_dlc_choice(const char *tid, const char *on) {
     src_close(&t);
 }
 
+static int open_games(uint32_t *ids, char (*tids)[10], int max);
+static int close_open_games(const char *why);
+static char g_launch_tid[10];
+
 /* Starts a game of the library for the foreground user. */
-int app_launch(const char *tid, char *msg, size_t cap) {
-    char target[64];
-    snprintf(target, sizeof(target), "/user/app/%s", tid);
-    if (!db_is_registered(tid) || !mounted_from(target, NULL, 0)) {
-        snprintf(msg, cap, "%s is not ready to play", tid);
-        return -1;
-    }
+static int launch_now(const char *tid, char *msg, size_t cap) {
     struct {
         uint32_t size, user, opt;
         uint64_t report;
@@ -2538,6 +2554,50 @@ int app_launch(const char *tid, char *msg, size_t cap) {
     }
     snprintf(msg, cap, "Starting %s", tid);
     return 0;
+}
+
+/* 1 (msg names the open game) when another game is open and force is 0: the panel asks
+ * first, since that game is closed without saving. With force, the open game is closed by
+ * the main loop, which then starts this one. */
+int app_launch(const char *tid, int force, char *msg, size_t cap) {
+    char target[64];
+    snprintf(target, sizeof(target), "/user/app/%s", tid);
+    if (!db_is_registered(tid) || !mounted_from(target, NULL, 0)) {
+        snprintf(msg, cap, "%s is not ready to play", tid);
+        return -1;
+    }
+    uint32_t ids[8];
+    char tids[8][10];
+    int n = open_games(ids, tids, 8);
+    if (!n)
+        return launch_now(tid, msg, cap);
+    if (!strcmp(tids[0], tid)) {
+        snprintf(msg, cap, "%s is already open", tid);
+        return -1;
+    }
+    managed_t *m = managed_by(tids[0], NULL);
+    if (!force) {
+        snprintf(msg, cap, "%s", m ? m->name : tids[0]);
+        return 1;
+    }
+    if (g_launch_tid[0]) {
+        snprintf(msg, cap, "Another game is being started, try again in a moment");
+        return -1;
+    }
+    snprintf(g_launch_tid, sizeof(g_launch_tid), "%s", tid);
+    snprintf(msg, cap, "Closing %s, then starting %s", m ? m->name : tids[0], tid);
+    return 0;
+}
+
+/* The deferred start: closes the open game and waits until the system let go of its files. */
+static void launch_after_close(const char *tid) {
+    char msg[128];
+    if (close_open_games("to start another game")) {
+        notify("The open game did not close; %s was not started", tid);
+        return;
+    }
+    if (launch_now(tid, msg, sizeof(msg)))
+        notify("%s", msg);
 }
 
 void app_games_json(buf_t *out) {
@@ -2950,7 +3010,7 @@ static int open_games(uint32_t *ids, char (*tids)[10], int max) {
 /* Every pkg operation that takes games out of the library closes the open game first,
  * whichever it is: a game left open keeps reading pkgs that are being moved. 0 once no
  * game is open; -1 when one did not close within 30 seconds. */
-static int close_open_games(void) {
+static int close_open_games(const char *why) {
     uint32_t ids[8];
     char tids[8][10];
     int n = open_games(ids, tids, 8);
@@ -2958,9 +3018,9 @@ static int close_open_games(void) {
         return 0;
     for (int i = 0; i < n && i < 8; i++) {
         managed_t *m = managed_by(tids[i], NULL);
-        notify("Closing %s to move pkgs back", m ? m->name : tids[i]);
+        notify("Closing %s %s", m ? m->name : tids[i], why);
         int rc = sceSystemServiceKillApp(ids[i], -1, 0, 0);
-        printf("[restore] close %s (app 0x%08x): 0x%08x\n", tids[i], ids[i], rc);
+        printf("[close] %s (app 0x%08x): 0x%08x\n", tids[i], ids[i], rc);
     }
     char closing[8][10];
     int nc = n < 8 ? n : 8;
@@ -2971,6 +3031,16 @@ static int close_open_games(void) {
         for (int i = 0; i < nc; i++)
             mounted |= title_running(closing[i]);
         if (!open_games(ids, tids, 8) && !mounted) {
+            /* its package images are released last: a game started before that cannot
+             * read its own files (0x80020060) */
+            for (int w = 0; w < 20; w++) {
+                int left = 0;
+                for (int i = 0; i < nc; i++)
+                    left += pfs_mounts(closing[i]);
+                if (!left)
+                    break;
+                pump_events(1000);
+            }
             pump_events(2000); /* let the system finish unmounting the game */
             for (int i = 0; i < MAX_TITLES; i++)
                 g_managed[i].running = 0;
@@ -3040,7 +3110,7 @@ static void run_restore(char (*only)[10], int nonly) {
         notify("No PS4Mount games to move back");
         return;
     }
-    if (close_open_games()) {
+    if (close_open_games("to move pkgs back")) {
         notify("The open game did not close; no pkgs were moved back");
         return;
     }
@@ -3510,6 +3580,13 @@ int main(void) {
             run_restore(g_restore_all ? NULL : g_restore_tids, g_restore_n);
             g_restore_n = 0;
             g_restore_all = 0;
+            continue;
+        }
+        if (g_launch_tid[0]) {
+            char tid[10];
+            snprintf(tid, sizeof(tid), "%s", g_launch_tid);
+            launch_after_close(tid);
+            g_launch_tid[0] = 0;
             continue;
         }
         if ((g_upd_tid[0] || g_dlc_tid[0]) && !g_deleting) {

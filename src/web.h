@@ -27,8 +27,9 @@ int app_game_json(const char *tid, buf_t *out, char *msg, size_t cap);
 int app_choose_update(const char *tid, const char *rel, char *msg, size_t cap);
 /* Keeps on only the add-ons in on (content IDs, comma separated); the game is added again. */
 int app_choose_dlc(const char *tid, const char *on, char *msg, size_t cap);
-/* Starts the game. */
-int app_launch(const char *tid, char *msg, size_t cap);
+/* Starts the game. 1 when another game is open and force is 0 (msg: its name); with
+ * force that game is closed first, without saving. */
+int app_launch(const char *tid, int force, char *msg, size_t cap);
 /* Fills an icon0.png for tid; 0 on success. */
 int app_icon(const char *tid, buf_t *out);
 

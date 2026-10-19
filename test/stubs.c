@@ -54,4 +54,13 @@ int app_choose_dlc(const char *tid, const char *on, char *msg, size_t cap) {
     snprintf(arg, sizeof(arg), "%s %s", tid, on);
     return record("dlc", arg, msg, cap);
 }
-int app_launch(const char *tid, char *msg, size_t cap) { return record("launch", tid, msg, cap); }
+int app_launch(const char *tid, int force, char *msg, size_t cap) {
+    char arg[32];
+    snprintf(arg, sizeof(arg), "%s %d", tid, force);
+    record("launch", arg, msg, cap);
+    if (!strcmp(tid, "CUSA00002") && !force) {
+        snprintf(msg, cap, "Uncharted \"4\"");
+        return 1;
+    }
+    return 0;
+}

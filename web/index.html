@@ -224,11 +224,18 @@ $('grid').addEventListener('click', function (e) {
     .catch(function (err) { toast('Error: ' + err.message); })
     .then(function () { delete busy[tid]; load(); });
 });
-/* Starts the game: the browser is closed by PS4Mount once the game starts. */
-function launch(tid) {
+function gameName(tid) { for (var i = 0; i < games.length; i++) if (games[i].title_id === tid) return games[i].name; return tid; }
+/* Starts the game. Another open game is closed first, without saving, after asking. */
+function launch(tid, force) {
   busy[tid] = 1; render();
-  api('/api/launch?title_id=' + tid, 'POST').then(function (j) { toast(j.message); })
-    .catch(function (err) { toast('Error: ' + err.message); })
+  api('/api/launch?title_id=' + tid + (force ? '&force=1' : ''), 'POST').then(function (j) {
+    if (j.confirm) {
+      delete busy[tid];
+      if (confirm(j.open + ' is open. It will be closed without saving, then ' + gameName(tid) + ' starts.\n\nContinue?')) return launch(tid, 1);
+      return;
+    }
+    toast(j.message);
+  }).catch(function (err) { toast('Error: ' + err.message); })
     .then(function () { delete busy[tid]; load(); });
 }
 var cur = null;

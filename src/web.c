@@ -244,8 +244,22 @@ void web_handle(int fd) {
         if (title_param(path, tid))
             json_msg(fd, 0, "invalid title_id");
         else {
-            int rc = app_launch(tid, msg, sizeof(msg));
-            json_msg(fd, !rc, msg);
+            int rc = app_launch(tid, strstr(path, "&force=1") != NULL, msg, sizeof(msg));
+            if (rc == 1) {
+                /* another game is open: the panel asks before it is closed */
+                buf_t b = {0};
+                buf_printf(&b, "{\"ok\":false,\"confirm\":true,\"open\":\"");
+                for (const char *c = msg; *c; c++) {
+                    if (*c == '"' || *c == '\\')
+                        buf_put(&b, "\\", 1);
+                    if ((unsigned char)*c >= 0x20)
+                        buf_put(&b, c, 1);
+                }
+                buf_printf(&b, "\"}");
+                reply(fd, "200 OK", "application/json; charset=utf-8", b.data, b.len);
+                buf_free(&b);
+            } else
+                json_msg(fd, !rc, msg);
         }
     } else if (post && !strcmp(path, "/api/rescan")) {
         app_rescan();

@@ -215,6 +215,7 @@ $('grid').onclick = function (e) {
   var b = e.target || e.srcElement;
   if (!b || !b.getAttribute || !b.getAttribute('data-a')) return;
   var tid = b.getAttribute('data-t'), a = b.getAttribute('data-a');
+  if (a === 'launch') { launch(tid, 0); return; }
   if (a === 'updates') { openUpdates(tid); return; }
   if (a === 'dlcs') { openDlcs(tid); return; }
   if (a === 'unmount' && !confirm('Remove ' + tid + ' from the library? The pkg stays on the USB drive.')) return;
@@ -364,6 +365,23 @@ $('p-go').onclick = function () {
       (tids.length > size ? ', ' + size + ' at a time' : '') + '. No pkg is deleted.')) return;
   startRestore(size, 'title_ids=' + tids.join(','));
 };
+
+function gameName(tid) { for (var i = 0; i < games.length; i++) if (games[i].title_id === tid) return games[i].name; return tid; }
+/* Starts the game. Another open game is closed first, without saving, after asking. */
+function launch(tid, force) {
+  busy[tid] = 1;
+  render();
+  api('/api/launch?title_id=' + tid + (force ? '&force=1' : ''), 'POST', null, function (err, j) {
+    delete busy[tid];
+    if (!err && j.confirm) {
+      if (confirm(j.open + ' is open. It will be closed without saving, then ' + gameName(tid) + ' starts.\n\nContinue?')) launch(tid, 1);
+      else load();
+      return;
+    }
+    say(err ? 'Error: ' + err : j.message);
+    load();
+  });
+}
 
 /* --- updates and add-ons of a game --- */
 var cur = null;

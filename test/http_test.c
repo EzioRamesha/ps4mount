@@ -169,7 +169,11 @@ int main(void) {
     r = post("/api/dlc?title_id=CUSA00791", "on=");
     CHECK(status(r, "200") && !strcmp(g_stub_arg, "CUSA00791 ")); /* all off */
     r = post("/api/launch?title_id=CUSA00791", "");
-    CHECK(status(r, "200") && !strcmp(g_stub_call, "launch") && !strcmp(g_stub_arg, "CUSA00791"));
+    CHECK(status(r, "200") && !strcmp(g_stub_call, "launch") && !strcmp(g_stub_arg, "CUSA00791 0"));
+    r = post("/api/launch?title_id=CUSA00002", "");
+    CHECK(status(r, "200") && strstr(r, "\"confirm\":true") && strstr(r, "\"open\":\"Uncharted \\\"4\\\"\""));
+    r = post("/api/launch?title_id=CUSA00002&force=1", "");
+    CHECK(status(r, "200") && !strcmp(g_stub_arg, "CUSA00002 1") && strstr(r, "\"ok\":true"));
     const char *bad_changes[][2] = {{"/api/update?title_id=CUSA0079", "file=replaced%2Fa.pkg"},
                                     {"/api/update?title_id=CUSA00791", ""},
                                     {"/api/update?title_id=CUSA00791", "file=%0a"},

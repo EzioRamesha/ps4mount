@@ -18,6 +18,7 @@ const DETAIL = { title_id: 'CUSA41712', name: 'Soulstice', dlc_limit: 2,
          { content_id: 'EP0001-CUSA41712_00-CCCCCCCCCCCCCCCC', name: 'Pack C', on: false, data: true }] };
 function reply(url) {
   if (url.indexOf('/api/game?') === 0) return DETAIL;
+  if (url === '/api/launch?title_id=CUSA41712') return { ok: false, confirm: true, open: 'Civ VII' };
   return url.indexOf('/api/log') === 0 ? { log: 'a\nb' } : url.indexOf('/api/config') === 0 ? CFG :
     url.indexOf('/api/games') === 0 ? { version: 'PS4Mount test', games: GAMES } : { ok: true, message: 'ok ' + url };
 }
@@ -130,6 +131,14 @@ function parses(code, version) {
   ok(d.querySelector('.card:nth-child(4) .meta').textContent.includes('1 of 3 add-ons'), 'card shows add-ons on of total');
   reqs.length = 0; d.querySelector('.play[data-t="CUSA00791"]').click(); await tick();
   ok(reqs[0].url === '/api/launch?title_id=CUSA00791' && reqs[0].method === 'POST', 'play starts the game');
+  let asked = '';
+  w.confirm = m => { asked = m; return true; };
+  reqs.length = 0; d.querySelector('.play[data-t="CUSA41712"]').click(); await tick(); await tick();
+  ok(asked.includes('Civ VII is open') && reqs[1] && reqs[1].url === '/api/launch?title_id=CUSA41712&force=1', 'another game open: asks, then closes it and starts');
+  w.confirm = () => false;
+  reqs.length = 0; d.querySelector('.play[data-t="CUSA41712"]').click(); await tick(); await tick();
+  ok(reqs.filter(r => r.url.indexOf('/api/launch') === 0).length === 1, 'refused: the open game is left alone');
+  w.confirm = () => (w.__confirm !== undefined ? w.__confirm : true);
   d.querySelector('[data-a="updates"][data-t="CUSA00791"]').click(); await tick();
   ok(d.getElementById('upddlg').hasAttribute('open') && d.querySelectorAll('#u-rows tr').length === 2, 'updates dialog lists both');
   ok(d.getElementById('u-go').disabled, 'the update in use cannot be chosen again');
@@ -184,6 +193,14 @@ function parses(code, version) {
   ok(d.querySelectorAll('.card')[3].textContent.includes('1 of 3 add-ons'), 'legacy card shows add-ons on of total');
   reqs.length = 0; d.querySelector('.play[data-t="CUSA00791"] .tri').click(); await tick();
   ok(reqs[0] && reqs[0].url === '/api/launch?title_id=CUSA00791' && reqs[0].method === 'POST', 'legacy play starts the game');
+  let lasked = '';
+  w.confirm = m => { lasked = m; return true; };
+  reqs.length = 0; d.querySelector('.play[data-t="CUSA41712"] .tri').click(); await tick(); await tick();
+  ok(lasked.includes('Civ VII is open') && reqs[1] && reqs[1].url === '/api/launch?title_id=CUSA41712&force=1', 'legacy: another game open: asks, then closes it and starts');
+  w.confirm = () => false;
+  reqs.length = 0; d.querySelector('.play[data-t="CUSA41712"] .tri').click(); await tick(); await tick();
+  ok(reqs.filter(r => r.url.indexOf('/api/launch') === 0).length === 1, 'legacy refused: the open game is left alone');
+  w.confirm = () => (w.__confirm !== undefined ? w.__confirm : true);
   d.querySelector('[data-a="updates"][data-t="CUSA00791"]').click(); await tick();
   ok(d.getElementById('v-upd').className.includes('on') && d.querySelectorAll('#u-rows tr').length === 2, 'legacy updates page lists both');
   ok(d.getElementById('u-go').disabled, 'legacy: the update in use cannot be chosen again');
