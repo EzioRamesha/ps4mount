@@ -177,4 +177,26 @@ function parses(code, version) {
   d.getElementById('l-back').click();
   reqs.length = 0; d.querySelector('[data-a="unmount"][data-t="CUSA00791"]').click(); await tick();
   ok(reqs[0].url === '/api/unmount?title_id=CUSA00791' && reqs[0].method === 'POST', 'legacy card action posts');
+  ok(d.querySelector('.play[data-t="CUSA00791"]') !== null && d.querySelector('.play[data-t="CUSA28732"]') === null, 'legacy play button on ready games only');
+  ok(d.querySelector('[data-a="updates"][data-t="CUSA00791"]') !== null && d.querySelector('[data-a="updates"][data-t="CUSA41712"]') === null, 'legacy Updates button only with two or more updates');
+  ok(d.querySelector('[data-a="dlcs"][data-t="CUSA41712"]') !== null && d.querySelector('[data-a="dlcs"][data-t="CUSA00791"]') === null, 'legacy Add-ons button only with add-ons');
+  ok(d.querySelector('[data-a="dlcs"][data-t="CUSA28732"]').disabled, 'legacy running game: add-ons cannot be changed');
+  ok(d.querySelectorAll('.card')[3].textContent.includes('1 of 3 add-ons'), 'legacy card shows add-ons on of total');
+  reqs.length = 0; d.querySelector('.play[data-t="CUSA00791"] .tri').click(); await tick();
+  ok(reqs[0] && reqs[0].url === '/api/launch?title_id=CUSA00791' && reqs[0].method === 'POST', 'legacy play starts the game');
+  d.querySelector('[data-a="updates"][data-t="CUSA00791"]').click(); await tick();
+  ok(d.getElementById('v-upd').className.includes('on') && d.querySelectorAll('#u-rows tr').length === 2, 'legacy updates page lists both');
+  ok(d.getElementById('u-go').disabled, 'legacy: the update in use cannot be chosen again');
+  d.querySelectorAll('#u-rows input')[1].click();
+  ok(!d.getElementById('u-go').disabled, 'legacy: another update can be chosen');
+  reqs.length = 0; d.getElementById('u-go').click(); await tick();
+  ok(reqs[0].url === '/api/update?title_id=CUSA41712' && reqs[0].body === 'file=replaced%2Fpatch-1.pkg', 'legacy update choice sent');
+  d.querySelector('[data-a="dlcs"][data-t="CUSA41712"]').click(); await tick();
+  const ldb = d.querySelectorAll('#d-rows input');
+  ok(d.getElementById('v-dlc').className.includes('on') && ldb.length === 3 && ldb[0].checked && !ldb[1].checked, 'legacy add-ons page shows which are on');
+  ldb[2].click();
+  ok(ldb[1].disabled && d.getElementById('d-info').textContent.includes('limit reached'), 'legacy: past the limit the others cannot be turned on');
+  reqs.length = 0; d.getElementById('d-go').click(); await tick();
+  ok(reqs[0].url === '/api/dlc?title_id=CUSA41712' &&
+     reqs[0].body === 'on=' + encodeURIComponent('EP0001-CUSA41712_00-AAAAAAAAAAAAAAAA,EP0001-CUSA41712_00-CCCCCCCCCCCCCCCC'), 'legacy add-on choice sent');
 })();
