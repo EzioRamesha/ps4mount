@@ -153,6 +153,10 @@ function api(path, method, body) {
   });
 }
 var maxRestore = 10;
+function copyText(d) {
+  var t = { installed: 'Installed', installing: 'Installing', store: 'From the store', problem: 'Problem: ' + (d.reason || '') }[d.copy];
+  return t ? '<div class="meta">' + esc(t) + '</div>' : '';
+}
 function addons(g) { return g.dlc ? g.dlc + ' add-on' + (g.dlc > 1 ? 's' : '') : 'no add-ons'; }
 function movedBack(g) { return 'Game' + (g.has_patch ? ', update' : '') + (g.dlc ? ' and ' + addons(g) : ''); }
 /* Games per group when moving back: digits only, 1 to maxRestore. */
@@ -285,7 +289,7 @@ function openDlcs(tid) {
     g.dlcs.forEach(function (d) {
       rows += '<tr><td class="c"><input type="checkbox" value="' + esc(d.content_id) + '"' + (d.on ? ' checked' : '') + '></td>' +
         '<td>' + esc(d.name) + '<div class="meta">' + esc(d.content_id) + '</div></td>' +
-        '<td>' + (d.data ? 'Content' : 'Unlock') + '</td></tr>';
+        '<td>' + (d.data ? 'Content' : 'Unlock') + copyText(d) + '</td></tr>';
     });
     $('d-rows').innerHTML = rows;
     dlcUpdate();

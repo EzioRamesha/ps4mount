@@ -784,6 +784,25 @@ static void ac_uninstall_copies(const char *game) {
     closedir(d);
 }
 
+/* Copy status of an add-on for the panel: "installed", "installing", "problem" (why set),
+ * "store" or "" (not copied, or mount mode). */
+static const char *ac_status(const dlc_src_t *a, int on, char *why, size_t cap) {
+    const char *cid = a->pkg.content_id;
+    char p[PATH_MAX];
+    if (!g_cfg.dlc_copy)
+        return "";
+    if (g_ac.busy && !strcmp(g_ac.cid, cid))
+        return "installing";
+    int marked = accopy_marked(STATE_DIR, cid);
+    ac_copy_path(p, sizeof(p), cid);
+    if (exists(p))
+        return marked ? "installed" : "store";
+    if (on && acfail_get(STATE_DIR, cid, why, cap) >= ACFAIL_MAX)
+        return "problem";
+    why[0] = 0;
+    return "";
+}
+
 /* Work that waits for the copy in progress: back to mount mode, games removed. */
 static int g_ac_revert;
 static char g_ac_drop[MAX_TITLES][10];
@@ -2707,7 +2726,11 @@ int app_game_json(const char *tid, buf_t *out, char *msg, size_t cap) {
         const sfo_item_t *n = sfo_get(&t.dlc[i].sfo, "TITLE");
         buf_printf(out, "%s{\"content_id\":\"%s\",\"name\":", i ? "," : "", t.dlc[i].pkg.content_id);
         json_str(out, n && !n->is_int ? n->sval : t.dlc[i].pkg.content_id + 20);
-        buf_printf(out, ",\"on\":%s,\"data\":%s}", i < t.ndlc ? "true" : "false", t.dlc[i].data ? "true" : "false");
+        buf_printf(out, ",\"on\":%s,\"data\":%s", i < t.ndlc ? "true" : "false", t.dlc[i].data ? "true" : "false");
+        char why[128] = "";
+        buf_printf(out, ",\"copy\":\"%s\",\"reason\":", ac_status(&t.dlc[i], i < t.ndlc, why, sizeof(why)));
+        json_str(out, why);
+        buf_printf(out, "}");
     }
     buf_printf(out, "]}");
     src_close(&t);

@@ -13,8 +13,8 @@ const GAMES = [
 const CFG = { batch: true, batch_size: 5, dlc: true, dlc_copy: true, restore_batch: 5, max_restore_batch: 10, paths: ['/'] };
 const DETAIL = { title_id: 'CUSA41712', name: 'Soulstice', dlc_limit: 2,
   updates: [{ file: 'patch.pkg', version: '01.03', name: 'b.pkg', active: true }, { file: 'replaced/patch-1.pkg', version: '01.02', name: 'a.pkg', active: false }],
-  dlcs: [{ content_id: 'EP0001-CUSA41712_00-AAAAAAAAAAAAAAAA', name: 'Pack A', on: true, data: true },
-         { content_id: 'EP0001-CUSA41712_00-BBBBBBBBBBBBBBBB', name: 'Pack B', on: false, data: false },
+  dlcs: [{ content_id: 'EP0001-CUSA41712_00-AAAAAAAAAAAAAAAA', name: 'Pack A', on: true, data: true, copy: 'installed', reason: '' },
+         { content_id: 'EP0001-CUSA41712_00-BBBBBBBBBBBBBBBB', name: 'Pack B', on: false, data: false, copy: 'problem', reason: 'copy stopped' },
          { content_id: 'EP0001-CUSA41712_00-CCCCCCCCCCCCCCCC', name: 'Pack C', on: false, data: true }] };
 function reply(url) {
   if (url.indexOf('/api/game?') === 0) return DETAIL;
@@ -153,6 +153,8 @@ function parses(code, version) {
   d.querySelector('[data-a="dlcs"][data-t="CUSA41712"]').click(); await tick();
   const db = d.querySelectorAll('#d-rows input');
   ok(db.length === 3 && db[0].checked && !db[1].checked, 'add-ons dialog shows which are on');
+  const dr = d.querySelectorAll('#d-rows tr');
+  ok(dr[0].textContent.includes('Installed') && dr[1].textContent.includes('Problem: copy stopped'), 'add-ons dialog shows the copy status');
   db[2].checked = true; d.getElementById('d-rows').dispatchEvent(new w.Event('change', { bubbles: true }));
   ok(db[1].disabled && d.getElementById('d-info').textContent.includes('limit reached'), 'past the limit the others cannot be turned on');
   reqs.length = 0; d.getElementById('d-go').click(); await tick();
@@ -220,6 +222,8 @@ function parses(code, version) {
   d.querySelector('[data-a="dlcs"][data-t="CUSA41712"]').click(); await tick();
   const ldb = d.querySelectorAll('#d-rows input');
   ok(d.getElementById('v-dlc').className.includes('on') && ldb.length === 3 && ldb[0].checked && !ldb[1].checked, 'legacy add-ons page shows which are on');
+  const ldr = d.querySelectorAll('#d-rows tr');
+  ok(ldr[0].textContent.includes('Installed') && ldr[1].textContent.includes('Problem: copy stopped'), 'legacy add-ons page shows the copy status');
   ldb[2].click();
   ok(ldb[1].disabled && d.getElementById('d-info').textContent.includes('limit reached'), 'legacy: past the limit the others cannot be turned on');
   reqs.length = 0; d.getElementById('d-go').click(); await tick();

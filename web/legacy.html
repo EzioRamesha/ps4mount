@@ -164,6 +164,10 @@ function show(view) {
   for (var i = 0; i < v.length; i++) $(v[i]).className = 'view' + (v[i] === view ? ' on' : '');
   window.scrollTo(0, 0);
 }
+function copyText(d) {
+  var t = { installed: 'Installed', installing: 'Installing', store: 'From the store', problem: 'Problem: ' + (d.reason || '') }[d.copy];
+  return t ? '<div class="meta">' + esc(t) + '</div>' : '';
+}
 function addons(g) { return g.dlc ? g.dlc + ' add-on' + (g.dlc > 1 ? 's' : '') : 'no add-ons'; }
 function addonsOf(g) {
   var total = g.dlc_total || g.dlc;
@@ -440,7 +444,7 @@ function openDlcs(tid) {
       d = g.dlcs[i];
       rows += '<tr><td class="c"><input type="checkbox" value="' + esc(d.content_id) + '"' + (d.on ? ' checked' : '') + '></td>' +
         '<td>' + esc(d.name) + '<div class="meta">' + esc(d.content_id) + '</div></td>' +
-        '<td>' + (d.data ? 'Content' : 'Unlock') + '</td></tr>';
+        '<td>' + (d.data ? 'Content' : 'Unlock') + copyText(d) + '</td></tr>';
     }
     $('d-rows').innerHTML = rows;
     var b = dlcBoxes();
