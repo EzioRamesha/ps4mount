@@ -15,7 +15,7 @@ const DETAIL = { title_id: 'CUSA41712', name: 'Soulstice', dlc_limit: 2,
   updates: [{ file: 'patch.pkg', version: '01.03', name: 'b.pkg', active: true }, { file: 'replaced/patch-1.pkg', version: '01.02', name: 'a.pkg', active: false }],
   dlcs: [{ content_id: 'EP0001-CUSA41712_00-AAAAAAAAAAAAAAAA', name: 'Pack A', on: true, data: true, copy: 'installed', reason: '' },
          { content_id: 'EP0001-CUSA41712_00-BBBBBBBBBBBBBBBB', name: 'Pack B', on: false, data: false, copy: 'problem', reason: 'copy stopped' },
-         { content_id: 'EP0001-CUSA41712_00-CCCCCCCCCCCCCCCC', name: 'Pack C', on: false, data: true }] };
+         { content_id: 'EP0001-CUSA41712_00-CCCCCCCCCCCCCCCC', name: 'Pack C', on: false, data: true, copy: 'missing', reason: '' }] };
 function reply(url) {
   if (url.indexOf('/api/game?') === 0) return DETAIL;
   if (url === '/api/launch?title_id=CUSA41712') return { ok: false, confirm: true, open: 'Civ VII' };
@@ -78,6 +78,13 @@ function parses(code, version) {
   await tick();
   ok(p.nav.length === 0, 'index with <dialog> stays');
   ok(d.querySelectorAll('.card').length === 4, 'four game cards');
+  const names = () => [...d.querySelectorAll('.card .name')].map(e => e.textContent).join('|');
+  ok(names() === 'Civ VII|Killzone|N++|Soulstice', 'games in alphabetical order');
+  const chip = t => [...d.querySelectorAll('#summary span')].find(e => e.textContent.indexOf(t) === 0);
+  ok(chip('With DLC: 2') !== undefined, 'With DLC chip counts games with add-ons');
+  chip('With DLC').click(); ok(names() === 'Civ VII|Soulstice', 'With DLC filter');
+  chip('Ready').click(); ok(names() === 'N++|Soulstice', 'Ready filter');
+  chip('4 game(s)').click(); ok(d.querySelectorAll('.card').length === 4, 'all games again');
   ok(d.querySelector('[data-a="restore"][data-t="CUSA28732"]') !== null, 'running game has Move pkgs back');
   ok(d.querySelector('[data-a="restore"][data-t="CUSA00190"]') === null, 'internal game has no Move pkgs back');
   d.getElementById('settingsbtn').click(); await tick();
@@ -106,14 +113,14 @@ function parses(code, version) {
   d.getElementById('s-pick').click(); await tick();
   const rows = d.querySelectorAll('#p-rows tr');
   ok(d.getElementById('pickdlg').hasAttribute('open') && rows.length === 3, 'picker lists 3 games (internal left out)');
-  ok(rows[1].textContent.includes('Game, update and 35 add-ons'), 'row says game, update and add-ons are moved back');
+  ok(rows[0].textContent.includes('Game, update and 35 add-ons'), 'row says game, update and add-ons are moved back');
   ok(d.querySelector('#pickdlg .note').textContent.includes('all its add-ons'), 'picker note about add-ons');
   ok(d.getElementById('p-go').disabled, 'nothing selected: button disabled');
   const bx = d.querySelectorAll('#p-rows input');
   bx[0].checked = true; bx[2].checked = true; d.getElementById('p-rows').dispatchEvent(new w.Event('change', { bubbles: true }));
   ok(!d.getElementById('p-go').disabled && d.getElementById('p-info').textContent.includes('2 game(s) selected, removed from the library 1 at a time'), 'two selected, groups of 1 shown');
   reqs.length = 0; d.getElementById('p-go').click(); await tick();
-  ok(reqs[0].body === 'restore_batch=1' && reqs[1].url === '/api/restore' && reqs[1].body === 'title_ids=CUSA00791,CUSA41712', 'selected restore sends the two title ids');
+  ok(reqs[0].body === 'restore_batch=1' && reqs[1].url === '/api/restore' && reqs[1].body === 'title_ids=CUSA28732,CUSA41712', 'selected restore sends the two title ids');
   ok(!d.getElementById('pickdlg').hasAttribute('open'), 'picker closed after starting');
   d.getElementById('settingsbtn').click(); await tick();
   d.getElementById('s-pick').click(); await tick();
@@ -155,6 +162,7 @@ function parses(code, version) {
   ok(db.length === 3 && db[0].checked && !db[1].checked, 'add-ons dialog shows which are on');
   const dr = d.querySelectorAll('#d-rows tr');
   ok(dr[0].textContent.includes('Installed') && dr[1].textContent.includes('Problem: copy stopped'), 'add-ons dialog shows the copy status');
+  ok(dr[2].textContent.includes('Not installed'), 'add-ons dialog shows an add-on not installed');
   db[2].checked = true; d.getElementById('d-rows').dispatchEvent(new w.Event('change', { bubbles: true }));
   ok(db[1].disabled && d.getElementById('d-info').textContent.includes('limit reached'), 'past the limit the others cannot be turned on');
   reqs.length = 0; d.getElementById('d-go').click(); await tick();
@@ -165,6 +173,12 @@ function parses(code, version) {
   p = page('legacy.html', {}); ({ w, d, reqs } = p);
   await tick();
   ok(d.querySelectorAll('.card').length === 4 && d.getElementById('ver').textContent === 'PS4Mount test', 'legacy lists the games');
+  const lnames = () => [].map.call(d.querySelectorAll('.card .name'), x => x.textContent).join('|');
+  ok(lnames() === 'Civ VII|Killzone|N++|Soulstice', 'legacy games in alphabetical order');
+  const lchip = t => [].filter.call(d.querySelectorAll('#summary span'), x => x.textContent.indexOf(t) === 0)[0];
+  lchip('With DLC').click(); ok(lnames() === 'Civ VII|Soulstice', 'legacy With DLC filter');
+  lchip('Ready').click(); ok(lnames() === 'N++|Soulstice', 'legacy Ready filter');
+  lchip('4 game(s)').click(); ok(d.querySelectorAll('.card').length === 4, 'legacy all games again');
   ok(!/=>|\blet\b|\bconst\b|`|fetch\(|showModal|<dialog/.test(fs.readFileSync(W + 'legacy.html', 'utf8').split('<script>')[1]), 'legacy script is ES5 without fetch or dialog');
   d.getElementById('nav-settings').click(); await tick();
   ok(d.getElementById('v-settings').className.includes('on') && d.getElementById('s-rsize').value === '5', 'legacy settings page with group 5');
@@ -191,7 +205,7 @@ function parses(code, version) {
   lb[2].click();
   ok(d.getElementById('p-info').textContent.includes('2 game(s) selected, removed from the library 1 at a time'), 'legacy picker counts and groups');
   reqs.length = 0; d.getElementById('p-go').click(); await tick();
-  ok(reqs[1].body === 'title_ids=CUSA28732,CUSA41712', 'legacy selected restore sends title ids');
+  ok(reqs[1].body === 'title_ids=CUSA00791,CUSA41712', 'legacy selected restore sends title ids');
   d.getElementById('nav-log').click(); await tick();
   ok(d.getElementById('v-log').className.includes('on') && d.getElementById('log').textContent === 'a\nb', 'legacy log page');
   d.getElementById('l-back').click();
@@ -224,6 +238,7 @@ function parses(code, version) {
   ok(d.getElementById('v-dlc').className.includes('on') && ldb.length === 3 && ldb[0].checked && !ldb[1].checked, 'legacy add-ons page shows which are on');
   const ldr = d.querySelectorAll('#d-rows tr');
   ok(ldr[0].textContent.includes('Installed') && ldr[1].textContent.includes('Problem: copy stopped'), 'legacy add-ons page shows the copy status');
+  ok(ldr[2].textContent.includes('Not installed'), 'legacy add-ons page shows an add-on not installed');
   ldb[2].click();
   ok(ldb[1].disabled && d.getElementById('d-info').textContent.includes('limit reached'), 'legacy: past the limit the others cannot be turned on');
   reqs.length = 0; d.getElementById('d-go').click(); await tick();

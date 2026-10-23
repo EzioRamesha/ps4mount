@@ -872,7 +872,7 @@ static void ac_uninstall_copies(const char *game) {
 }
 
 /* Copy status of an add-on for the panel: "installed", "installing", "problem" (why set),
- * "store" or "" (not copied, or mount mode). */
+ * "store", "missing" (not copied) or "" (mount mode). */
 static const char *ac_status(const dlc_src_t *a, int on, char *why, size_t cap) {
     const char *cid = a->pkg.content_id;
     char p[PATH_MAX];
@@ -891,7 +891,7 @@ static const char *ac_status(const dlc_src_t *a, int on, char *why, size_t cap) 
     if (on && acfail_get(STATE_DIR, cid, why, cap) >= ACFAIL_MAX)
         return "problem";
     why[0] = 0;
-    return "";
+    return "missing";
 }
 
 /* Work that waits for the copy in progress: back to mount mode, games removed. */
