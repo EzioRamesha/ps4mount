@@ -33,7 +33,7 @@ main{padding:20px;max-width:1400px;margin:0 auto}
 .art:hover .play,.play:focus{opacity:1;border-color:#fff}
 .play svg{width:36px;height:36px;margin-left:6px;fill:#fff;vertical-align:middle}
 .badge{position:absolute;left:10px;top:10px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;background:#000a}
-.b-ready{background:var(--ok)}.b-running{background:var(--accent)}.b-removed{background:#555}.b-internal{background:var(--warn)}.b-pending{background:var(--warn)}.b-duplicate{background:#555}
+.b-ready{background:var(--ok)}.b-running{background:var(--accent)}.b-removed{background:#555}.b-internal{background:var(--warn)}.b-pending{background:var(--warn)}.b-addons{background:var(--warn)}.b-duplicate{background:#555}
 .info{padding:12px 14px;display:flex;flex-direction:column;gap:4px;flex:1}
 .name{font-weight:600;font-size:16px}
 .meta{color:var(--muted);font-size:13px;word-break:break-all}
@@ -138,7 +138,7 @@ form.settings input.num{width:6em}
 <div id="toast"></div>
 <script>
 var games = [], busy = {};
-var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', duplicate: 'Duplicate'};
+var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', addons: 'Installing add-ons', duplicate: 'Duplicate'};
 var chipLabels = {duplicate: 'Duplicates'};
 
 function $(id) { return document.getElementById(id); }

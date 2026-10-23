@@ -34,7 +34,7 @@ textarea{width:100%;min-height:90px;font-family:monospace}
 .name{font-weight:bold;font-size:16px}
 .meta{color:#97a0ab;font-size:13px;word-wrap:break-word}
 .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:bold;background:#555;margin-bottom:4px}
-.b-ready{background:#2f9e57}.b-running{background:#3d7bfd}.b-internal,.b-pending{background:#c98b1f}
+.b-ready{background:#2f9e57}.b-running{background:#3d7bfd}.b-internal,.b-pending,.b-addons{background:#c98b1f}
 .actions{padding:0 12px 8px}
 .warn{color:#f0c060;font-size:13px;background:#3a2e12;border:1px solid #5c4818;border-radius:8px;padding:6px 8px;margin-top:4px}
 .box{border:1px solid #262c36;border-radius:10px;padding:12px 14px;margin:0 0 14px}
@@ -133,7 +133,7 @@ pre{white-space:pre-wrap;font-size:12px;background:#0b0d11;padding:12px;border-r
 
 <script>
 var games = [], busy = {}, maxRestore = 10, msgTimer = 0;
-var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', duplicate: 'Duplicate'};
+var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', addons: 'Installing add-ons', duplicate: 'Duplicate'};
 var chipLabels = {duplicate: 'Duplicates'};
 
 function $(id) { return document.getElementById(id); }

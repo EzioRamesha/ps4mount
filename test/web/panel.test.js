@@ -85,6 +85,9 @@ function parses(code, version) {
   w.games.push({ title_id: 'CUSA41712', name: 'Soulstice', version: '01.03', has_patch: false, size: 9e9, state: 'duplicate', mount: '', source: '/mnt/usb1/ps4/CUSA41712', dlc: 0, update_issue: '' }); w.render();
   ok(chip('Duplicates: 1') !== undefined && d.querySelector('.b-duplicate').textContent === 'Duplicate', 'duplicate chip and badge');
   w.games.pop(); w.render();
+  w.games.push({ title_id: 'CUSA41713', name: 'Zed', version: '01.00', has_patch: false, size: 1e9, state: 'addons', mount: 'ro', source: '/mnt/usb0/ps4/CUSA41713', dlc: 2, update_issue: '' }); w.render();
+  ok(d.querySelector('.b-addons').textContent === 'Installing add-ons' && !d.querySelector('[data-a="launch"][data-t="CUSA41713"]'), 'game with add-ons to install is not ready and has no Play');
+  w.games.pop(); w.render();
   chip('With DLC').click(); ok(names() === 'Civ VII|Soulstice', 'With DLC filter');
   chip('Ready').click(); ok(names() === 'N++|Soulstice', 'Ready filter');
   chip('4 game(s)').click(); ok(d.querySelectorAll('.card').length === 4, 'all games again');
@@ -181,6 +184,9 @@ function parses(code, version) {
   const lchip = t => [].filter.call(d.querySelectorAll('#summary span'), x => x.textContent.indexOf(t) === 0)[0];
   w.games.push({ title_id: 'CUSA41712', name: 'Soulstice', version: '01.03', has_patch: false, size: 9e9, state: 'duplicate', mount: '', source: '/mnt/usb1/ps4/CUSA41712', dlc: 0, update_issue: '' }); w.render();
   ok(lchip('Duplicates: 1') !== undefined && d.querySelector('.b-duplicate').textContent === 'Duplicate', 'legacy duplicate chip and badge');
+  w.games.pop(); w.render();
+  w.games.push({ title_id: 'CUSA41713', name: 'Zed', version: '01.00', has_patch: false, size: 1e9, state: 'addons', mount: 'ro', source: '/mnt/usb0/ps4/CUSA41713', dlc: 2, update_issue: '' }); w.render();
+  ok(d.querySelector('.b-addons').textContent === 'Installing add-ons' && !d.querySelector('[data-a="launch"][data-t="CUSA41713"]'), 'legacy game with add-ons to install is not ready and has no Play');
   w.games.pop(); w.render();
   lchip('With DLC').click(); ok(lnames() === 'Civ VII|Soulstice', 'legacy With DLC filter');
   lchip('Ready').click(); ok(lnames() === 'N++|Soulstice', 'legacy Ready filter');

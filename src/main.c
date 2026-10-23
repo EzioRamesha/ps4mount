@@ -680,7 +680,7 @@ typedef struct {
     int no_progress; /* ac.pkg was fully allocated at once: written space shows no progress */
     volatile int called, rc;
     time_t full_at; /* when the copy reached full size */
-    char cid[40], game[10], pkg_path[PATH_MAX], name[128];
+    char cid[40], game[10], pkg_path[PATH_MAX], name[128], title[128]; /* title: the game's name */
     uint64_t size;
     acwait_t wait;
 } ac_job_t;
@@ -898,6 +898,18 @@ static const char *ac_status(const dlc_src_t *a, int on, char *why, size_t cap) 
     return "missing";
 }
 
+/* Copy mode: an add-on turned on is not in yet (copying or still to copy). A problem add-on
+ * is never tried again, so it does not hold the game. */
+static int ac_game_waiting(const title_src_t *t) {
+    char why[64];
+    for (int i = 0; i < t->ndlc; i++) {
+        const char *st = ac_status(&t->dlc[i], 1, why, sizeof(why));
+        if (!strcmp(st, "installing") || !strcmp(st, "missing"))
+            return 1;
+    }
+    return 0;
+}
+
 /* Work that waits for the copy in progress: back to mount mode, games removed. */
 static int g_ac_revert;
 static char g_ac_drop[MAX_TITLES][10];
@@ -1040,6 +1052,7 @@ static void ac_poll(void) {
         }
         j->ended = 1;
         if (r > 0) {
+            j->ended = 2;
             char pend[96];
             ac_pend_path(pend, sizeof(pend), j->cid);
             unlink(pend);
@@ -1060,6 +1073,17 @@ static void ac_poll(void) {
     printf("[accopy] batch done in %ld s, %d installed, %d failed\n", (long)(now - g_ac_since), g_ac_ok, g_ac_bad);
     if (g_ac_ok)
         notify("%d add-on%s installed", g_ac_ok, g_ac_ok > 1 ? "s" : "");
+    /* a game is ready to play once all of its add-ons in the batch are in */
+    for (int i = 0; i < g_acn; i++) {
+        int first = 1, all = 1;
+        for (int k = 0; k < g_acn; k++)
+            if (!strcmp(g_acj[k].game, g_acj[i].game)) {
+                first &= k >= i;
+                all &= g_acj[k].ended == 2;
+            }
+        if (first && all)
+            notify("%s ready to play", g_acj[i].title[0] ? g_acj[i].title : g_acj[i].game);
+    }
     g_ac_gen++; /* a call that has not returned yet is ignored */
     g_acn = 0;
     g_ac_submitted = 0;
@@ -1425,7 +1449,9 @@ static void ac_reconcile(title_src_t *t) {
         case AC_INSTALL:
             if (submit_later)
                 break;
-            if (ac_queue(a, tid, why, sizeof(why))) {
+            if (!ac_queue(a, tid, why, sizeof(why))) {
+                snprintf(g_acj[g_acn - 1].title, sizeof(g_acj[0].title), "%s", t->name);
+            } else {
                 int n = acfail_add(STATE_DIR, cid, why);
                 printf("[accopy] %s: not started (%s), %d of %d\n", cid, why, n, ACFAIL_MAX);
                 notify("%s: add-on %s not installed (%s)", tid, cid + 20, why);
@@ -2542,7 +2568,9 @@ static void scan_root(const char *root, int fresh, int reconnected) {
             } else {
                 retry_clear(t->tid);
                 ok++;
-                if (!grouped)
+                if (!grouped && g_cfg.dlc_copy && t->ndlc)
+                    notify("%s added, its add-ons are installed next", t->name);
+                else if (!grouped)
                     notify("%s ready to play", t->name);
             }
             src_close(&src);
@@ -3203,7 +3231,7 @@ void app_games_json(buf_t *out) {
             else if (m && m->running)
                 state = "running";
             else if (mounted && db_is_registered(tid))
-                state = "ready";
+                state = g_cfg.dlc_copy && ac_game_waiting(&t) ? "addons" : "ready";
             else
                 state = "pending";
             buf_printf(out, "%s{\"title_id\":\"%s\",\"name\":", first ? "" : ",", tid);
