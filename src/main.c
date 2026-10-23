@@ -812,6 +812,7 @@ static void ac_copy_event(const char *line) {
         return;
     if (strstr(line, "SendDownloadCopyEnd")) {
         j->copy_end = 1;
+        g_ac_next = 0; /* followed at once, not at the next poll */
     } else {
         j->copy_start = 1;
         if (!j->started) {
@@ -4166,6 +4167,7 @@ int main(void) {
             snprintf(tid, sizeof(tid), "%s", g_readd_tid);
             g_readd_tid[0] = 0;
             readd_title(tid);
+            g_next_scan = 0; /* its add-on copies start now, not at the next scan */
             continue;
         }
         if (time(NULL) >= g_next_scan && !g_deleting) {
