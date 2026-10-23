@@ -1359,6 +1359,8 @@ static int ac_rereg(const char *tid, const char *cid) {
 /* Copy mode, once per scan for a game already in the library: releases add-on folders
  * still mounted by the mount mode, then takes one step for each add-on (install, uninstall,
  * turn off). At most one copy runs at a time. */
+static int g_scan_again; /* games were just added: scan again without waiting */
+
 static void ac_reconcile(title_src_t *t) {
     if (!g_cfg.dlc_copy || !t->ndlc_all)
         return;
@@ -2550,6 +2552,8 @@ static void scan_root(const char *root, int fresh, int reconnected) {
     free(members);
     free(ids);
     free(prepared);
+    if (ok)
+        g_scan_again = 1; /* their add-on copies start at the next pass, right away */
     if (pending > 1)
         notify("%s: %d of %d game(s) added%s", label, ok, pending, ok == pending ? ", ready to play" : "");
 }
@@ -4176,7 +4180,8 @@ int main(void) {
             else if (g_manual_scan)
                 notify("Firmware %s is not supported yet: no games are added", g_fw_text);
             g_manual_scan = 0;
-            g_next_scan = time(NULL) + SCAN_SECONDS;
+            g_next_scan = time(NULL) + (g_scan_again ? 0 : SCAN_SECONDS);
+            g_scan_again = 0;
         }
         ac_poll();
         ac_tasks(g_deleting);
