@@ -3656,6 +3656,7 @@ static int close_open_games(const char *why) {
 /* Folders of games on every connected drive (or only tid), with their name. */
 typedef struct {
     char root[32], tid[10], name[128];
+    int other; /* the game has another copy on another drive: it stays in the library with it */
 } restore_item_t;
 
 /* only: n title ids to keep, or NULL for every game. */
@@ -3718,6 +3719,7 @@ static int restore_collect(char (*only)[10], int nonly, restore_item_t *items, i
             used[strcspn(used, "\n")] = 0;
             snprintf(game, sizeof(game), "%s/ps4/%s", items[k].root, items[k].tid);
             int drop = !strcmp(used, game) ? i : k;
+            items[drop == i ? k : i].other = 1;
             memmove(&items[drop], &items[drop + 1], sizeof(items[0]) * (size_t)(n - drop - 1));
             n--;
             k = i; /* items[i] may have changed: compare it again with the rest */
@@ -3749,6 +3751,16 @@ static void run_restore(char (*only)[10], int nonly) {
             wait_db_quiet(BATCH_QUIET, 120);
         int end = i + size < n ? i + size : n;
         for (int k = i; k < end; k++) {
+            if (items[k].other) {
+                /* the scan moves the game over to the other copy, registered as it is */
+                char game[PATH_MAX], dtids[MAX_DLC_TIDS][10];
+                snprintf(game, sizeof(game), "%s/ps4/%s", items[k].root, items[k].tid);
+                unmount_title(items[k].tid, dtids, folder_dlc_tids(game, dtids, MAX_DLC_TIDS));
+                restore_files(items[k].root, items[k].tid, items[k].name, &moved, &failed);
+                printf("[restore] %s: kept in the library with its copy on another drive\n", items[k].tid);
+                done++;
+                continue;
+            }
             if (restore_unregister(items[k].root, items[k].tid)) {
                 kept++;
                 continue;
@@ -3763,7 +3775,8 @@ static void run_restore(char (*only)[10], int nonly) {
      * game added again later is not taken for one removed on the console */
     pump_events(3000);
     for (int i = 0; i < n; i++)
-        restore_clear_state(items[i].tid);
+        if (!items[i].other)
+            restore_clear_state(items[i].tid);
     clear_removed_dlc();
     g_next_scan = 0;
     if (n == 1 && done)
