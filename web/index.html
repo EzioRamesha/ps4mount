@@ -138,7 +138,8 @@ form.settings input.num{width:6em}
 <div id="toast"></div>
 <script>
 var games = [], busy = {};
-var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', duplicate: 'On another drive'};
+var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', duplicate: 'Duplicate'};
+var chipLabels = {duplicate: 'Duplicates'};
 
 function $(id) { return document.getElementById(id); }
 
@@ -211,7 +212,7 @@ function render() {
   $('grid').innerHTML = html;
   $('empty').hidden = games.length > 0;
   var s = chip('', games.length + ' game(s)');
-  for (var k in counts) s += chip(k, (labels[k] || k) + ': ' + counts[k]);
+  for (var k in counts) s += chip(k, (chipLabels[k] || labels[k] || k) + ': ' + counts[k]);
   s += chip('dlc', 'With DLC: ' + withDlc);
   $('summary').innerHTML = s;
 }

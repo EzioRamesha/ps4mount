@@ -82,6 +82,9 @@ function parses(code, version) {
   ok(names() === 'Civ VII|Killzone|N++|Soulstice', 'games in alphabetical order');
   const chip = t => [...d.querySelectorAll('#summary span')].find(e => e.textContent.indexOf(t) === 0);
   ok(chip('With DLC: 2') !== undefined, 'With DLC chip counts games with add-ons');
+  w.games.push({ title_id: 'CUSA41712', name: 'Soulstice', version: '01.03', has_patch: false, size: 9e9, state: 'duplicate', mount: '', source: '/mnt/usb1/ps4/CUSA41712', dlc: 0, update_issue: '' }); w.render();
+  ok(chip('Duplicates: 1') !== undefined && d.querySelector('.b-duplicate').textContent === 'Duplicate', 'duplicate chip and badge');
+  w.games.pop(); w.render();
   chip('With DLC').click(); ok(names() === 'Civ VII|Soulstice', 'With DLC filter');
   chip('Ready').click(); ok(names() === 'N++|Soulstice', 'Ready filter');
   chip('4 game(s)').click(); ok(d.querySelectorAll('.card').length === 4, 'all games again');
@@ -176,6 +179,9 @@ function parses(code, version) {
   const lnames = () => [].map.call(d.querySelectorAll('.card .name'), x => x.textContent).join('|');
   ok(lnames() === 'Civ VII|Killzone|N++|Soulstice', 'legacy games in alphabetical order');
   const lchip = t => [].filter.call(d.querySelectorAll('#summary span'), x => x.textContent.indexOf(t) === 0)[0];
+  w.games.push({ title_id: 'CUSA41712', name: 'Soulstice', version: '01.03', has_patch: false, size: 9e9, state: 'duplicate', mount: '', source: '/mnt/usb1/ps4/CUSA41712', dlc: 0, update_issue: '' }); w.render();
+  ok(lchip('Duplicates: 1') !== undefined && d.querySelector('.b-duplicate').textContent === 'Duplicate', 'legacy duplicate chip and badge');
+  w.games.pop(); w.render();
   lchip('With DLC').click(); ok(lnames() === 'Civ VII|Soulstice', 'legacy With DLC filter');
   lchip('Ready').click(); ok(lnames() === 'N++|Soulstice', 'legacy Ready filter');
   lchip('4 game(s)').click(); ok(d.querySelectorAll('.card').length === 4, 'legacy all games again');
