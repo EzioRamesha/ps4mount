@@ -737,13 +737,13 @@ static void *ac_install_thread(void *arg) {
     return NULL;
 }
 
-/* Adds one add-on to the batch being built. 0 when added; -1 with why set. The free space
+/* Adds one add-on to the batch being built. 0 when added; 1 when the batch is full (it goes
+ * in the next one, not a failure); -1 with why set. The free space
  * must hold every add-on of the batch. */
 static int ac_queue(const dlc_src_t *a, const char *game_tid, char *why, size_t cap) {
     struct statfs sf;
     if (g_acn == AC_MAX_JOBS) {
-        snprintf(why, cap, "too many add-ons at once");
-        return -1;
+        return 1;
     }
     if (statfs("/user", &sf)) {
         snprintf(why, cap, "free space unknown (%s)", strerror(errno));
@@ -1452,9 +1452,10 @@ static void ac_reconcile(title_src_t *t) {
         case AC_INSTALL:
             if (submit_later)
                 break;
-            if (!ac_queue(a, tid, why, sizeof(why))) {
+            int q = ac_queue(a, tid, why, sizeof(why));
+            if (!q) {
                 snprintf(g_acj[g_acn - 1].title, sizeof(g_acj[0].title), "%s", t->name);
-            } else {
+            } else if (q < 0) {
                 int n = acfail_add(STATE_DIR, cid, why);
                 printf("[accopy] %s: not started (%s), %d of %d\n", cid, why, n, ACFAIL_MAX);
                 notify("%s: add-on %s not installed (%s)", tid, cid + 20, why);
