@@ -676,7 +676,8 @@ int sceAppInstUtilAppUnInstallAddcont(const char *title_id, const char *addcont_
 #define AC_MAX_JOBS MAX_DLC
 
 typedef struct {
-    int data, started, ended, copy_end;
+    int data, started, ended, copy_start, copy_end; /* copy_*: klog lines seen */
+    int no_progress; /* ac.pkg was fully allocated at once: written space shows no progress */
     volatile int called, rc;
     time_t full_at; /* when the copy reached full size */
     char cid[40], game[10], pkg_path[PATH_MAX], name[128];
@@ -806,11 +807,14 @@ static void ac_copy_event(const char *line) {
     ac_job_t *j = ac_job_of(cid);
     if (!j)
         return;
-    if (strstr(line, "SendDownloadCopyEnd"))
+    if (strstr(line, "SendDownloadCopyEnd")) {
         j->copy_end = 1;
-    else if (!j->started) {
-        j->started = 1;
-        acwait_start(&j->wait, time(NULL));
+    } else {
+        j->copy_start = 1;
+        if (!j->started) {
+            j->started = 1;
+            acwait_start(&j->wait, time(NULL));
+        }
     }
 }
 
@@ -935,7 +939,30 @@ static int ac_playgo_ok(const char *cid) {
 /* One job of the batch: 1 done, -1 failed (why set), 0 still running. A copy only counts
  * as running from its klog start line, or once every job before it ended (the system copies
  * in order), so add-ons waiting in the queue are not taken for stalled. */
-static int ac_job_step(ac_job_t *j, int head, time_t now, char *why, size_t cap) {
+/* The copy is over but its result is not known from the call: done only if the system
+ * wrote its files, after giving the call AC_RETURN_S to return. 1, -1 or 0 (waiting). */
+static int ac_files_written(ac_job_t *j, time_t now, char *why, size_t cap) {
+    if (j->called)
+        return 1;
+    if (!j->full_at)
+        j->full_at = now;
+    if (now - j->full_at < AC_RETURN_S)
+        return 0;
+    char dir[PATH_MAX], q[PATH_MAX + 16];
+    snprintf(dir, sizeof(dir), "/user/addcont/%.9s/%s", j->cid + 7, j->cid + 20);
+    snprintf(q, sizeof(q), "%s/ac.json", dir);
+    int ok = exists(q);
+    snprintf(q, sizeof(q), "%s/ac.pbm", dir);
+    ok = ok && exists(q);
+    printf("[accopy] %s: copy over, call not returned after %d s, ac.json/ac.pbm %s\n", j->cid, AC_RETURN_S,
+           ok ? "present" : "missing");
+    if (ok)
+        return 1;
+    snprintf(why, cap, "install did not finish");
+    return -1;
+}
+
+static int ac_job_step(ac_job_t *j, int head, int next_started, time_t now, char *why, size_t cap) {
     char p[PATH_MAX];
     if (j->called && j->rc) {
         snprintf(why, cap, "install call 0x%08x", j->rc);
@@ -961,41 +988,27 @@ static int ac_job_step(ac_job_t *j, int head, time_t now, char *why, size_t cap)
         j->started = 1;
         acwait_start(&j->wait, now);
     }
+    /* the system creates ac.pkg at full size first: progress is the space really written,
+     * and only the klog end line says the copy is done */
     struct stat st;
     ac_copy_path(p, sizeof(p), j->cid);
-    uint64_t cur = stat(p, &st) ? 0 : (uint64_t)st.st_size;
-    int r = acwait_step(&j->wait, j->copy_end ? j->size : cur, j->size, now);
+    uint64_t cur = stat(p, &st) ? 0 : (uint64_t)st.st_blocks * 512;
+    int r = acwait_step(&j->wait, cur < j->size ? cur : j->size - 1, j->size, now);
+    if (j->copy_end)
+        return j->called ? 1 : ac_files_written(j, now, why, cap);
+    if (next_started)
+        return ac_files_written(j, now, why, cap); /* the system moved on: its end line was missed */
     if (r == ACW_TIMEOUT) {
         snprintf(why, cap, "copy timed out");
         return -1;
     }
-    if (r == ACW_STALL) {
+    if (cur >= j->size - j->size / 64 && cur && !j->copy_end && j->wait.last == cur && now == j->wait.grew)
+        j->no_progress |= now - j->wait.start < 2 * AC_POLL_SECONDS + 1;
+    if (r == ACW_STALL && !j->no_progress) {
         snprintf(why, cap, "copy stopped");
         return -1;
     }
-    if (r == ACW_WAIT)
-        return 0;
-    if (j->called)
-        return 1;
-    if (!j->full_at) {
-        j->full_at = now;
-        printf("[accopy] %s: full size, waiting for the install call\n", j->cid);
-    }
-    if (now - j->full_at < AC_RETURN_S)
-        return 0; /* full size: give the call a moment to return */
-    /* the call did not return: done only if the system also wrote its files */
-    char dir[PATH_MAX], q[PATH_MAX + 16];
-    snprintf(dir, sizeof(dir), "/user/addcont/%.9s/%s", j->cid + 7, j->cid + 20);
-    snprintf(q, sizeof(q), "%s/ac.json", dir);
-    int ok = exists(q);
-    snprintf(q, sizeof(q), "%s/ac.pbm", dir);
-    ok = ok && exists(q);
-    printf("[accopy] %s: full size, call not returned after %d s, ac.json/ac.pbm %s\n", j->cid, AC_RETURN_S,
-           ok ? "present" : "missing");
-    if (ok)
-        return 1;
-    snprintf(why, cap, "install did not finish");
-    return -1;
+    return 0;
 }
 
 /* Called from the main loop: follows the batch, at most every AC_POLL_SECONDS. A failed copy
@@ -1011,7 +1024,10 @@ static void ac_poll(void) {
         if (j->ended)
             continue;
         char why[64] = "";
-        int r = ac_job_step(j, head, now, why, sizeof(why));
+        int next_started = 0;
+        for (int k = i + 1; k < g_acn; k++)
+            next_started |= g_acj[k].data && g_acj[k].started && g_acj[k].copy_start;
+        int r = ac_job_step(j, head, next_started, now, why, sizeof(why));
         if (j->data && !r)
             head = 0;
         if (!r) {
