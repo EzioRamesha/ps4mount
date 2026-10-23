@@ -749,6 +749,25 @@ static int ac_uninstall(const char *cid) {
     return rc;
 }
 
+/* STATE_DIR/<CID>.acpg: the system install made /user/playgo/addcont/<CID>, so losing it
+ * later (a registration of the game removes it) means the copy must be installed again. */
+static void ac_playgo_note(const char *cid) {
+    char p[PATH_MAX], q[96];
+    snprintf(p, sizeof(p), "/user/playgo/addcont/%s", cid);
+    snprintf(q, sizeof(q), STATE_DIR "/%s.acpg", cid);
+    if (exists(p))
+        write_file(q, "", 0, 0666);
+    else
+        unlink(q);
+}
+
+static int ac_playgo_ok(const char *cid) {
+    char p[PATH_MAX], q[96];
+    snprintf(p, sizeof(p), "/user/playgo/addcont/%s", cid);
+    snprintf(q, sizeof(q), STATE_DIR "/%s.acpg", cid);
+    return !exists(q) || exists(p);
+}
+
 /* Called from the main loop: follows the copy in progress, at most every AC_POLL_SECONDS. */
 static void ac_poll(void) {
     if (!g_ac.busy || time(NULL) < g_ac.next_check)
@@ -784,6 +803,7 @@ static void ac_poll(void) {
     if (r == ACW_DONE) {
         accopy_mark(STATE_DIR, g_ac.cid, g_ac.pkg_path);
         acfail_clear(STATE_DIR, g_ac.cid);
+        ac_playgo_note(g_ac.cid);
         printf("[accopy] %s: copied\n", g_ac.cid);
         notify("%s: add-on %s installed", g_ac.game, g_ac.name);
     } else {
@@ -821,10 +841,12 @@ static int place_files(title_src_t *t) {
 
     if (place_license(app))
         return -1;
-    for (int i = 0; i < t->ndlc; i++)
-        rc |= place_dlc(&t->dlc[i]);
-    for (int i = t->ndlc; i < t->ndlc_all; i++)
-        drop_dlc(&t->dlc[i].pkg);
+    if (!g_cfg.dlc_copy) { /* copy mode: the system installs them (ac_reconcile) */
+        for (int i = 0; i < t->ndlc; i++)
+            rc |= place_dlc(&t->dlc[i]);
+        for (int i = t->ndlc; i < t->ndlc_all; i++)
+            drop_dlc(&t->dlc[i].pkg);
+    }
 
     size_t pl = 0, ppl = 0;
     uint8_t *pg = pkg_entry(app, 0x1001, &pl), *ppg = pat ? pkg_entry(pat, 0x1001, &ppl) : NULL;
@@ -1075,6 +1097,87 @@ static int addcont_installed(const char *dtid) {
     return used;
 }
 
+/* Copy mode, once per scan for a game already in the library: releases add-on folders
+ * still mounted by the mount mode, then takes one step for each add-on (install, uninstall,
+ * turn off). At most one copy runs at a time. */
+static void ac_reconcile(title_src_t *t) {
+    if (!g_cfg.dlc_copy || !t->ndlc_all)
+        return;
+    const char *tid = t->app.title_id;
+    for (int i = 0; i < t->ndlc_tids; i++) {
+        char target[64], hold[PATH_MAX], from[PATH_MAX];
+        snprintf(target, sizeof(target), "/user/addcont/%s", t->dlc_tids[i]);
+        if (!mounted_from(target, from, sizeof(from)))
+            continue;
+        hold_path(hold, sizeof(hold), "addcont", t->dlc_tids[i]);
+        if (strcmp(from, hold)) {
+            printf("[accopy] %s mounted from %s, add-ons not copied\n", target, from);
+            return;
+        }
+        unmount_all_layers(target, 1);
+        if (mounted_from(target, NULL, 0))
+            return;
+        for (int k = 0; k < t->ndlc_all; k++)
+            if (!strcmp(t->dlc[k].pkg.title_id, t->dlc_tids[i]))
+                drop_dlc(&t->dlc[k].pkg);
+        printf("[accopy] %s: mounted add-ons released for copying\n", target);
+    }
+    for (int i = 0; i < t->ndlc_all; i++) {
+        dlc_src_t *a = &t->dlc[i];
+        const char *cid = a->pkg.content_id;
+        char p[PATH_MAX], why[64];
+        ac_copy_path(p, sizeof(p), cid);
+        acin_t in = {0};
+        in.on = i < t->ndlc;
+        in.marked = accopy_marked(STATE_DIR, cid);
+        in.files = exists(p);
+        in.store = in.files && !in.marked;
+        in.playgo = ac_playgo_ok(cid);
+        in.fails = acfail_get(STATE_DIR, cid, NULL, 0);
+        in.busy = g_ac.busy && !strcmp(g_ac.cid, cid);
+        switch (accopy_decide(&in)) {
+        case AC_REINSTALL:
+            if (g_ac.busy)
+                break;
+            printf("[accopy] %s: playgo data gone, installing again\n", cid);
+            ac_uninstall(cid);
+            accopy_unmark(STATE_DIR, cid);
+            /* fall through */
+        case AC_INSTALL:
+            if (g_ac.busy)
+                break;
+            if (ac_start(a, tid, why, sizeof(why))) {
+                int n = acfail_add(STATE_DIR, cid, why);
+                printf("[accopy] %s: not started (%s), %d of %d\n", cid, why, n, ACFAIL_MAX);
+                notify("%s: add-on %s not installed (%s)", tid, cid + 20, why);
+            }
+            break;
+        case AC_UNINSTALL:
+            if (!ac_uninstall(cid)) {
+                accopy_unmark(STATE_DIR, cid);
+                printf("[accopy] %s: uninstalled (turned off)\n", cid);
+            }
+            break;
+        case AC_TURN_OFF: {
+            /* deleted from the system storage screen: off until turned on in the panel */
+            char path[64];
+            buf_t off = {0};
+            for (int k = t->ndlc; k < t->ndlc_all; k++)
+                buf_printf(&off, "%s\n", t->dlc[k].pkg.content_id);
+            buf_printf(&off, "%s\n", cid);
+            snprintf(path, sizeof(path), STATE_DIR "/%s.dlcoff", tid);
+            write_file(path, off.data, off.len, 0666);
+            buf_free(&off);
+            accopy_unmark(STATE_DIR, cid);
+            printf("[accopy] %s: deleted on the console, turned off\n", cid);
+            break;
+        }
+        default:
+            break;
+        }
+    }
+}
+
 /* /user/app/<TID> always, /user/patch/<TID> only with an update and
  * /user/addcont/<ADD-ON TID> for each add-on title. */
 static int mount_paths(const char *tid, int has_patch, char (*dtids)[10], int ndtids) {
@@ -1087,7 +1190,7 @@ static int mount_paths(const char *tid, int has_patch, char (*dtids)[10], int nd
     hold_path(hold, sizeof(hold), "patch", tid);
     if (has_patch ? mount_dir(hold, target) : (unmount_all_layers(target, 1), 0))
         return -1;
-    for (int i = 0; i < ndtids; i++) {
+    for (int i = 0; !g_cfg.dlc_copy && i < ndtids; i++) {
         if (addcont_installed(dtids[i])) {
             printf("[mount] /user/addcont/%s holds add-ons installed the normal way, not mounted\n", dtids[i]);
             continue;
@@ -2079,6 +2182,7 @@ static void scan_root(const char *root, int fresh, int reconnected) {
         }
         if (mount_title(&src))
             notify("Failed to mount %s (%s)", src.name, t->tid);
+        ac_reconcile(&src);
         src_close(&src);
     }
     if (!pending)
@@ -2673,6 +2777,8 @@ static void apply_dlc_choice(const char *tid, const char *on) {
         for (int i = 0; i < t.ndlc_all; i++)
             if (!dlc_listed(list, t.dlc[i].pkg.content_id))
                 buf_printf(&off, "%s\n", t.dlc[i].pkg.content_id);
+            else if (i >= t.ndlc)
+                acfail_clear(STATE_DIR, t.dlc[i].pkg.content_id); /* turned on again: tried anew */
         snprintf(path, sizeof(path), STATE_DIR "/%s.dlcoff", tid);
         write_file(path, off.data ? (const char *)off.data : "", off.len, 0666);
         printf("[panel] %s: add-ons changed, %zu bytes of turned-off ids\n", tid, off.len);
@@ -3775,6 +3881,7 @@ int main(void) {
             g_manual_scan = 0;
             g_next_scan = time(NULL) + SCAN_SECONDS;
         }
+        ac_poll();
         pump_events(1000);
     }
 }
