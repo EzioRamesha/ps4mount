@@ -901,10 +901,25 @@ static void ac_poll(void) {
         uint64_t cur = stat(p, &st) ? 0 : (uint64_t)st.st_size;
         r = acwait_step(&g_ac.wait, cur, g_ac.size, now);
         if (r == ACW_DONE && !g_ac.called) {
-            if (!g_ac.full_at)
+            if (!g_ac.full_at) {
                 g_ac.full_at = now;
+                printf("[accopy] %s: full size, waiting for the install call\n", g_ac.cid);
+            }
             if (now - g_ac.full_at < AC_RETURN_S)
                 return; /* full size: give the call a moment to return */
+            /* the call did not return: done only if the system also wrote its files */
+            char dir[PATH_MAX], q[PATH_MAX + 16];
+            snprintf(dir, sizeof(dir), "/user/addcont/%.9s/%s", g_ac.cid + 7, g_ac.cid + 20);
+            snprintf(q, sizeof(q), "%s/ac.json", dir);
+            int ok = exists(q);
+            snprintf(q, sizeof(q), "%s/ac.pbm", dir);
+            ok = ok && exists(q);
+            printf("[accopy] %s: full size, call not returned after %d s, ac.json/ac.pbm %s\n", g_ac.cid,
+                   AC_RETURN_S, ok ? "present" : "missing");
+            if (!ok) {
+                r = ACW_STALL;
+                snprintf(why, sizeof(why), "install did not finish");
+            }
         } else if (r == ACW_WAIT) {
             return;
         } else if (r == ACW_TIMEOUT) {
