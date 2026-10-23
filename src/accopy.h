@@ -36,9 +36,10 @@ int acwait_step(acwait_t *w, uint64_t cur, uint64_t want, time_t now);
 
 /* What is known of one add-on. files: /user/addcont/<TID>/<LABEL>/ac.pkg exists. store:
  * files there that PS4Mount did not install. playgo: /user/playgo/addcont/<CID> exists.
- * busy: being installed now. */
+ * busy: being installed now. rereg: the game was registered again after the copy (the
+ * system may have removed it then). */
 typedef struct {
-    int on, marked, files, store, playgo, fails, busy;
+    int on, marked, files, store, playgo, fails, busy, rereg;
 } acin_t;
 enum { AC_NONE, AC_INSTALL, AC_UNINSTALL, AC_TURN_OFF, AC_REINSTALL, AC_PROBLEM, AC_STORE };
 int accopy_decide(const acin_t *in);

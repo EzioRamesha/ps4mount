@@ -85,8 +85,17 @@ static void test_progress_timeout(void) {
 }
 
 static int decide(int on, int store, int marked, int files, int playgo, int fails, int busy) {
-    acin_t in = {on, marked, files, store, playgo, fails, busy};
+    acin_t in = {on, marked, files, store, playgo, fails, busy, 0};
     return accopy_decide(&in);
+}
+
+/* files gone after a registration PS4Mount ran: installed again, not turned off */
+static void test_state_rereg(void) {
+    printf("state rereg\n");
+    acin_t in = {1, 1, 0, 0, 1, 0, 0, 1};
+    CHECK(accopy_decide(&in) == AC_REINSTALL);
+    in.rereg = 0;
+    CHECK(accopy_decide(&in) == AC_TURN_OFF);
 }
 
 static void test_state_store(void) {
@@ -127,6 +136,7 @@ int main(void) {
     test_state_store();
     test_state_playgo_lost();
     test_state_table();
+    test_state_rereg();
     char cmd[96];
     snprintf(cmd, sizeof(cmd), "rm -rf %s", g_dir);
     if (system(cmd)) {

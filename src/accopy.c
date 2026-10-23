@@ -110,6 +110,6 @@ int accopy_decide(const acin_t *in) {
     if (!in->marked)
         return in->fails >= ACFAIL_MAX ? AC_PROBLEM : AC_INSTALL;
     if (!in->files)
-        return AC_TURN_OFF;
+        return in->rereg ? AC_REINSTALL : AC_TURN_OFF;
     return in->playgo ? AC_NONE : AC_REINSTALL;
 }

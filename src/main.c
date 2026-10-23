@@ -671,9 +671,11 @@ int sceAppInstUtilAppUnInstallAddcont(const char *title_id, const char *addcont_
 
 /* The one copy that runs at a time. The install call runs in its own thread (it may only
  * return once the copy is done); the main loop follows the copied size in ac_poll. */
+#define AC_ABANDON_S 300 /* past the copy timeout: a call that never returns is given up */
+
 static struct {
-    volatile int busy, called, rc;
-    int failed, ended; /* result taken; failed: drop the partial copy once the call returns */
+    volatile int busy, called, rc, gen;
+    int ended, data; /* ended: result taken, waiting for the call to return */
     char cid[40], game[10], pkg_path[PATH_MAX], name[128];
     uint64_t size;
     acwait_t wait;
@@ -685,8 +687,12 @@ static void ac_copy_path(char *out, size_t n, const char *cid) {
     snprintf(out, n, "/user/addcont/%.9s/%s/ac.pkg", cid + 7, cid + 20);
 }
 
+/* <CID>.acpend: written with .accopy when a copy starts, removed when it succeeded. Left
+ * behind, it means a failed or partial copy that ac_reconcile still has to clean up. */
+static void ac_pend_path(char *out, size_t n, const char *cid) { snprintf(out, n, STATE_DIR "/%s.acpend", cid); }
+
 static void *ac_install_thread(void *arg) {
-    (void)arg;
+    int gen = (int)(intptr_t)arg;
     ac_meta_t meta;
     ac_pkg_t info;
     char name[32];
@@ -697,8 +703,11 @@ static void *ac_install_thread(void *arg) {
     meta.uri = g_ac.pkg_path;
     meta.ex_uri = meta.playgo_scenario_id = meta.content_id = meta.icon_url = "";
     meta.content_name = name;
-    g_ac.rc = sceAppInstUtilInstallByPackage(&meta, &info, &g_ac_playgo);
-    printf("[accopy] %s: InstallByPackage=0x%08x\n", g_ac.cid, g_ac.rc);
+    int rc = sceAppInstUtilInstallByPackage(&meta, &info, &g_ac_playgo);
+    printf("[accopy] %s: InstallByPackage=0x%08x\n", meta.uri, rc);
+    if (g_ac.gen != gen)
+        return NULL; /* given up on: a newer job owns g_ac */
+    g_ac.rc = rc;
     g_ac.called = 1;
     return NULL;
 }
@@ -714,7 +723,10 @@ static int ac_start(const dlc_src_t *a, const char *game_tid, char *why, size_t 
         snprintf(why, cap, "not enough free space");
         return -1;
     }
+    int gen = g_ac.gen + 1;
     memset((void *)&g_ac, 0, sizeof(g_ac));
+    g_ac.gen = gen;
+    g_ac.data = a->data;
     snprintf(g_ac.cid, sizeof(g_ac.cid), "%s", a->pkg.content_id);
     snprintf(g_ac.game, sizeof(g_ac.game), "%s", game_tid);
     snprintf(g_ac.pkg_path, sizeof(g_ac.pkg_path), "%s", a->path);
@@ -723,11 +735,19 @@ static int ac_start(const dlc_src_t *a, const char *game_tid, char *why, size_t 
     g_ac.size = a->pkg.pkg_size;
     acwait_start(&g_ac.wait, time(NULL));
     g_ac.next_check = time(NULL) + AC_POLL_SECONDS;
+    char pend[96];
+    ac_pend_path(pend, sizeof(pend), g_ac.cid);
+    if (accopy_mark(STATE_DIR, g_ac.cid, a->path) || write_file(pend, "", 0, 0666)) {
+        snprintf(why, cap, "state files not written");
+        return -1;
+    }
     g_ac.busy = 1;
     printf("[accopy] %s: copying %s (%llu bytes)\n", g_ac.cid, a->path, (unsigned long long)g_ac.size);
     pthread_t th;
-    if (pthread_create(&th, NULL, ac_install_thread, NULL)) {
+    if (pthread_create(&th, NULL, ac_install_thread, (void *)(intptr_t)gen)) {
         g_ac.busy = 0;
+        accopy_unmark(STATE_DIR, g_ac.cid);
+        unlink(pend);
         snprintf(why, cap, "no thread for the install");
         return -1;
     }
@@ -773,11 +793,15 @@ static void ac_uninstall_copies(const char *game) {
         snprintf(tag, sizeof(tag), "/ps4/%s/", game ? game : "");
         if (game && !strstr(pkg, tag))
             continue;
-        if (ac_uninstall(cid))
+        char copy[PATH_MAX];
+        ac_copy_path(copy, sizeof(copy), cid);
+        if (ac_uninstall(cid) || exists(copy))
             continue;
         accopy_unmark(STATE_DIR, cid);
         acfail_clear(STATE_DIR, cid);
         snprintf(path, sizeof(path), STATE_DIR "/%s.acpg", cid);
+        unlink(path);
+        ac_pend_path(path, sizeof(path), cid);
         unlink(path);
         printf("[accopy] %s: uninstalled\n", cid);
     }
@@ -794,9 +818,13 @@ static const char *ac_status(const dlc_src_t *a, int on, char *why, size_t cap) 
     if (g_ac.busy && !strcmp(g_ac.cid, cid))
         return "installing";
     int marked = accopy_marked(STATE_DIR, cid);
+    ac_pend_path(p, sizeof(p), cid);
+    int pending = exists(p);
     ac_copy_path(p, sizeof(p), cid);
-    if (exists(p))
-        return marked ? "installed" : "store";
+    if (!pending && marked && (!a->data || exists(p)))
+        return "installed";
+    if (!pending && a->data && exists(p))
+        return "store";
     if (on && acfail_get(STATE_DIR, cid, why, cap) >= ACFAIL_MAX)
         return "problem";
     why[0] = 0;
@@ -814,15 +842,13 @@ static void ac_drop_game(const char *tid) {
 }
 
 static void ac_tasks(int deleting) {
-    if (g_ac.busy)
+    if (g_ac.busy || deleting)
         return;
     if (g_ac_revert && !g_cfg.dlc_copy) {
         printf("[accopy] mount mode: removing the copies\n");
         ac_uninstall_copies(NULL);
     }
     g_ac_revert = 0;
-    if (deleting)
-        return;
     for (int i = 0; i < g_ac_ndrop; i++)
         ac_uninstall_copies(g_ac_drop[i]);
     g_ac_ndrop = 0;
@@ -851,13 +877,16 @@ static int ac_playgo_ok(const char *cid) {
 static void ac_poll(void) {
     if (!g_ac.busy || time(NULL) < g_ac.next_check)
         return;
-    g_ac.next_check = time(NULL) + AC_POLL_SECONDS;
+    time_t now = time(NULL);
+    g_ac.next_check = now + AC_POLL_SECONDS;
+    int late = now - g_ac.wait.start > ACW_TIMEOUT_S + AC_ABANDON_S;
     if (g_ac.ended) {
-        if (!g_ac.called)
-            return;
-        if (g_ac.failed)
-            ac_uninstall(g_ac.cid);
-        g_ac.busy = 0;
+        /* the result is taken; the next copy waits for the call, but not forever */
+        if (g_ac.called || late) {
+            if (!g_ac.called)
+                printf("[accopy] %s: install call never returned, given up\n", g_ac.cid);
+            g_ac.busy = 0;
+        }
         return;
     }
     char why[64] = "", p[PATH_MAX];
@@ -865,31 +894,44 @@ static void ac_poll(void) {
     if (g_ac.called && g_ac.rc) {
         snprintf(why, sizeof(why), "install call 0x%08x", g_ac.rc);
         r = ACW_STALL;
+    } else if (!g_ac.data) {
+        /* unlock only: nothing is copied, the call's result is the answer */
+        if (!g_ac.called && !late)
+            return;
+        r = g_ac.called ? ACW_DONE : ACW_TIMEOUT;
+        if (!g_ac.called)
+            snprintf(why, sizeof(why), "install call never returned");
     } else {
         struct stat st;
         ac_copy_path(p, sizeof(p), g_ac.cid);
         uint64_t cur = stat(p, &st) ? 0 : (uint64_t)st.st_size;
-        r = acwait_step(&g_ac.wait, cur, g_ac.size, time(NULL));
-        if (r == ACW_DONE && !g_ac.called)
-            return; /* full size: the call still has to return */
-        if (r == ACW_WAIT)
+        r = acwait_step(&g_ac.wait, cur, g_ac.size, now);
+        if (r == ACW_DONE && !g_ac.called) {
+            if (!late)
+                return; /* full size: the call still has to return */
+            r = ACW_TIMEOUT;
+            snprintf(why, sizeof(why), "install call never returned");
+        } else if (r == ACW_WAIT) {
             return;
-        if (r == ACW_TIMEOUT)
+        } else if (r == ACW_TIMEOUT) {
             snprintf(why, sizeof(why), "copy timed out");
-        else if (r == ACW_STALL)
+        } else if (r == ACW_STALL) {
             snprintf(why, sizeof(why), "copy stopped");
+        }
     }
     if (r == ACW_DONE) {
-        accopy_mark(STATE_DIR, g_ac.cid, g_ac.pkg_path);
+        char pend[96];
+        ac_pend_path(pend, sizeof(pend), g_ac.cid);
+        unlink(pend);
         acfail_clear(STATE_DIR, g_ac.cid);
         ac_playgo_note(g_ac.cid);
         printf("[accopy] %s: copied\n", g_ac.cid);
         notify("%s: add-on %s installed", g_ac.game, g_ac.name);
     } else {
+        /* .accopy and .acpend stay: ac_reconcile removes the partial copy */
         int n = acfail_add(STATE_DIR, g_ac.cid, why);
         printf("[accopy] %s: failed (%s), %d of %d\n", g_ac.cid, why, n, ACFAIL_MAX);
         notify("%s: add-on %s not installed (%s)", g_ac.game, g_ac.name, why);
-        g_ac.failed = 1;
     }
     g_ac.ended = 1;
     g_ac.next_check = 0;
@@ -1176,6 +1218,16 @@ static int addcont_installed(const char *dtid) {
     return used;
 }
 
+/* The game was registered after the copy started (STATE_DIR/<GAME>.src is written by each
+ * registration): a copy lost now was removed by that registration, not by the user. */
+static int ac_rereg(const char *tid, const char *cid) {
+    char a[64], b[96];
+    struct stat sa, sb;
+    snprintf(a, sizeof(a), STATE_DIR "/%s.src", tid);
+    snprintf(b, sizeof(b), STATE_DIR "/%s.accopy", cid);
+    return !stat(a, &sa) && !stat(b, &sb) && sa.st_mtime > sb.st_mtime;
+}
+
 /* Copy mode, once per scan for a game already in the library: releases add-on folders
  * still mounted by the mount mode, then takes one step for each add-on (install, uninstall,
  * turn off). At most one copy runs at a time. */
@@ -1206,20 +1258,37 @@ static void ac_reconcile(title_src_t *t) {
         const char *cid = a->pkg.content_id;
         char p[PATH_MAX], why[64];
         ac_copy_path(p, sizeof(p), cid);
+        char pend[96];
+        ac_pend_path(pend, sizeof(pend), cid);
+        int busy = g_ac.busy && !strcmp(g_ac.cid, cid);
+        if (!busy && exists(pend)) {
+            /* a failed or partial copy: removed before anything else is tried */
+            ac_uninstall(cid);
+            if (!exists(p)) {
+                accopy_unmark(STATE_DIR, cid);
+                unlink(pend);
+                printf("[accopy] %s: failed copy removed\n", cid);
+            }
+            continue;
+        }
         acin_t in = {0};
         in.on = i < t->ndlc;
         in.marked = accopy_marked(STATE_DIR, cid);
-        in.files = exists(p);
+        /* unlock-only add-ons leave no ac.pkg: only our mark says they are there */
+        in.files = a->data ? exists(p) : in.marked;
         in.store = in.files && !in.marked;
+        in.rereg = in.marked && ac_rereg(tid, cid);
         in.playgo = ac_playgo_ok(cid);
         in.fails = acfail_get(STATE_DIR, cid, NULL, 0);
-        in.busy = g_ac.busy && !strcmp(g_ac.cid, cid);
+        in.busy = busy;
         switch (accopy_decide(&in)) {
         case AC_REINSTALL:
             if (g_ac.busy)
                 break;
-            printf("[accopy] %s: playgo data gone, installing again\n", cid);
+            printf("[accopy] %s: lost after the game was registered again, installing again\n", cid);
             ac_uninstall(cid);
+            if (exists(p))
+                break; /* still there: tried again next scan */
             accopy_unmark(STATE_DIR, cid);
             /* fall through */
         case AC_INSTALL:
@@ -1232,7 +1301,7 @@ static void ac_reconcile(title_src_t *t) {
             }
             break;
         case AC_UNINSTALL:
-            if (!ac_uninstall(cid)) {
+            if (!ac_uninstall(cid) && !(a->data && exists(p))) {
                 accopy_unmark(STATE_DIR, cid);
                 printf("[accopy] %s: uninstalled (turned off)\n", cid);
             }
@@ -1270,6 +1339,10 @@ static int mount_paths(const char *tid, int has_patch, char (*dtids)[10], int nd
     if (has_patch ? mount_dir(hold, target) : (unmount_all_layers(target, 1), 0))
         return -1;
     for (int i = 0; !g_cfg.dlc_copy && i < ndtids; i++) {
+        if (g_ac.busy && !strncmp(g_ac.cid + 7, dtids[i], 9)) {
+            printf("[mount] /user/addcont/%s: a copy is still running, not mounted\n", dtids[i]);
+            continue;
+        }
         if (addcont_installed(dtids[i])) {
             printf("[mount] /user/addcont/%s holds add-ons installed the normal way, not mounted\n", dtids[i]);
             continue;
