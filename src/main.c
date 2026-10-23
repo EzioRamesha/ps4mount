@@ -689,6 +689,8 @@ typedef struct {
 } ac_job_t;
 
 static ac_job_t g_acj[AC_MAX_JOBS];
+static char g_ac_left[MAX_TITLES][10]; /* games with add-ons past the full batch: not ready after it */
+static int g_ac_nleft;
 static int g_acn, g_ac_ok, g_ac_bad;
 static volatile int g_ac_gen; /* a new batch changes it: late returns of older calls are ignored */
 static time_t g_ac_next, g_ac_since;
@@ -1084,11 +1086,14 @@ static void ac_poll(void) {
                 first &= k >= i;
                 all &= g_acj[k].ended == 2;
             }
+        for (int k = 0; k < g_ac_nleft; k++)
+            all &= strcmp(g_ac_left[k], g_acj[i].game) != 0;
         if (first && all)
             notify("%s ready to play", g_acj[i].title[0] ? g_acj[i].title : g_acj[i].game);
     }
     g_ac_gen++; /* a call that has not returned yet is ignored */
     g_acn = 0;
+    g_ac_nleft = 0;
     g_ac_submitted = 0;
 }
 
@@ -1455,7 +1460,13 @@ static void ac_reconcile(title_src_t *t) {
             int q = ac_queue(a, tid, why, sizeof(why));
             if (!q) {
                 snprintf(g_acj[g_acn - 1].title, sizeof(g_acj[0].title), "%s", t->name);
-            } else if (q < 0) {
+            } else if (q > 0) {
+                int k = 0;
+                while (k < g_ac_nleft && strcmp(g_ac_left[k], tid))
+                    k++;
+                if (k == g_ac_nleft && g_ac_nleft < MAX_TITLES)
+                    snprintf(g_ac_left[g_ac_nleft++], 10, "%s", tid);
+            } else {
                 int n = acfail_add(STATE_DIR, cid, why);
                 printf("[accopy] %s: not started (%s), %d of %d\n", cid, why, n, ACFAIL_MAX);
                 notify("%s: add-on %s not installed (%s)", tid, cid + 20, why);
