@@ -3700,6 +3700,28 @@ static int restore_collect(char (*only)[10], int nonly, restore_item_t *items, i
         if (d)
             closedir(d);
     }
+    /* a game picked by title ID on two drives: only the copy in use goes back, the other one
+     * stays and is used from the next scan */
+    for (int i = 0; only && i < n; i++)
+        for (int k = i + 1; k < n; k++) {
+            if (strcmp(items[i].tid, items[k].tid))
+                continue;
+            /* <TID>.src names the folder in use */
+            char path[64], used[PATH_MAX + 256] = {0}, game[PATH_MAX];
+            snprintf(path, sizeof(path), STATE_DIR "/%s.src", items[k].tid);
+            int fd = open(path, O_RDONLY);
+            if (fd >= 0) {
+                if (read(fd, used, sizeof(used) - 1) < 0)
+                    used[0] = 0;
+                close(fd);
+            }
+            used[strcspn(used, "\n")] = 0;
+            snprintf(game, sizeof(game), "%s/ps4/%s", items[k].root, items[k].tid);
+            int drop = !strcmp(used, game) ? i : k;
+            memmove(&items[drop], &items[drop + 1], sizeof(items[0]) * (size_t)(n - drop - 1));
+            n--;
+            k = i; /* items[i] may have changed: compare it again with the rest */
+        }
     return n;
 }
 
