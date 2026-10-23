@@ -15,6 +15,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
@@ -4112,6 +4113,24 @@ static void pump_events(int ms) {
     }
 }
 
+/* The console's address on the local network: the source address of a route out
+ * (a UDP connect sends nothing). "<PS5 IP>" when there is no network. */
+static void local_ip(char *out, size_t cap) {
+    snprintf(out, cap, "<PS5 IP>");
+    int s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0)
+        return;
+    struct sockaddr_in a = {0};
+    socklen_t n = sizeof(a);
+    a.sin_family = AF_INET;
+    a.sin_port = htons(53);
+    a.sin_addr.s_addr = htonl(0x08080808);
+    if (!connect(s, (struct sockaddr *)&a, sizeof(a)) && !getsockname(s, (struct sockaddr *)&a, &n) &&
+        a.sin_addr.s_addr)
+        inet_ntop(AF_INET, &a.sin_addr, out, cap);
+    close(s);
+}
+
 int main(void) {
     int lock = single_instance();
     if (lock < 0) {
@@ -4134,13 +4153,17 @@ int main(void) {
     if (g_reg_mode != REG_NONE)
         install_panel_shortcut(); /* registered by the system like the games */
     g_web = web_listen();
-    if (g_reg_mode == REG_ALL)
-        notify(g_web >= 0 ? VERSION " running. Panel in the Media tab or http://<PS5 IP>:8770"
-                          : VERSION " running (panel unavailable)");
-    else if (g_reg_mode == REG_TITLEDIR)
+    char ip[INET_ADDRSTRLEN];
+    local_ip(ip, sizeof(ip));
+    if (g_reg_mode == REG_ALL) {
+        if (g_web >= 0)
+            notify(VERSION " running. Panel in the Media tab or http://%s:8770", ip);
+        else
+            notify(VERSION " running (panel unavailable)");
+    } else if (g_reg_mode == REG_TITLEDIR)
         notify(VERSION " running (firmware %s: games are added one at a time). Panel in the Media tab or "
-                       "http://<PS5 IP>:8770",
-               g_fw_text);
+                       "http://%s:8770",
+               g_fw_text, ip);
     else
         notify(VERSION ": firmware %s is not supported yet. To protect the system database, no games are added.",
                g_fw_text);
