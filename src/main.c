@@ -669,20 +669,35 @@ int sceAppInstUtilAppUnInstallAddcont(const char *title_id, const char *addcont_
 #define AC_POLL_SECONDS 2
 #define AC_NOT_FOUND 0x80A30004 /* AppInstUtil: no such add-on */
 
-/* The one copy that runs at a time. The install call runs in its own thread (it may only
- * return once the copy is done); the main loop follows the copied size in ac_poll. */
+/* One batch of copies at a time: all add-ons to install for a game are handed to the
+ * system together, which copies them one by one in that order. The calls run in their own
+ * thread; the main loop follows each copy in ac_poll (klog copy lines, then the file size). */
 #define AC_RETURN_S 60 /* a call still running this long after the copy reached full size is not waited for */
+#define AC_MAX_JOBS MAX_DLC
 
-static struct {
-    volatile int busy, called, rc, gen;
-    int data;
+typedef struct {
+    int data, started, ended, copy_end;
+    volatile int called, rc;
     time_t full_at; /* when the copy reached full size */
     char cid[40], game[10], pkg_path[PATH_MAX], name[128];
     uint64_t size;
     acwait_t wait;
-    time_t next_check;
-} g_ac;
+} ac_job_t;
+
+static ac_job_t g_acj[AC_MAX_JOBS];
+static int g_acn, g_ac_ok, g_ac_bad;
+static volatile int g_ac_gen; /* a new batch changes it: late returns of older calls are ignored */
+static time_t g_ac_next, g_ac_since;
 static ac_playgo_t g_ac_playgo;
+
+static int ac_busy(void) { return g_acn > 0; }
+
+static ac_job_t *ac_job_of(const char *cid) {
+    for (int i = 0; i < g_acn; i++)
+        if (!g_acj[i].ended && !strcmp(g_acj[i].cid, cid))
+            return &g_acj[i];
+    return NULL;
+}
 
 static void ac_copy_path(char *out, size_t n, const char *cid) {
     snprintf(out, n, "/user/addcont/%.9s/%s/ac.pkg", cid + 7, cid + 20);
@@ -694,66 +709,109 @@ static void ac_pend_path(char *out, size_t n, const char *cid) { snprintf(out, n
 
 static void *ac_install_thread(void *arg) {
     int gen = (int)(intptr_t)arg;
-    ac_meta_t meta;
-    ac_pkg_t info;
-    char name[32];
-    memset(&meta, 0, sizeof(meta));
-    memset(&info, 0, sizeof(info));
-    memset(&g_ac_playgo, 0, sizeof(g_ac_playgo));
-    snprintf(name, sizeof(name), "%s (Add-on)", g_ac.game);
-    meta.uri = g_ac.pkg_path;
-    meta.ex_uri = meta.playgo_scenario_id = meta.content_id = meta.icon_url = "";
-    meta.content_name = name;
-    int rc = sceAppInstUtilInstallByPackage(&meta, &info, &g_ac_playgo);
-    printf("[accopy] %s: InstallByPackage=0x%08x\n", meta.uri, rc);
-    if (g_ac.gen != gen)
-        return NULL; /* given up on: a newer job owns g_ac */
-    g_ac.rc = rc;
-    g_ac.called = 1;
+    for (int i = 0; i < g_acn && g_ac_gen == gen; i++) {
+        ac_job_t *j = &g_acj[i];
+        ac_meta_t meta;
+        ac_pkg_t info;
+        char name[32];
+        memset(&meta, 0, sizeof(meta));
+        memset(&info, 0, sizeof(info));
+        memset(&g_ac_playgo, 0, sizeof(g_ac_playgo));
+        snprintf(name, sizeof(name), "%s (Add-on)", j->game);
+        meta.uri = j->pkg_path;
+        meta.ex_uri = meta.playgo_scenario_id = meta.content_id = meta.icon_url = "";
+        meta.content_name = name;
+        int rc = sceAppInstUtilInstallByPackage(&meta, &info, &g_ac_playgo);
+        printf("[accopy] %s: InstallByPackage=0x%08x\n", meta.uri, rc);
+        if (g_ac_gen != gen)
+            break; /* given up on: a newer batch owns the jobs */
+        j->rc = rc;
+        j->called = 1;
+    }
     return NULL;
 }
 
-/* Starts copying one add-on. 0 when started; -1 with why set when it cannot start. */
-static int ac_start(const dlc_src_t *a, const char *game_tid, char *why, size_t cap) {
+/* Adds one add-on to the batch being built. 0 when added; -1 with why set. The free space
+ * must hold every add-on of the batch. */
+static int ac_queue(const dlc_src_t *a, const char *game_tid, char *why, size_t cap) {
     struct statfs sf;
+    if (g_acn == AC_MAX_JOBS) {
+        snprintf(why, cap, "too many add-ons at once");
+        return -1;
+    }
     if (statfs("/user", &sf)) {
         snprintf(why, cap, "free space unknown (%s)", strerror(errno));
         return -1;
     }
-    if (!accopy_space_ok((uint64_t)sf.f_bavail * sf.f_bsize, a->pkg.pkg_size)) {
+    uint64_t queued = 0;
+    for (int i = 0; i < g_acn; i++)
+        queued += g_acj[i].size;
+    if (!accopy_space_ok((uint64_t)sf.f_bavail * sf.f_bsize, queued + a->pkg.pkg_size)) {
         snprintf(why, cap, "not enough free space");
         return -1;
     }
-    int gen = g_ac.gen + 1;
-    memset((void *)&g_ac, 0, sizeof(g_ac));
-    g_ac.gen = gen;
-    g_ac.data = a->data;
-    snprintf(g_ac.cid, sizeof(g_ac.cid), "%s", a->pkg.content_id);
-    snprintf(g_ac.game, sizeof(g_ac.game), "%s", game_tid);
-    snprintf(g_ac.pkg_path, sizeof(g_ac.pkg_path), "%s", a->path);
+    ac_job_t *j = &g_acj[g_acn];
+    memset(j, 0, sizeof(*j));
+    j->data = a->data;
+    snprintf(j->cid, sizeof(j->cid), "%s", a->pkg.content_id);
+    snprintf(j->game, sizeof(j->game), "%s", game_tid);
+    snprintf(j->pkg_path, sizeof(j->pkg_path), "%s", a->path);
     const sfo_item_t *it = sfo_get(&a->sfo, "TITLE");
-    snprintf(g_ac.name, sizeof(g_ac.name), "%s", it && !it->is_int ? it->sval : a->pkg.content_id);
-    g_ac.size = a->pkg.pkg_size;
-    acwait_start(&g_ac.wait, time(NULL));
-    g_ac.next_check = time(NULL) + AC_POLL_SECONDS;
+    snprintf(j->name, sizeof(j->name), "%s", it && !it->is_int ? it->sval : a->pkg.content_id);
+    j->size = a->pkg.pkg_size;
     char pend[96];
-    ac_pend_path(pend, sizeof(pend), g_ac.cid);
-    if (accopy_mark(STATE_DIR, g_ac.cid, a->path) || write_file(pend, "", 0, 0666)) {
+    ac_pend_path(pend, sizeof(pend), j->cid);
+    if (accopy_mark(STATE_DIR, j->cid, a->path) || write_file(pend, "", 0, 0666)) {
         snprintf(why, cap, "state files not written");
         return -1;
     }
-    g_ac.busy = 1;
-    printf("[accopy] %s: copying %s (%llu bytes)\n", g_ac.cid, a->path, (unsigned long long)g_ac.size);
+    g_acn++;
+    printf("[accopy] %s: queued %s (%llu bytes)\n", j->cid, a->path, (unsigned long long)j->size);
+    return 0;
+}
+
+/* Hands the batch to the system. */
+static void ac_submit(void) {
+    if (!g_acn)
+        return;
+    int gen = ++g_ac_gen;
+    g_ac_ok = g_ac_bad = 0;
+    g_ac_since = time(NULL);
+    g_ac_next = g_ac_since + AC_POLL_SECONDS;
+    for (int i = 0; i < g_acn; i++)
+        acwait_start(&g_acj[i].wait, g_ac_since);
+    printf("[accopy] %s: installing %d add-on(s)\n", g_acj[0].game, g_acn);
     pthread_t th;
     if (pthread_create(&th, NULL, ac_install_thread, (void *)(intptr_t)gen)) {
-        g_ac.busy = 0;
-        accopy_unmark(STATE_DIR, g_ac.cid);
-        unlink(pend);
-        snprintf(why, cap, "no thread for the install");
-        return -1;
+        for (int i = 0; i < g_acn; i++) {
+            g_acj[i].called = 1;
+            g_acj[i].rc = -1; /* failed at the next poll; the partial-copy cleanup undoes the marks */
+        }
+        return;
     }
     pthread_detach(th);
-    return 0;
+}
+
+/* klog: the system's copy of an add-on started or ended ("...transferSessionId = 0..0-<CID>"). */
+static void ac_copy_event(const char *line) {
+    const char *p = strstr(line, "transferSessionId = ");
+    if (!p || !ac_busy())
+        return;
+    p += 20;
+    const char *dash = strchr(p, '-');
+    if (!dash)
+        return;
+    char cid[40];
+    snprintf(cid, sizeof(cid), "%.36s", dash + 1);
+    ac_job_t *j = ac_job_of(cid);
+    if (!j)
+        return;
+    if (strstr(line, "SendDownloadCopyEnd"))
+        j->copy_end = 1;
+    else if (!j->started) {
+        j->started = 1;
+        acwait_start(&j->wait, time(NULL));
+    }
 }
 
 /* Uninstalls an add-on PS4Mount installed: by label, then by content ID. "Not found"
@@ -816,7 +874,7 @@ static const char *ac_status(const dlc_src_t *a, int on, char *why, size_t cap) 
     char p[PATH_MAX];
     if (!g_cfg.dlc_copy)
         return "";
-    if (g_ac.busy && !strcmp(g_ac.cid, cid))
+    if (ac_job_of(cid))
         return "installing";
     int marked = accopy_marked(STATE_DIR, cid);
     ac_pend_path(p, sizeof(p), cid);
@@ -843,7 +901,7 @@ static void ac_drop_game(const char *tid) {
 }
 
 static void ac_tasks(int deleting) {
-    if (g_ac.busy || deleting)
+    if (ac_busy() || deleting)
         return;
     if (g_ac_revert && !g_cfg.dlc_copy) {
         printf("[accopy] mount mode: removing the copies\n");
@@ -874,77 +932,117 @@ static int ac_playgo_ok(const char *cid) {
     return !exists(q) || exists(p);
 }
 
-/* Called from the main loop: follows the copy in progress, at most every AC_POLL_SECONDS. */
+/* One job of the batch: 1 done, -1 failed (why set), 0 still running. A copy only counts
+ * as running from its klog start line, or once every job before it ended (the system copies
+ * in order), so add-ons waiting in the queue are not taken for stalled. */
+static int ac_job_step(ac_job_t *j, int head, time_t now, char *why, size_t cap) {
+    char p[PATH_MAX];
+    if (j->called && j->rc) {
+        snprintf(why, cap, "install call 0x%08x", j->rc);
+        return -1;
+    }
+    if (!exists(j->pkg_path)) {
+        snprintf(why, cap, "drive disconnected");
+        return -1;
+    }
+    if (!j->data) {
+        /* unlock only: nothing is copied, the call's result is the answer */
+        if (j->called)
+            return 1;
+        if (acwait_step(&j->wait, 0, 1, now) == ACW_TIMEOUT) {
+            snprintf(why, cap, "install call never returned");
+            return -1;
+        }
+        return 0;
+    }
+    if (!j->started) {
+        if (!head)
+            return 0;
+        j->started = 1;
+        acwait_start(&j->wait, now);
+    }
+    struct stat st;
+    ac_copy_path(p, sizeof(p), j->cid);
+    uint64_t cur = stat(p, &st) ? 0 : (uint64_t)st.st_size;
+    int r = acwait_step(&j->wait, j->copy_end ? j->size : cur, j->size, now);
+    if (r == ACW_TIMEOUT) {
+        snprintf(why, cap, "copy timed out");
+        return -1;
+    }
+    if (r == ACW_STALL) {
+        snprintf(why, cap, "copy stopped");
+        return -1;
+    }
+    if (r == ACW_WAIT)
+        return 0;
+    if (j->called)
+        return 1;
+    if (!j->full_at) {
+        j->full_at = now;
+        printf("[accopy] %s: full size, waiting for the install call\n", j->cid);
+    }
+    if (now - j->full_at < AC_RETURN_S)
+        return 0; /* full size: give the call a moment to return */
+    /* the call did not return: done only if the system also wrote its files */
+    char dir[PATH_MAX], q[PATH_MAX + 16];
+    snprintf(dir, sizeof(dir), "/user/addcont/%.9s/%s", j->cid + 7, j->cid + 20);
+    snprintf(q, sizeof(q), "%s/ac.json", dir);
+    int ok = exists(q);
+    snprintf(q, sizeof(q), "%s/ac.pbm", dir);
+    ok = ok && exists(q);
+    printf("[accopy] %s: full size, call not returned after %d s, ac.json/ac.pbm %s\n", j->cid, AC_RETURN_S,
+           ok ? "present" : "missing");
+    if (ok)
+        return 1;
+    snprintf(why, cap, "install did not finish");
+    return -1;
+}
+
+/* Called from the main loop: follows the batch, at most every AC_POLL_SECONDS. A failed copy
+ * releases nothing for the others: each job ends on its own. */
 static void ac_poll(void) {
-    if (!g_ac.busy || time(NULL) < g_ac.next_check)
+    if (!ac_busy() || time(NULL) < g_ac_next)
         return;
     time_t now = time(NULL);
-    g_ac.next_check = now + AC_POLL_SECONDS;
-    char why[64] = "", p[PATH_MAX];
-    int r;
-    if (g_ac.called && g_ac.rc) {
-        snprintf(why, sizeof(why), "install call 0x%08x", g_ac.rc);
-        r = ACW_STALL;
-    } else if (!exists(g_ac.pkg_path)) {
-        snprintf(why, sizeof(why), "drive disconnected");
-        r = ACW_STALL;
-    } else if (!g_ac.data) {
-        /* unlock only: nothing is copied, the call's result is the answer */
-        r = g_ac.called ? ACW_DONE : acwait_step(&g_ac.wait, 0, 1, now) == ACW_TIMEOUT ? ACW_TIMEOUT : ACW_WAIT;
-        if (r == ACW_WAIT)
-            return;
-        if (r == ACW_TIMEOUT)
-            snprintf(why, sizeof(why), "install call never returned");
-    } else {
-        struct stat st;
-        ac_copy_path(p, sizeof(p), g_ac.cid);
-        uint64_t cur = stat(p, &st) ? 0 : (uint64_t)st.st_size;
-        r = acwait_step(&g_ac.wait, cur, g_ac.size, now);
-        if (r == ACW_DONE && !g_ac.called) {
-            if (!g_ac.full_at) {
-                g_ac.full_at = now;
-                printf("[accopy] %s: full size, waiting for the install call\n", g_ac.cid);
-            }
-            if (now - g_ac.full_at < AC_RETURN_S)
-                return; /* full size: give the call a moment to return */
-            /* the call did not return: done only if the system also wrote its files */
-            char dir[PATH_MAX], q[PATH_MAX + 16];
-            snprintf(dir, sizeof(dir), "/user/addcont/%.9s/%s", g_ac.cid + 7, g_ac.cid + 20);
-            snprintf(q, sizeof(q), "%s/ac.json", dir);
-            int ok = exists(q);
-            snprintf(q, sizeof(q), "%s/ac.pbm", dir);
-            ok = ok && exists(q);
-            printf("[accopy] %s: full size, call not returned after %d s, ac.json/ac.pbm %s\n", g_ac.cid,
-                   AC_RETURN_S, ok ? "present" : "missing");
-            if (!ok) {
-                r = ACW_STALL;
-                snprintf(why, sizeof(why), "install did not finish");
-            }
-        } else if (r == ACW_WAIT) {
-            return;
-        } else if (r == ACW_TIMEOUT) {
-            snprintf(why, sizeof(why), "copy timed out");
-        } else if (r == ACW_STALL) {
-            snprintf(why, sizeof(why), "copy stopped");
+    g_ac_next = now + AC_POLL_SECONDS;
+    int head = 1, left = 0;
+    for (int i = 0; i < g_acn; i++) {
+        ac_job_t *j = &g_acj[i];
+        if (j->ended)
+            continue;
+        char why[64] = "";
+        int r = ac_job_step(j, head, now, why, sizeof(why));
+        if (j->data && !r)
+            head = 0;
+        if (!r) {
+            left++;
+            continue;
+        }
+        j->ended = 1;
+        if (r > 0) {
+            char pend[96];
+            ac_pend_path(pend, sizeof(pend), j->cid);
+            unlink(pend);
+            acfail_clear(STATE_DIR, j->cid);
+            ac_playgo_note(j->cid);
+            printf("[accopy] %s: copied\n", j->cid);
+            g_ac_ok++;
+        } else {
+            /* .accopy and .acpend stay: ac_reconcile removes the partial copy */
+            int n = acfail_add(STATE_DIR, j->cid, why);
+            printf("[accopy] %s: failed (%s), %d of %d\n", j->cid, why, n, ACFAIL_MAX);
+            notify("%s: add-on %s not installed (%s)", j->game, j->name, why);
+            g_ac_bad++;
         }
     }
-    if (r == ACW_DONE) {
-        char pend[96];
-        ac_pend_path(pend, sizeof(pend), g_ac.cid);
-        unlink(pend);
-        acfail_clear(STATE_DIR, g_ac.cid);
-        ac_playgo_note(g_ac.cid);
-        printf("[accopy] %s: copied\n", g_ac.cid);
-        notify("%s: add-on %s installed", g_ac.game, g_ac.name);
-    } else {
-        /* .accopy and .acpend stay: ac_reconcile removes the partial copy. The call is not
-         * waited for: a newer job changes the generation, so a late return is ignored. */
-        int n = acfail_add(STATE_DIR, g_ac.cid, why);
-        printf("[accopy] %s: failed (%s), %d of %d\n", g_ac.cid, why, n, ACFAIL_MAX);
-        notify("%s: add-on %s not installed (%s)", g_ac.game, g_ac.name, why);
-    }
-    g_ac.gen++;
-    g_ac.busy = 0;
+    if (left)
+        return;
+    printf("[accopy] %s: batch done in %ld s, %d installed, %d failed\n", g_acj[0].game, (long)(now - g_ac_since),
+           g_ac_ok, g_ac_bad);
+    if (g_ac_ok)
+        notify("%s: %d add-on%s installed", g_acj[0].game, g_ac_ok, g_ac_ok > 1 ? "s" : "");
+    g_ac_gen++; /* a call that has not returned yet is ignored */
+    g_acn = 0;
 }
 
 static int place_files(title_src_t *t) {
@@ -1263,6 +1361,7 @@ static void ac_reconcile(title_src_t *t) {
                 drop_dlc(&t->dlc[k].pkg);
         printf("[accopy] %s: mounted add-ons released for copying\n", target);
     }
+    int submit_later = ac_busy(); /* a batch is running: this game's turn comes after it */
     for (int i = 0; i < t->ndlc_all; i++) {
         dlc_src_t *a = &t->dlc[i];
         const char *cid = a->pkg.content_id;
@@ -1270,7 +1369,7 @@ static void ac_reconcile(title_src_t *t) {
         ac_copy_path(p, sizeof(p), cid);
         char pend[96];
         ac_pend_path(pend, sizeof(pend), cid);
-        int busy = g_ac.busy && !strcmp(g_ac.cid, cid);
+        int busy = ac_job_of(cid) != NULL;
         if (!busy && exists(pend)) {
             /* a failed or partial copy: removed before anything else is tried */
             ac_uninstall(cid);
@@ -1293,7 +1392,7 @@ static void ac_reconcile(title_src_t *t) {
         in.busy = busy;
         switch (accopy_decide(&in)) {
         case AC_REINSTALL:
-            if (g_ac.busy)
+            if (submit_later)
                 break;
             printf("[accopy] %s: lost after the game was registered again, installing again\n", cid);
             ac_uninstall(cid);
@@ -1302,9 +1401,9 @@ static void ac_reconcile(title_src_t *t) {
             accopy_unmark(STATE_DIR, cid);
             /* fall through */
         case AC_INSTALL:
-            if (g_ac.busy)
+            if (submit_later)
                 break;
-            if (ac_start(a, tid, why, sizeof(why))) {
+            if (ac_queue(a, tid, why, sizeof(why))) {
                 int n = acfail_add(STATE_DIR, cid, why);
                 printf("[accopy] %s: not started (%s), %d of %d\n", cid, why, n, ACFAIL_MAX);
                 notify("%s: add-on %s not installed (%s)", tid, cid + 20, why);
@@ -1334,6 +1433,8 @@ static void ac_reconcile(title_src_t *t) {
             break;
         }
     }
+    if (!submit_later)
+        ac_submit();
 }
 
 /* /user/app/<TID> always, /user/patch/<TID> only with an update and
@@ -1349,7 +1450,10 @@ static int mount_paths(const char *tid, int has_patch, char (*dtids)[10], int nd
     if (has_patch ? mount_dir(hold, target) : (unmount_all_layers(target, 1), 0))
         return -1;
     for (int i = 0; !g_cfg.dlc_copy && i < ndtids; i++) {
-        if (g_ac.busy && !strncmp(g_ac.cid + 7, dtids[i], 9)) {
+        int copying = 0;
+        for (int k = 0; k < g_acn; k++)
+            copying |= !g_acj[k].ended && !strncmp(g_acj[k].cid + 7, dtids[i], 9);
+        if (copying) {
             printf("[mount] /user/addcont/%s: a copy is still running, not mounted\n", dtids[i]);
             continue;
         }
@@ -2616,6 +2720,8 @@ static void handle_klog_line(const char *line) {
     } else if ((p = after(line, "system file disagree ["))) {
         snprintf(id, sizeof(id), "%.9s", p);
         disagree_seen(id);
+    } else if (strstr(line, "[BGFT/Telemetry] SendDownloadCopy")) {
+        ac_copy_event(line);
     } else if ((p = after(line, "[PlayGoService][End] end ("))) {
         snprintf(id, sizeof(id), "%.9s", p);
         managed_t *m = managed_by(id, NULL);
