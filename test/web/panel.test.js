@@ -10,7 +10,7 @@ const GAMES = [
   { title_id: 'CUSA28732', name: 'Civ VII', version: '01.16', has_patch: true, size: 9e9, state: 'running', mount: 'rw', source: '/mnt/usb0/ps4/CUSA28732', dlc: 35, dlc_total: 35, updates: 2, update_issue: '' },
   { title_id: 'CUSA00190', name: 'Killzone', version: '01.00', has_patch: false, size: 9e9, state: 'internal', mount: '', source: '/mnt/usb0/ps4/CUSA00190', dlc: 0, update_issue: '' },
   { title_id: 'CUSA41712', name: 'Soulstice', version: '01.03', has_patch: false, size: 9e9, state: 'ready', mount: 'rw', source: '/mnt/usb0/ps4/CUSA41712', dlc: 1, dlc_total: 3, updates: 0, update_issue: '' }];
-const CFG = { batch: true, batch_size: 5, dlc: true, restore_batch: 5, max_restore_batch: 10, paths: ['/'] };
+const CFG = { batch: true, batch_size: 5, dlc: true, dlc_copy: true, restore_batch: 5, max_restore_batch: 10, paths: ['/'] };
 const DETAIL = { title_id: 'CUSA41712', name: 'Soulstice', dlc_limit: 2,
   updates: [{ file: 'patch.pkg', version: '01.03', name: 'b.pkg', active: true }, { file: 'replaced/patch-1.pkg', version: '01.02', name: 'a.pkg', active: false }],
   dlcs: [{ content_id: 'EP0001-CUSA41712_00-AAAAAAAAAAAAAAAA', name: 'Pack A', on: true, data: true },
@@ -122,6 +122,11 @@ function parses(code, version) {
   reqs.length = 0; rs.value = '7';
   d.getElementById('setform').dispatchEvent(new w.Event('submit', { cancelable: true })); await tick();
   ok(reqs[0] && reqs[0].url === '/api/config' && reqs[0].body.includes('restore_batch=7'), 'Save sends restore_batch');
+  d.getElementById('settingsbtn').click(); await tick();
+  ok(d.getElementById('s-dlccopy').checked, 'copy add-ons checked from the config');
+  d.getElementById('s-dlccopy').checked = false; reqs.length = 0;
+  d.getElementById('setform').dispatchEvent(new w.Event('submit', { cancelable: true })); await tick();
+  ok(reqs[0] && reqs[0].body.includes('dlc_copy=0'), 'Save sends dlc_copy=0');
 
   // updates, add-ons and the play button
   ok(d.querySelector('.play[data-t="CUSA00791"]') !== null && d.querySelector('.play[data-t="CUSA28732"]') === null, 'play button on ready games only');
@@ -172,6 +177,10 @@ function parses(code, version) {
   lg.value = '5';
   lr.value = '2'; reqs.length = 0; d.getElementById('s-restore').click(); await tick();
   ok(reqs[0].body === 'restore_batch=2' && reqs[1].url === '/api/restore' && reqs[1].body === '', 'legacy move all: group 2 then restore all');
+  d.getElementById('nav-settings').click(); await tick();
+  ok(d.getElementById('s-dlccopy').checked, 'legacy copy add-ons checked from the config');
+  d.getElementById('s-dlccopy').checked = false; reqs.length = 0; d.getElementById('s-save').click(); await tick();
+  ok(reqs[0] && reqs[0].body.includes('dlc_copy=0'), 'legacy Save sends dlc_copy=0');
   d.getElementById('nav-settings').click(); await tick();
   d.getElementById('s-rsize').value = '1';
   d.getElementById('s-pick').click(); await tick();

@@ -69,6 +69,7 @@ typedef struct {
     int batch;      /* new games are added in groups */
     int batch_size; /* games per group */
     int dlc;        /* add-ons are moved and installed */
+    int dlc_copy;   /* add-ons are copied to internal storage by the system, not mounted */
     char paths[MAX_SCAN_PATHS][128]; /* folders searched for pkgs, relative to each drive; "" is the root */
     int npaths;
     int restore_batch; /* games removed from the library per group when moving pkgs back */
@@ -76,7 +77,7 @@ typedef struct {
 
 #define MAX_RESTORE_BATCH 10
 
-static config_t g_cfg = {1, 5, 1, {""}, 1, 5};
+static config_t g_cfg = {1, 5, 1, 1, {""}, 1, 5};
 
 typedef struct { char useless[45]; char message[3075]; } notify_request_t;
 int sceUserServiceInitialize(void *);
@@ -3236,8 +3237,8 @@ static int clean_scan_path(const char *in, char *out, size_t n, char *why, size_
 
 static void config_save(void) {
     buf_t b = {0};
-    buf_printf(&b, "batch=%d\nbatch_size=%d\ndlc=%d\nrestore_batch=%d\n", g_cfg.batch, g_cfg.batch_size, g_cfg.dlc,
-               g_cfg.restore_batch);
+    buf_printf(&b, "batch=%d\nbatch_size=%d\ndlc=%d\ndlc_copy=%d\nrestore_batch=%d\n", g_cfg.batch, g_cfg.batch_size,
+               g_cfg.dlc, g_cfg.dlc_copy, g_cfg.restore_batch);
     for (int i = 0; i < g_cfg.npaths; i++)
         buf_printf(&b, "path=%s\n", g_cfg.paths[i]);
     write_file(CONFIG_PATH, b.data, b.len, 0666);
@@ -3259,6 +3260,8 @@ static void config_load(void) {
             c.batch_size = atoi(line + 11);
         else if (!strncmp(line, "dlc=", 4))
             c.dlc = atoi(line + 4) != 0;
+        else if (!strncmp(line, "dlc_copy=", 9))
+            c.dlc_copy = atoi(line + 9) != 0;
         else if (!strncmp(line, "restore_batch=", 14))
             c.restore_batch = atoi(line + 14);
         else if (!strncmp(line, "path=", 5) && c.npaths < MAX_SCAN_PATHS &&
@@ -3278,9 +3281,11 @@ static void config_load(void) {
 }
 
 void app_config_json(buf_t *out) {
-    buf_printf(out, "{\"batch\":%s,\"batch_size\":%d,\"dlc\":%s,\"restore_batch\":%d,\"max_restore_batch\":%d,\"paths\":[",
-               g_cfg.batch ? "true" : "false", g_cfg.batch_size, g_cfg.dlc ? "true" : "false", g_cfg.restore_batch,
-               MAX_RESTORE_BATCH);
+    buf_printf(out,
+               "{\"batch\":%s,\"batch_size\":%d,\"dlc\":%s,\"dlc_copy\":%s,\"restore_batch\":%d,\"max_restore_batch\":%d,"
+               "\"paths\":[",
+               g_cfg.batch ? "true" : "false", g_cfg.batch_size, g_cfg.dlc ? "true" : "false",
+               g_cfg.dlc_copy ? "true" : "false", g_cfg.restore_batch, MAX_RESTORE_BATCH);
     for (int i = 0; i < g_cfg.npaths; i++) {
         char shown[130];
         snprintf(shown, sizeof(shown), "/%s", g_cfg.paths[i]);
@@ -3305,7 +3310,7 @@ static void url_decode(const char *in, size_t len, char *out, size_t n) {
     out[o] = 0;
 }
 
-/* body: batch=0|1&batch_size=N&dlc=0|1&restore_batch=N&paths=<folders, one per line> (form
+/* body: batch=0|1&batch_size=N&dlc=0|1&dlc_copy=0|1&restore_batch=N&paths=<folders, one per line> (form
  * encoded); keys left out keep their value. */
 int app_config_set(const char *body, char *msg, size_t cap) {
     config_t c = g_cfg;
@@ -3322,6 +3327,8 @@ int app_config_set(const char *body, char *msg, size_t cap) {
                 c.batch_size = atoi(value);
             else if (k == 3 && !strncmp(p, "dlc", 3))
                 c.dlc = atoi(value) != 0;
+            else if (k == 8 && !strncmp(p, "dlc_copy", 8))
+                c.dlc_copy = atoi(value) != 0;
             else if (k == 13 && !strncmp(p, "restore_batch", 13)) {
                 char *end;
                 long v = strtol(value, &end, 10);
