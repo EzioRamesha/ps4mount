@@ -671,11 +671,12 @@ int sceAppInstUtilAppUnInstallAddcont(const char *title_id, const char *addcont_
 
 /* The one copy that runs at a time. The install call runs in its own thread (it may only
  * return once the copy is done); the main loop follows the copied size in ac_poll. */
-#define AC_ABANDON_S 300 /* past the copy timeout: a call that never returns is given up */
+#define AC_RETURN_S 60 /* a call still running this long after the copy reached full size is not waited for */
 
 static struct {
     volatile int busy, called, rc, gen;
-    int ended, data; /* ended: result taken, waiting for the call to return */
+    int data;
+    time_t full_at; /* when the copy reached full size */
     char cid[40], game[10], pkg_path[PATH_MAX], name[128];
     uint64_t size;
     acwait_t wait;
@@ -879,27 +880,20 @@ static void ac_poll(void) {
         return;
     time_t now = time(NULL);
     g_ac.next_check = now + AC_POLL_SECONDS;
-    int late = now - g_ac.wait.start > ACW_TIMEOUT_S + AC_ABANDON_S;
-    if (g_ac.ended) {
-        /* the result is taken; the next copy waits for the call, but not forever */
-        if (g_ac.called || late) {
-            if (!g_ac.called)
-                printf("[accopy] %s: install call never returned, given up\n", g_ac.cid);
-            g_ac.busy = 0;
-        }
-        return;
-    }
     char why[64] = "", p[PATH_MAX];
     int r;
     if (g_ac.called && g_ac.rc) {
         snprintf(why, sizeof(why), "install call 0x%08x", g_ac.rc);
         r = ACW_STALL;
+    } else if (!exists(g_ac.pkg_path)) {
+        snprintf(why, sizeof(why), "drive disconnected");
+        r = ACW_STALL;
     } else if (!g_ac.data) {
         /* unlock only: nothing is copied, the call's result is the answer */
-        if (!g_ac.called && !late)
+        r = g_ac.called ? ACW_DONE : acwait_step(&g_ac.wait, 0, 1, now) == ACW_TIMEOUT ? ACW_TIMEOUT : ACW_WAIT;
+        if (r == ACW_WAIT)
             return;
-        r = g_ac.called ? ACW_DONE : ACW_TIMEOUT;
-        if (!g_ac.called)
+        if (r == ACW_TIMEOUT)
             snprintf(why, sizeof(why), "install call never returned");
     } else {
         struct stat st;
@@ -907,10 +901,10 @@ static void ac_poll(void) {
         uint64_t cur = stat(p, &st) ? 0 : (uint64_t)st.st_size;
         r = acwait_step(&g_ac.wait, cur, g_ac.size, now);
         if (r == ACW_DONE && !g_ac.called) {
-            if (!late)
-                return; /* full size: the call still has to return */
-            r = ACW_TIMEOUT;
-            snprintf(why, sizeof(why), "install call never returned");
+            if (!g_ac.full_at)
+                g_ac.full_at = now;
+            if (now - g_ac.full_at < AC_RETURN_S)
+                return; /* full size: give the call a moment to return */
         } else if (r == ACW_WAIT) {
             return;
         } else if (r == ACW_TIMEOUT) {
@@ -928,13 +922,14 @@ static void ac_poll(void) {
         printf("[accopy] %s: copied\n", g_ac.cid);
         notify("%s: add-on %s installed", g_ac.game, g_ac.name);
     } else {
-        /* .accopy and .acpend stay: ac_reconcile removes the partial copy */
+        /* .accopy and .acpend stay: ac_reconcile removes the partial copy. The call is not
+         * waited for: a newer job changes the generation, so a late return is ignored. */
         int n = acfail_add(STATE_DIR, g_ac.cid, why);
         printf("[accopy] %s: failed (%s), %d of %d\n", g_ac.cid, why, n, ACFAIL_MAX);
         notify("%s: add-on %s not installed (%s)", g_ac.game, g_ac.name, why);
     }
-    g_ac.ended = 1;
-    g_ac.next_check = 0;
+    g_ac.gen++;
+    g_ac.busy = 0;
 }
 
 static int place_files(title_src_t *t) {
