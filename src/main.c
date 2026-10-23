@@ -16,6 +16,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
@@ -4113,22 +4115,20 @@ static void pump_events(int ms) {
     }
 }
 
-/* The console's address on the local network: the source address of a route out
- * (a UDP connect sends nothing). "<PS5 IP>" when there is no network. */
+/* The console's address on the local network: the first IPv4 address of an interface
+ * that is up, other than loopback. "<PS5 IP>" when there is none. */
 static void local_ip(char *out, size_t cap) {
+    struct ifaddrs *list, *i;
     snprintf(out, cap, "<PS5 IP>");
-    int s = socket(AF_INET, SOCK_DGRAM, 0);
-    if (s < 0)
+    if (getifaddrs(&list))
         return;
-    struct sockaddr_in a = {0};
-    socklen_t n = sizeof(a);
-    a.sin_family = AF_INET;
-    a.sin_port = htons(53);
-    a.sin_addr.s_addr = htonl(0x08080808);
-    if (!connect(s, (struct sockaddr *)&a, sizeof(a)) && !getsockname(s, (struct sockaddr *)&a, &n) &&
-        a.sin_addr.s_addr)
-        inet_ntop(AF_INET, &a.sin_addr, out, cap);
-    close(s);
+    for (i = list; i; i = i->ifa_next)
+        if (i->ifa_addr && i->ifa_addr->sa_family == AF_INET && (i->ifa_flags & IFF_UP) &&
+            !(i->ifa_flags & IFF_LOOPBACK)) {
+            inet_ntop(AF_INET, &((struct sockaddr_in *)i->ifa_addr)->sin_addr, out, cap);
+            break;
+        }
+    freeifaddrs(list);
 }
 
 int main(void) {
