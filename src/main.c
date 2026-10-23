@@ -35,6 +35,7 @@
 
 #include <ps5/kernel.h>
 
+#include "accopy.h"
 #include "build.h"
 #include "crypto.h"
 #include "db.h"
@@ -639,6 +640,160 @@ static int dlc_ready(const title_src_t *t) {
             return 0;
     }
     return 1;
+}
+
+/* --- add-ons copied to internal storage (copy mode) --- */
+
+/* sceAppInstUtilInstallByPackage arguments: the system copies the pkg at uri into
+ * /user/addcont/<ADD-ON TID>/<LABEL>/ and writes the add-on's addcont.db row itself. */
+typedef struct {
+    const char *uri, *ex_uri, *playgo_scenario_id, *content_id, *content_name, *icon_url;
+    uint64_t unknown_30;
+    uint64_t reserved[7];
+} ac_meta_t;
+typedef struct {
+    char content_id[0x30];
+    int content_type, content_platform;
+} ac_pkg_t;
+typedef struct {
+    char languages[30][8];
+    char scenario_ids[64][3];
+    char content_ids[64][0x30];
+    unsigned char unknown[6480];
+} ac_playgo_t;
+int sceAppInstUtilInstallByPackage(ac_meta_t *, ac_pkg_t *, ac_playgo_t *);
+int sceAppInstUtilAppUnInstallAddcont(const char *title_id, const char *addcont_name);
+
+#define AC_POLL_SECONDS 2
+#define AC_NOT_FOUND 0x80A30004 /* AppInstUtil: no such add-on */
+
+/* The one copy that runs at a time. The install call runs in its own thread (it may only
+ * return once the copy is done); the main loop follows the copied size in ac_poll. */
+static struct {
+    volatile int busy, called, rc;
+    int failed, ended; /* result taken; failed: drop the partial copy once the call returns */
+    char cid[40], game[10], pkg_path[PATH_MAX], name[128];
+    uint64_t size;
+    acwait_t wait;
+    time_t next_check;
+} g_ac;
+static ac_playgo_t g_ac_playgo;
+
+static void ac_copy_path(char *out, size_t n, const char *cid) {
+    snprintf(out, n, "/user/addcont/%.9s/%s/ac.pkg", cid + 7, cid + 20);
+}
+
+static void *ac_install_thread(void *arg) {
+    (void)arg;
+    ac_meta_t meta;
+    ac_pkg_t info;
+    char name[32];
+    memset(&meta, 0, sizeof(meta));
+    memset(&info, 0, sizeof(info));
+    memset(&g_ac_playgo, 0, sizeof(g_ac_playgo));
+    snprintf(name, sizeof(name), "%s (Add-on)", g_ac.game);
+    meta.uri = g_ac.pkg_path;
+    meta.ex_uri = meta.playgo_scenario_id = meta.content_id = meta.icon_url = "";
+    meta.content_name = name;
+    g_ac.rc = sceAppInstUtilInstallByPackage(&meta, &info, &g_ac_playgo);
+    printf("[accopy] %s: InstallByPackage=0x%08x\n", g_ac.cid, g_ac.rc);
+    g_ac.called = 1;
+    return NULL;
+}
+
+/* Starts copying one add-on. 0 when started; -1 with why set when it cannot start. */
+static int ac_start(const dlc_src_t *a, const char *game_tid, char *why, size_t cap) {
+    struct statfs sf;
+    if (statfs("/user", &sf)) {
+        snprintf(why, cap, "free space unknown (%s)", strerror(errno));
+        return -1;
+    }
+    if (!accopy_space_ok((uint64_t)sf.f_bavail * sf.f_bsize, a->pkg.pkg_size)) {
+        snprintf(why, cap, "not enough free space");
+        return -1;
+    }
+    memset((void *)&g_ac, 0, sizeof(g_ac));
+    snprintf(g_ac.cid, sizeof(g_ac.cid), "%s", a->pkg.content_id);
+    snprintf(g_ac.game, sizeof(g_ac.game), "%s", game_tid);
+    snprintf(g_ac.pkg_path, sizeof(g_ac.pkg_path), "%s", a->path);
+    const sfo_item_t *it = sfo_get(&a->sfo, "TITLE");
+    snprintf(g_ac.name, sizeof(g_ac.name), "%s", it && !it->is_int ? it->sval : a->pkg.content_id);
+    g_ac.size = a->pkg.pkg_size;
+    acwait_start(&g_ac.wait, time(NULL));
+    g_ac.next_check = time(NULL) + AC_POLL_SECONDS;
+    g_ac.busy = 1;
+    printf("[accopy] %s: copying %s (%llu bytes)\n", g_ac.cid, a->path, (unsigned long long)g_ac.size);
+    pthread_t th;
+    if (pthread_create(&th, NULL, ac_install_thread, NULL)) {
+        g_ac.busy = 0;
+        snprintf(why, cap, "no thread for the install");
+        return -1;
+    }
+    pthread_detach(th);
+    return 0;
+}
+
+/* Uninstalls an add-on PS4Mount installed: by label, then by content ID. "Not found"
+ * counts as done (the system may have removed it already). */
+static int ac_uninstall(const char *cid) {
+    char dtid[10];
+    snprintf(dtid, sizeof(dtid), "%.9s", cid + 7);
+    int rc = sceAppInstUtilAppUnInstallAddcont(dtid, cid + 20);
+    printf("[accopy] %s: uninstall by label 0x%08x\n", cid, rc);
+    if (rc) {
+        int rc2 = sceAppInstUtilAppUnInstallAddcont(dtid, cid);
+        printf("[accopy] %s: uninstall by content id 0x%08x\n", cid, rc2);
+        if (!rc2 || (rc == (int)AC_NOT_FOUND && rc2 == (int)AC_NOT_FOUND))
+            rc = 0;
+    }
+    return rc;
+}
+
+/* Called from the main loop: follows the copy in progress, at most every AC_POLL_SECONDS. */
+static void ac_poll(void) {
+    if (!g_ac.busy || time(NULL) < g_ac.next_check)
+        return;
+    g_ac.next_check = time(NULL) + AC_POLL_SECONDS;
+    if (g_ac.ended) {
+        if (!g_ac.called)
+            return;
+        if (g_ac.failed)
+            ac_uninstall(g_ac.cid);
+        g_ac.busy = 0;
+        return;
+    }
+    char why[64] = "", p[PATH_MAX];
+    int r;
+    if (g_ac.called && g_ac.rc) {
+        snprintf(why, sizeof(why), "install call 0x%08x", g_ac.rc);
+        r = ACW_STALL;
+    } else {
+        struct stat st;
+        ac_copy_path(p, sizeof(p), g_ac.cid);
+        uint64_t cur = stat(p, &st) ? 0 : (uint64_t)st.st_size;
+        r = acwait_step(&g_ac.wait, cur, g_ac.size, time(NULL));
+        if (r == ACW_DONE && !g_ac.called)
+            return; /* full size: the call still has to return */
+        if (r == ACW_WAIT)
+            return;
+        if (r == ACW_TIMEOUT)
+            snprintf(why, sizeof(why), "copy timed out");
+        else if (r == ACW_STALL)
+            snprintf(why, sizeof(why), "copy stopped");
+    }
+    if (r == ACW_DONE) {
+        accopy_mark(STATE_DIR, g_ac.cid, g_ac.pkg_path);
+        acfail_clear(STATE_DIR, g_ac.cid);
+        printf("[accopy] %s: copied\n", g_ac.cid);
+        notify("%s: add-on %s installed", g_ac.game, g_ac.name);
+    } else {
+        int n = acfail_add(STATE_DIR, g_ac.cid, why);
+        printf("[accopy] %s: failed (%s), %d of %d\n", g_ac.cid, why, n, ACFAIL_MAX);
+        notify("%s: add-on %s not installed (%s)", g_ac.game, g_ac.name, why);
+        g_ac.failed = 1;
+    }
+    g_ac.ended = 1;
+    g_ac.next_check = 0;
 }
 
 static int place_files(title_src_t *t) {
