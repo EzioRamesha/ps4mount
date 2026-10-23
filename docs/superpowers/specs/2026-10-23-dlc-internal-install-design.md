@@ -74,6 +74,10 @@ Validated on the console with Naruto Kawaki (seen in game) and The Order DLC200.
     polls the copied file size every 2 s (never faster than 1 s) with a 30 min timeout.
     One install at a time. A timeout or a size that stops growing for 2 min counts as
     failed, the `.accopy` is removed and the add-on is retried on the next scan.
+    Failures are counted in `STATE_DIR/<CONTENT ID>.acfail`. After 3 failures the add-on
+    is not installed again and the panel marks it as a problem, with the last reason.
+    Turning it off and on in the panel clears the count (my call); a successful install
+    deletes the file.
 14. **Per label (my call).** The "already installed" check is per label
     (`/user/addcont/<TID>/<LABEL>/ac.pkg` present and not ours means store install: skip).
     Labels from the store are never touched; other labels of the same title are copied.
