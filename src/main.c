@@ -633,6 +633,8 @@ static void drop_dlc(const pkg_t *pkg) {
 /* The ac.pkg link of every add-on exists and reaches its pkg. */
 static int dlc_ready(const title_src_t *t) {
     char p[PATH_MAX];
+    if (g_cfg.dlc_copy)
+        return 1; /* copy mode keeps no links */
     for (int i = 0; i < t->ndlc; i++) {
         snprintf(p, sizeof(p), HOLD_DIR "/addcont/%s/%s/ac.pkg", t->dlc[i].pkg.title_id,
                  t->dlc[i].pkg.content_id + 20);
@@ -747,6 +749,64 @@ static int ac_uninstall(const char *cid) {
             rc = 0;
     }
     return rc;
+}
+
+/* Uninstalls the add-ons PS4Mount copied for game (every game when NULL): their .accopy
+ * file holds the pkg path, <root>/ps4/<GAME>/addcont/... */
+static void ac_uninstall_copies(const char *game) {
+    DIR *d = opendir(STATE_DIR);
+    if (!d)
+        return;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (strlen(e->d_name) != 36 + 7 || strcmp(e->d_name + 36, ".accopy"))
+            continue;
+        char cid[40], path[96], pkg[PATH_MAX] = "", tag[16];
+        snprintf(cid, sizeof(cid), "%.36s", e->d_name);
+        snprintf(path, sizeof(path), STATE_DIR "/%s", e->d_name);
+        int fd = open(path, O_RDONLY);
+        if (fd >= 0) {
+            ssize_t n = read(fd, pkg, sizeof(pkg) - 1);
+            pkg[n > 0 ? n : 0] = 0;
+            close(fd);
+        }
+        snprintf(tag, sizeof(tag), "/ps4/%s/", game ? game : "");
+        if (game && !strstr(pkg, tag))
+            continue;
+        if (ac_uninstall(cid))
+            continue;
+        accopy_unmark(STATE_DIR, cid);
+        acfail_clear(STATE_DIR, cid);
+        snprintf(path, sizeof(path), STATE_DIR "/%s.acpg", cid);
+        unlink(path);
+        printf("[accopy] %s: uninstalled\n", cid);
+    }
+    closedir(d);
+}
+
+/* Work that waits for the copy in progress: back to mount mode, games removed. */
+static int g_ac_revert;
+static char g_ac_drop[MAX_TITLES][10];
+static int g_ac_ndrop;
+
+static void ac_drop_game(const char *tid) {
+    if (g_ac_ndrop < MAX_TITLES)
+        snprintf(g_ac_drop[g_ac_ndrop++], 10, "%s", tid);
+}
+
+static void ac_tasks(int deleting) {
+    if (g_ac.busy)
+        return;
+    if (g_ac_revert && !g_cfg.dlc_copy) {
+        printf("[accopy] mount mode: removing the copies\n");
+        ac_uninstall_copies(NULL);
+    }
+    g_ac_revert = 0;
+    if (deleting)
+        return;
+    for (int i = 0; i < g_ac_ndrop; i++)
+        ac_uninstall_copies(g_ac_drop[i]);
+    g_ac_ndrop = 0;
 }
 
 /* STATE_DIR/<CID>.acpg: the system install made /user/playgo/addcont/<CID>, so losing it
@@ -2479,9 +2539,10 @@ static void handle_klog_line(const char *line) {
             rm_tree(hold);
             hold_path(hold, sizeof(hold), "patch", m->tid);
             rm_tree(hold);
+            ac_drop_game(m->tid);
             notify("%s removed from the library. The pkg stays on the USB drive.", m->name);
             m->used = 0;
-        } else if (strlen(id) == 36 && g_deleting) {
+        } else if (strlen(id) == 36 && g_deleting && !g_cfg.dlc_copy) {
             /* an add-on of one of our games deleted on a delete screen: keep it out until the
              * drive is reconnected. Outside those screens the uninstall is the system's own:
              * registering a game again uninstalls its add-ons' PlayGo data, and taking that
@@ -3037,6 +3098,8 @@ int app_remove(const char *tid, char *msg, size_t cap) {
     int rc = db_is_registered(tid) ? uninstall_title(tid) : 0;
     if (m)
         m->used = 0;
+    if (!rc)
+        ac_drop_game(tid);
     printf("[web] remove %s: uninstall=0x%08x\n", tid, rc);
     if (rc == -2)
         snprintf(msg, cap, "The system did not finish removing %s yet; try again in a moment", tid);
@@ -3630,6 +3693,8 @@ int app_config_set(const char *body, char *msg, size_t cap) {
         snprintf(msg, cap, "Not saved: add at least one folder (/ is the drive root)");
         return -1;
     }
+    if (g_cfg.dlc_copy && !c.dlc_copy)
+        g_ac_revert = 1;
     g_cfg = c;
     config_save();
     printf("[config] saved: batch=%d batch_size=%d dlc=%d restore_batch=%d folders=%d\n", c.batch, c.batch_size, c.dlc,
@@ -3882,6 +3947,7 @@ int main(void) {
             g_next_scan = time(NULL) + SCAN_SECONDS;
         }
         ac_poll();
+        ac_tasks(g_deleting);
         pump_events(1000);
     }
 }
