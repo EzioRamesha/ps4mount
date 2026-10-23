@@ -669,8 +669,8 @@ int sceAppInstUtilAppUnInstallAddcont(const char *title_id, const char *addcont_
 #define AC_POLL_SECONDS 2
 #define AC_NOT_FOUND 0x80A30004 /* AppInstUtil: no such add-on */
 
-/* One batch of copies at a time: all add-ons to install for a game are handed to the
- * system together, which copies them one by one in that order. The calls run in their own
+/* One batch of copies at a time: all add-ons to install, of every game, are handed to the
+ * system together after a scan, which copies them one by one in that order. The calls run in their own
  * thread; the main loop follows each copy in ac_poll (klog copy lines, then the file size). */
 #define AC_RETURN_S 60 /* a call still running this long after the copy reached full size is not waited for */
 #define AC_MAX_JOBS MAX_DLC
@@ -690,6 +690,8 @@ static int g_acn, g_ac_ok, g_ac_bad;
 static volatile int g_ac_gen; /* a new batch changes it: late returns of older calls are ignored */
 static time_t g_ac_next, g_ac_since;
 static ac_playgo_t g_ac_playgo;
+
+static int g_ac_submitted; /* the batch was handed to the system; before that it is still being built */
 
 static int ac_busy(void) { return g_acn > 0; }
 
@@ -773,15 +775,16 @@ static int ac_queue(const dlc_src_t *a, const char *game_tid, char *why, size_t 
 
 /* Hands the batch to the system. */
 static void ac_submit(void) {
-    if (!g_acn)
+    if (!g_acn || g_ac_submitted)
         return;
+    g_ac_submitted = 1;
     int gen = ++g_ac_gen;
     g_ac_ok = g_ac_bad = 0;
     g_ac_since = time(NULL);
     g_ac_next = g_ac_since + AC_POLL_SECONDS;
     for (int i = 0; i < g_acn; i++)
         acwait_start(&g_acj[i].wait, g_ac_since);
-    printf("[accopy] %s: installing %d add-on(s)\n", g_acj[0].game, g_acn);
+    printf("[accopy] installing %d add-on(s)\n", g_acn);
     pthread_t th;
     if (pthread_create(&th, NULL, ac_install_thread, (void *)(intptr_t)gen)) {
         for (int i = 0; i < g_acn; i++) {
@@ -1014,7 +1017,7 @@ static int ac_job_step(ac_job_t *j, int head, int next_started, time_t now, char
 /* Called from the main loop: follows the batch, at most every AC_POLL_SECONDS. A failed copy
  * releases nothing for the others: each job ends on its own. */
 static void ac_poll(void) {
-    if (!ac_busy() || time(NULL) < g_ac_next)
+    if (!g_ac_submitted || time(NULL) < g_ac_next)
         return;
     time_t now = time(NULL);
     g_ac_next = now + AC_POLL_SECONDS;
@@ -1053,12 +1056,12 @@ static void ac_poll(void) {
     }
     if (left)
         return;
-    printf("[accopy] %s: batch done in %ld s, %d installed, %d failed\n", g_acj[0].game, (long)(now - g_ac_since),
-           g_ac_ok, g_ac_bad);
+    printf("[accopy] batch done in %ld s, %d installed, %d failed\n", (long)(now - g_ac_since), g_ac_ok, g_ac_bad);
     if (g_ac_ok)
-        notify("%s: %d add-on%s installed", g_acj[0].game, g_ac_ok, g_ac_ok > 1 ? "s" : "");
+        notify("%d add-on%s installed", g_ac_ok, g_ac_ok > 1 ? "s" : "");
     g_ac_gen++; /* a call that has not returned yet is ignored */
     g_acn = 0;
+    g_ac_submitted = 0;
 }
 
 static int place_files(title_src_t *t) {
@@ -1377,7 +1380,7 @@ static void ac_reconcile(title_src_t *t) {
                 drop_dlc(&t->dlc[k].pkg);
         printf("[accopy] %s: mounted add-ons released for copying\n", target);
     }
-    int submit_later = ac_busy(); /* a batch is running: this game's turn comes after it */
+    int submit_later = g_ac_submitted; /* a batch is running: these add-ons go in the next one */
     for (int i = 0; i < t->ndlc_all; i++) {
         dlc_src_t *a = &t->dlc[i];
         const char *cid = a->pkg.content_id;
@@ -1449,8 +1452,6 @@ static void ac_reconcile(title_src_t *t) {
             break;
         }
     }
-    if (!submit_later)
-        ac_submit();
 }
 
 /* /user/app/<TID> always, /user/patch/<TID> only with an update and
@@ -2599,6 +2600,7 @@ static void scan_all(void) {
             scan_root(root, !seen[i] || g_manual_scan, !seen[i] && !first);
         seen[i] = present;
     }
+    ac_submit(); /* the add-ons of every game, in one batch */
     first = 0;
     g_manual_scan = 0;
 }
