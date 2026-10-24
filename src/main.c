@@ -3109,7 +3109,7 @@ static void apply_dlc_choice(const char *tid, const char *on) {
     char *list = malloc(strlen(on) + 3);
     buf_t off = {0};
     if (list) {
-        sprintf(list, "\n%s\n", on);
+        snprintf(list, strlen(on) + 3, "\n%s\n", on);
         for (char *c = list; *c; c++)
             if (*c == ',')
                 *c = '\n';
