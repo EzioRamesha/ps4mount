@@ -2908,6 +2908,8 @@ static int list_updates(const char *game, const char *tid, update_t *out, int ma
         update_t *u = &out[n];
         if (first)
             snprintf(u->rel, sizeof(u->rel), "patch.pkg");
+        else if (!e)
+            break;
         else {
             size_t len = strlen(e->d_name);
             if (e->d_name[0] == '.' || len < 5 || len > 50 || strcasecmp(e->d_name + len - 4, ".pkg"))
@@ -3109,7 +3111,7 @@ static void apply_dlc_choice(const char *tid, const char *on) {
     char *list = malloc(strlen(on) + 3);
     buf_t off = {0};
     if (list) {
-        sprintf(list, "\n%s\n", on);
+        snprintf(list, strlen(on) + 3, "\n%s\n", on);
         for (char *c = list; *c; c++)
             if (*c == ',')
                 *c = '\n';

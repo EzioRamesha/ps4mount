@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 gasb07
- * Add-ons copied to internal storage by the system (copy mode): the state files kept for
+ * Add-ons copied to internal storage by the system, in copy mode: the state files kept for
  * them, the free space and copy progress rules and the decision taken for each add-on. */
 #pragma once
 
