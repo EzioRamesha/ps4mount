@@ -39,3 +39,28 @@ int app_icon(const char *tid, buf_t *out) {
     buf_put(out, "PNG", 3);
     return 0;
 }
+int app_game_json(const char *tid, buf_t *out, char *msg, size_t cap) {
+    record("game", tid, msg, cap);
+    buf_printf(out, "{\"title_id\":\"%s\",\"updates\":[],\"dlcs\":[]}", tid);
+    return 0;
+}
+int app_choose_update(const char *tid, const char *rel, char *msg, size_t cap) {
+    char arg[256];
+    snprintf(arg, sizeof(arg), "%s %s", tid, rel);
+    return record("update", arg, msg, cap);
+}
+int app_choose_dlc(const char *tid, const char *on, char *msg, size_t cap) {
+    char arg[4096];
+    snprintf(arg, sizeof(arg), "%s %s", tid, on);
+    return record("dlc", arg, msg, cap);
+}
+int app_launch(const char *tid, int force, char *msg, size_t cap) {
+    char arg[32];
+    snprintf(arg, sizeof(arg), "%s %d", tid, force);
+    record("launch", arg, msg, cap);
+    if (!strcmp(tid, "CUSA00002") && !force) {
+        snprintf(msg, cap, "Uncharted \"4\"");
+        return 1;
+    }
+    return 0;
+}

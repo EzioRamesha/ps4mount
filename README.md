@@ -38,7 +38,10 @@ The web panel, opened from the **Media** tab:
 - Installs add-ons (DLC), with data or unlock-only. An add-on is matched to its game by title ID, or by
   the add-on IDs the game lists (so add-ons of another region of the same game work too).
 - Adds many games in groups, so a drive with dozens of games does not overload the console.
-- Games run from the drive; no internal storage is used for the packages.
+- Games run from the drive; no internal storage is used for the game and update packages.
+- Add-ons are installed to internal storage by the system (copied from the drive), so they show up
+  under the game and in the system storage screen. This can be turned off in the settings to use them
+  from the drive instead.
 - Deleting a game from the PS5 removes it from the library only. The `.pkg` is never deleted.
 - Notifications while scanning (how many games were found on each drive) and for added and removed
   games.
@@ -87,7 +90,9 @@ On the first run PS4Mount moves every package it uses into a folder per game on 
 /ps4/CUSAxxxxx/addcont/CUSAyyyyy/<LABEL>/ac.pkg add-on (optional)
 ```
 
-A game is reported as ready only after its add-ons are installed too. An add-on whose game is not on the
+A game is reported as ready only after its add-ons are installed too. With add-ons copied to internal
+storage, the panel shows the game as **Installing add-ons** until the copies are done; the system copies
+them one at a time and shows its own notice for each. An add-on whose game is not on the
 same drive stays where it is and waits: it is moved and installed as soon as its game is on the drive.
 The scan notification says how many add-ons are waiting.
 
@@ -128,6 +133,7 @@ Buttons:
 | Add new games in groups | On | Adds many new games in groups instead of one after the other, which keeps the console stable when a drive has a lot of games. |
 | Games per group | 5 | Size of each group (1 to 50). |
 | Install add-ons (DLC) | On | Moves and installs add-on `.pkg` files. When off, add-ons are left where they are. |
+| Copy add-ons to internal storage | On | Add-ons are installed to internal storage by the system. When off, they are used from the drive (at most about 29 per game). Turning it off uninstalls the copies. |
 
 The settings also have **Move all games back** and **Pick up moved-back pkgs again** (see below).
 

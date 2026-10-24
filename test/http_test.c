@@ -158,6 +158,43 @@ int main(void) {
     post("/api/restored/forget", "");
     CHECK(!strcmp(g_stub_call, "forget"));
 
+    printf("updates, add-ons and starting a game\n");
+    r = ask("GET /api/game?title_id=CUSA00791 HTTP/1.1\r\n\r\n");
+    CHECK(status(r, "200") && !strcmp(g_stub_call, "game") && strstr(r, "\"updates\""));
+    r = post("/api/update?title_id=CUSA00791", "file=replaced%2Fpatch-1.pkg");
+    CHECK(status(r, "200") && !strcmp(g_stub_call, "update") && !strcmp(g_stub_arg, "CUSA00791 replaced/patch-1.pkg"));
+    r = post("/api/dlc?title_id=CUSA00791", "on=EP0001-CUSA00791_00-AAAAAAAAAAAAAAAA%2CEP0001-CUSA00791_00-BBBBBBBBBBBBBBBB");
+    CHECK(status(r, "200") && !strcmp(g_stub_call, "dlc") &&
+          !strcmp(g_stub_arg, "CUSA00791 EP0001-CUSA00791_00-AAAAAAAAAAAAAAAA,EP0001-CUSA00791_00-BBBBBBBBBBBBBBBB"));
+    r = post("/api/dlc?title_id=CUSA00791", "on=");
+    CHECK(status(r, "200") && !strcmp(g_stub_arg, "CUSA00791 ")); /* all off */
+    r = post("/api/launch?title_id=CUSA00791", "");
+    CHECK(status(r, "200") && !strcmp(g_stub_call, "launch") && !strcmp(g_stub_arg, "CUSA00791 0"));
+    r = post("/api/launch?title_id=CUSA00002", "");
+    CHECK(status(r, "200") && strstr(r, "\"confirm\":true") && strstr(r, "\"open\":\"Uncharted \\\"4\\\"\""));
+    r = post("/api/launch?title_id=CUSA00002&force=1", "");
+    CHECK(status(r, "200") && !strcmp(g_stub_arg, "CUSA00002 1") && strstr(r, "\"ok\":true"));
+    const char *bad_changes[][2] = {{"/api/update?title_id=CUSA0079", "file=replaced%2Fa.pkg"},
+                                    {"/api/update?title_id=CUSA00791", ""},
+                                    {"/api/update?title_id=CUSA00791", "file=%0a"},
+                                    {"/api/update?title_id=CUSA00791", "file=%zz"},
+                                    {"/api/dlc?title_id=CUSA00791", "x=1"},
+                                    {"/api/launch?title_id=../../x", ""},
+                                    {NULL, NULL}};
+    for (int i = 0; bad_changes[i][0]; i++) {
+        int before = g_stub_calls;
+        r = post(bad_changes[i][0], bad_changes[i][1]);
+        CHECK(status(r, "400") && g_stub_calls == before);
+    }
+    const char *get_only[] = {"/api/update?title_id=CUSA00791", "/api/dlc?title_id=CUSA00791", "/api/launch?title_id=CUSA00791", NULL};
+    for (int i = 0; get_only[i]; i++) {
+        char req[128];
+        snprintf(req, sizeof(req), "GET %s HTTP/1.1\r\n\r\n", get_only[i]);
+        int before = g_stub_calls;
+        r = ask(req);
+        CHECK(status(r, "404") && g_stub_calls == before);
+    }
+
     printf("a body that arrives after the headers\n");
     const char *head = "POST /api/config HTTP/1.1\r\nContent-Length: 15\r\n\r\n";
     ask2(head, strlen(head), "restore_batch=7");

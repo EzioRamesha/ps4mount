@@ -6,12 +6,19 @@ const fs = require('fs');
 const { JSDOM, VirtualConsole } = require('jsdom');
 const W = require('path').join(__dirname, '..', '..', 'web') + '/';
 const GAMES = [
-  { title_id: 'CUSA00791', name: 'N++', version: '01.10', has_patch: true, size: 4e9, state: 'ready', mount: 'rw', source: '/mnt/usb0/ps4/CUSA00791', dlc: 0, update_issue: '' },
-  { title_id: 'CUSA28732', name: 'Civ VII', version: '01.16', has_patch: true, size: 9e9, state: 'running', mount: 'rw', source: '/mnt/usb0/ps4/CUSA28732', dlc: 35, update_issue: '' },
+  { title_id: 'CUSA00791', name: 'N++', version: '01.10', has_patch: true, size: 4e9, state: 'ready', mount: 'rw', source: '/mnt/usb0/ps4/CUSA00791', dlc: 0, dlc_total: 0, updates: 2, update_issue: '' },
+  { title_id: 'CUSA28732', name: 'Civ VII', version: '01.16', has_patch: true, size: 9e9, state: 'running', mount: 'rw', source: '/mnt/usb0/ps4/CUSA28732', dlc: 35, dlc_total: 35, updates: 2, update_issue: '' },
   { title_id: 'CUSA00190', name: 'Killzone', version: '01.00', has_patch: false, size: 9e9, state: 'internal', mount: '', source: '/mnt/usb0/ps4/CUSA00190', dlc: 0, update_issue: '' },
-  { title_id: 'CUSA41712', name: 'Soulstice', version: '01.03', has_patch: false, size: 9e9, state: 'ready', mount: 'rw', source: '/mnt/usb0/ps4/CUSA41712', dlc: 1, update_issue: '' }];
-const CFG = { batch: true, batch_size: 5, dlc: true, restore_batch: 5, max_restore_batch: 10, paths: ['/'] };
+  { title_id: 'CUSA41712', name: 'Soulstice', version: '01.03', has_patch: false, size: 9e9, state: 'ready', mount: 'rw', source: '/mnt/usb0/ps4/CUSA41712', dlc: 1, dlc_total: 3, updates: 0, update_issue: '' }];
+const CFG = { batch: true, batch_size: 5, dlc: true, dlc_copy: true, restore_batch: 5, max_restore_batch: 10, paths: ['/'] };
+const DETAIL = { title_id: 'CUSA41712', name: 'Soulstice', dlc_limit: 2,
+  updates: [{ file: 'patch.pkg', version: '01.03', name: 'b.pkg', active: true }, { file: 'replaced/patch-1.pkg', version: '01.02', name: 'a.pkg', active: false }],
+  dlcs: [{ content_id: 'EP0001-CUSA41712_00-AAAAAAAAAAAAAAAA', name: 'Pack A', on: true, data: true, copy: 'installed', reason: '' },
+         { content_id: 'EP0001-CUSA41712_00-BBBBBBBBBBBBBBBB', name: 'Pack B', on: false, data: false, copy: 'problem', reason: 'copy stopped' },
+         { content_id: 'EP0001-CUSA41712_00-CCCCCCCCCCCCCCCC', name: 'Pack C', on: false, data: true, copy: 'missing', reason: '' }] };
 function reply(url) {
+  if (url.indexOf('/api/game?') === 0) return DETAIL;
+  if (url === '/api/launch?title_id=CUSA41712') return { ok: false, confirm: true, open: 'Civ VII' };
   return url.indexOf('/api/log') === 0 ? { log: 'a\nb' } : url.indexOf('/api/config') === 0 ? CFG :
     url.indexOf('/api/games') === 0 ? { version: 'PS4Mount test', games: GAMES } : { ok: true, message: 'ok ' + url };
 }
@@ -71,6 +78,19 @@ function parses(code, version) {
   await tick();
   ok(p.nav.length === 0, 'index with <dialog> stays');
   ok(d.querySelectorAll('.card').length === 4, 'four game cards');
+  const names = () => [...d.querySelectorAll('.card .name')].map(e => e.textContent).join('|');
+  ok(names() === 'Civ VII|Killzone|N++|Soulstice', 'games in alphabetical order');
+  const chip = t => [...d.querySelectorAll('#summary span')].find(e => e.textContent.indexOf(t) === 0);
+  ok(chip('With DLC: 2') !== undefined, 'With DLC chip counts games with add-ons');
+  w.games.push({ title_id: 'CUSA41712', name: 'Soulstice', version: '01.03', has_patch: false, size: 9e9, state: 'duplicate', mount: '', source: '/mnt/usb1/ps4/CUSA41712', dlc: 0, update_issue: '' }); w.render();
+  ok(chip('Duplicates: 1') !== undefined && d.querySelector('.b-duplicate').textContent === 'Duplicate', 'duplicate chip and badge');
+  w.games.pop(); w.render();
+  w.games.push({ title_id: 'CUSA41713', name: 'Zed', version: '01.00', has_patch: false, size: 1e9, state: 'addons', mount: 'ro', source: '/mnt/usb0/ps4/CUSA41713', dlc: 2, update_issue: '' }); w.render();
+  ok(d.querySelector('.b-addons').textContent === 'Installing add-ons' && !d.querySelector('[data-a="launch"][data-t="CUSA41713"]'), 'game with add-ons to install is not ready and has no Play');
+  w.games.pop(); w.render();
+  chip('With DLC').click(); ok(names() === 'Civ VII|Soulstice', 'With DLC filter');
+  chip('Ready').click(); ok(names() === 'N++|Soulstice', 'Ready filter');
+  chip('4 game(s)').click(); ok(d.querySelectorAll('.card').length === 4, 'all games again');
   ok(d.querySelector('[data-a="restore"][data-t="CUSA28732"]') !== null, 'running game has Move pkgs back');
   ok(d.querySelector('[data-a="restore"][data-t="CUSA00190"]') === null, 'internal game has no Move pkgs back');
   d.getElementById('settingsbtn').click(); await tick();
@@ -99,14 +119,14 @@ function parses(code, version) {
   d.getElementById('s-pick').click(); await tick();
   const rows = d.querySelectorAll('#p-rows tr');
   ok(d.getElementById('pickdlg').hasAttribute('open') && rows.length === 3, 'picker lists 3 games (internal left out)');
-  ok(rows[1].textContent.includes('Game, update and 35 add-ons'), 'row says game, update and add-ons are moved back');
+  ok(rows[0].textContent.includes('Game, update and 35 add-ons'), 'row says game, update and add-ons are moved back');
   ok(d.querySelector('#pickdlg .note').textContent.includes('all its add-ons'), 'picker note about add-ons');
   ok(d.getElementById('p-go').disabled, 'nothing selected: button disabled');
   const bx = d.querySelectorAll('#p-rows input');
   bx[0].checked = true; bx[2].checked = true; d.getElementById('p-rows').dispatchEvent(new w.Event('change', { bubbles: true }));
   ok(!d.getElementById('p-go').disabled && d.getElementById('p-info').textContent.includes('2 game(s) selected, removed from the library 1 at a time'), 'two selected, groups of 1 shown');
   reqs.length = 0; d.getElementById('p-go').click(); await tick();
-  ok(reqs[0].body === 'restore_batch=1' && reqs[1].url === '/api/restore' && reqs[1].body === 'title_ids=CUSA00791,CUSA41712', 'selected restore sends the two title ids');
+  ok(reqs[0].body === 'restore_batch=1' && reqs[1].url === '/api/restore' && reqs[1].body === 'title_ids=CUSA28732,CUSA41712', 'selected restore sends the two title ids');
   ok(!d.getElementById('pickdlg').hasAttribute('open'), 'picker closed after starting');
   d.getElementById('settingsbtn').click(); await tick();
   d.getElementById('s-pick').click(); await tick();
@@ -115,11 +135,62 @@ function parses(code, version) {
   reqs.length = 0; rs.value = '7';
   d.getElementById('setform').dispatchEvent(new w.Event('submit', { cancelable: true })); await tick();
   ok(reqs[0] && reqs[0].url === '/api/config' && reqs[0].body.includes('restore_batch=7'), 'Save sends restore_batch');
+  d.getElementById('settingsbtn').click(); await tick();
+  ok(d.getElementById('s-dlccopy').checked, 'copy add-ons checked from the config');
+  d.getElementById('s-dlccopy').checked = false; reqs.length = 0;
+  d.getElementById('setform').dispatchEvent(new w.Event('submit', { cancelable: true })); await tick();
+  ok(reqs[0] && reqs[0].body.includes('dlc_copy=0'), 'Save sends dlc_copy=0');
+
+  // updates, add-ons and the play button
+  ok(d.querySelector('.play[data-t="CUSA00791"]') !== null && d.querySelector('.play[data-t="CUSA28732"]') === null, 'play button on ready games only');
+  ok(d.querySelector('[data-a="updates"][data-t="CUSA00791"]') !== null && d.querySelector('[data-a="updates"][data-t="CUSA41712"]') === null, 'Updates button only with two or more updates');
+  ok(d.querySelector('[data-a="dlcs"][data-t="CUSA41712"]') !== null && d.querySelector('[data-a="dlcs"][data-t="CUSA00791"]') === null, 'Add-ons button only with add-ons');
+  ok(d.querySelector('[data-a="dlcs"][data-t="CUSA28732"]').disabled, 'running game: add-ons cannot be changed');
+  ok(d.querySelector('.card:nth-child(4) .meta').textContent.includes('1 of 3 add-ons'), 'card shows add-ons on of total');
+  reqs.length = 0; d.querySelector('.play[data-t="CUSA00791"]').click(); await tick();
+  ok(reqs[0].url === '/api/launch?title_id=CUSA00791' && reqs[0].method === 'POST', 'play starts the game');
+  let asked = '';
+  w.confirm = m => { asked = m; return true; };
+  reqs.length = 0; d.querySelector('.play[data-t="CUSA41712"]').click(); await tick(); await tick();
+  ok(asked.includes('Civ VII is open') && reqs[1] && reqs[1].url === '/api/launch?title_id=CUSA41712&force=1', 'another game open: asks, then closes it and starts');
+  w.confirm = () => false;
+  reqs.length = 0; d.querySelector('.play[data-t="CUSA41712"]').click(); await tick(); await tick();
+  ok(reqs.filter(r => r.url.indexOf('/api/launch') === 0).length === 1, 'refused: the open game is left alone');
+  w.confirm = () => (w.__confirm !== undefined ? w.__confirm : true);
+  d.querySelector('[data-a="updates"][data-t="CUSA00791"]').click(); await tick();
+  ok(d.getElementById('upddlg').hasAttribute('open') && d.querySelectorAll('#u-rows tr').length === 2, 'updates dialog lists both');
+  ok(d.getElementById('u-go').disabled, 'the update in use cannot be chosen again');
+  d.querySelectorAll('#u-rows input')[1].checked = true; d.getElementById('u-rows').dispatchEvent(new w.Event('change', { bubbles: true }));
+  reqs.length = 0; d.getElementById('u-go').click(); await tick();
+  ok(reqs[0].url === '/api/update?title_id=CUSA41712' && reqs[0].body === 'file=replaced%2Fpatch-1.pkg', 'update choice sent');
+  d.querySelector('[data-a="dlcs"][data-t="CUSA41712"]').click(); await tick();
+  const db = d.querySelectorAll('#d-rows input');
+  ok(db.length === 3 && db[0].checked && !db[1].checked, 'add-ons dialog shows which are on');
+  const dr = d.querySelectorAll('#d-rows tr');
+  ok(dr[0].textContent.includes('Installed') && dr[1].textContent.includes('Problem: copy stopped'), 'add-ons dialog shows the copy status');
+  ok(dr[2].textContent.includes('Not installed'), 'add-ons dialog shows an add-on not installed');
+  db[2].checked = true; d.getElementById('d-rows').dispatchEvent(new w.Event('change', { bubbles: true }));
+  ok(db[1].disabled && d.getElementById('d-info').textContent.includes('limit reached'), 'past the limit the others cannot be turned on');
+  reqs.length = 0; d.getElementById('d-go').click(); await tick();
+  ok(reqs[0].url === '/api/dlc?title_id=CUSA41712' &&
+     reqs[0].body === 'on=' + encodeURIComponent('EP0001-CUSA41712_00-AAAAAAAAAAAAAAAA,EP0001-CUSA41712_00-CCCCCCCCCCCCCCCC'), 'add-on choice sent');
 
   // --- legacy page
   p = page('legacy.html', {}); ({ w, d, reqs } = p);
   await tick();
   ok(d.querySelectorAll('.card').length === 4 && d.getElementById('ver').textContent === 'PS4Mount test', 'legacy lists the games');
+  const lnames = () => [].map.call(d.querySelectorAll('.card .name'), x => x.textContent).join('|');
+  ok(lnames() === 'Civ VII|Killzone|N++|Soulstice', 'legacy games in alphabetical order');
+  const lchip = t => [].filter.call(d.querySelectorAll('#summary span'), x => x.textContent.indexOf(t) === 0)[0];
+  w.games.push({ title_id: 'CUSA41712', name: 'Soulstice', version: '01.03', has_patch: false, size: 9e9, state: 'duplicate', mount: '', source: '/mnt/usb1/ps4/CUSA41712', dlc: 0, update_issue: '' }); w.render();
+  ok(lchip('Duplicates: 1') !== undefined && d.querySelector('.b-duplicate').textContent === 'Duplicate', 'legacy duplicate chip and badge');
+  w.games.pop(); w.render();
+  w.games.push({ title_id: 'CUSA41713', name: 'Zed', version: '01.00', has_patch: false, size: 1e9, state: 'addons', mount: 'ro', source: '/mnt/usb0/ps4/CUSA41713', dlc: 2, update_issue: '' }); w.render();
+  ok(d.querySelector('.b-addons').textContent === 'Installing add-ons' && !d.querySelector('[data-a="launch"][data-t="CUSA41713"]'), 'legacy game with add-ons to install is not ready and has no Play');
+  w.games.pop(); w.render();
+  lchip('With DLC').click(); ok(lnames() === 'Civ VII|Soulstice', 'legacy With DLC filter');
+  lchip('Ready').click(); ok(lnames() === 'N++|Soulstice', 'legacy Ready filter');
+  lchip('4 game(s)').click(); ok(d.querySelectorAll('.card').length === 4, 'legacy all games again');
   ok(!/=>|\blet\b|\bconst\b|`|fetch\(|showModal|<dialog/.test(fs.readFileSync(W + 'legacy.html', 'utf8').split('<script>')[1]), 'legacy script is ES5 without fetch or dialog');
   d.getElementById('nav-settings').click(); await tick();
   ok(d.getElementById('v-settings').className.includes('on') && d.getElementById('s-rsize').value === '5', 'legacy settings page with group 5');
@@ -135,6 +206,10 @@ function parses(code, version) {
   lr.value = '2'; reqs.length = 0; d.getElementById('s-restore').click(); await tick();
   ok(reqs[0].body === 'restore_batch=2' && reqs[1].url === '/api/restore' && reqs[1].body === '', 'legacy move all: group 2 then restore all');
   d.getElementById('nav-settings').click(); await tick();
+  ok(d.getElementById('s-dlccopy').checked, 'legacy copy add-ons checked from the config');
+  d.getElementById('s-dlccopy').checked = false; reqs.length = 0; d.getElementById('s-save').click(); await tick();
+  ok(reqs[0] && reqs[0].body.includes('dlc_copy=0'), 'legacy Save sends dlc_copy=0');
+  d.getElementById('nav-settings').click(); await tick();
   d.getElementById('s-rsize').value = '1';
   d.getElementById('s-pick').click(); await tick();
   ok(d.getElementById('v-pick').className.includes('on') && d.querySelectorAll('#p-rows tr').length === 3, 'legacy picker page with 3 games');
@@ -142,10 +217,43 @@ function parses(code, version) {
   lb[2].click();
   ok(d.getElementById('p-info').textContent.includes('2 game(s) selected, removed from the library 1 at a time'), 'legacy picker counts and groups');
   reqs.length = 0; d.getElementById('p-go').click(); await tick();
-  ok(reqs[1].body === 'title_ids=CUSA28732,CUSA41712', 'legacy selected restore sends title ids');
+  ok(reqs[1].body === 'title_ids=CUSA00791,CUSA41712', 'legacy selected restore sends title ids');
   d.getElementById('nav-log').click(); await tick();
   ok(d.getElementById('v-log').className.includes('on') && d.getElementById('log').textContent === 'a\nb', 'legacy log page');
   d.getElementById('l-back').click();
   reqs.length = 0; d.querySelector('[data-a="unmount"][data-t="CUSA00791"]').click(); await tick();
   ok(reqs[0].url === '/api/unmount?title_id=CUSA00791' && reqs[0].method === 'POST', 'legacy card action posts');
+  ok(d.querySelector('.play[data-t="CUSA00791"]') !== null && d.querySelector('.play[data-t="CUSA28732"]') === null, 'legacy play button on ready games only');
+  ok(d.querySelector('[data-a="updates"][data-t="CUSA00791"]') !== null && d.querySelector('[data-a="updates"][data-t="CUSA41712"]') === null, 'legacy Updates button only with two or more updates');
+  ok(d.querySelector('[data-a="dlcs"][data-t="CUSA41712"]') !== null && d.querySelector('[data-a="dlcs"][data-t="CUSA00791"]') === null, 'legacy Add-ons button only with add-ons');
+  ok(d.querySelector('[data-a="dlcs"][data-t="CUSA28732"]').disabled, 'legacy running game: add-ons cannot be changed');
+  ok(d.querySelectorAll('.card')[3].textContent.includes('1 of 3 add-ons'), 'legacy card shows add-ons on of total');
+  reqs.length = 0; d.querySelector('.play[data-t="CUSA00791"] .tri').click(); await tick();
+  ok(reqs[0] && reqs[0].url === '/api/launch?title_id=CUSA00791' && reqs[0].method === 'POST', 'legacy play starts the game');
+  let lasked = '';
+  w.confirm = m => { lasked = m; return true; };
+  reqs.length = 0; d.querySelector('.play[data-t="CUSA41712"] .tri').click(); await tick(); await tick();
+  ok(lasked.includes('Civ VII is open') && reqs[1] && reqs[1].url === '/api/launch?title_id=CUSA41712&force=1', 'legacy: another game open: asks, then closes it and starts');
+  w.confirm = () => false;
+  reqs.length = 0; d.querySelector('.play[data-t="CUSA41712"] .tri').click(); await tick(); await tick();
+  ok(reqs.filter(r => r.url.indexOf('/api/launch') === 0).length === 1, 'legacy refused: the open game is left alone');
+  w.confirm = () => (w.__confirm !== undefined ? w.__confirm : true);
+  d.querySelector('[data-a="updates"][data-t="CUSA00791"]').click(); await tick();
+  ok(d.getElementById('v-upd').className.includes('on') && d.querySelectorAll('#u-rows tr').length === 2, 'legacy updates page lists both');
+  ok(d.getElementById('u-go').disabled, 'legacy: the update in use cannot be chosen again');
+  d.querySelectorAll('#u-rows input')[1].click();
+  ok(!d.getElementById('u-go').disabled, 'legacy: another update can be chosen');
+  reqs.length = 0; d.getElementById('u-go').click(); await tick();
+  ok(reqs[0].url === '/api/update?title_id=CUSA41712' && reqs[0].body === 'file=replaced%2Fpatch-1.pkg', 'legacy update choice sent');
+  d.querySelector('[data-a="dlcs"][data-t="CUSA41712"]').click(); await tick();
+  const ldb = d.querySelectorAll('#d-rows input');
+  ok(d.getElementById('v-dlc').className.includes('on') && ldb.length === 3 && ldb[0].checked && !ldb[1].checked, 'legacy add-ons page shows which are on');
+  const ldr = d.querySelectorAll('#d-rows tr');
+  ok(ldr[0].textContent.includes('Installed') && ldr[1].textContent.includes('Problem: copy stopped'), 'legacy add-ons page shows the copy status');
+  ok(ldr[2].textContent.includes('Not installed'), 'legacy add-ons page shows an add-on not installed');
+  ldb[2].click();
+  ok(ldb[1].disabled && d.getElementById('d-info').textContent.includes('limit reached'), 'legacy: past the limit the others cannot be turned on');
+  reqs.length = 0; d.getElementById('d-go').click(); await tick();
+  ok(reqs[0].url === '/api/dlc?title_id=CUSA41712' &&
+     reqs[0].body === 'on=' + encodeURIComponent('EP0001-CUSA41712_00-AAAAAAAAAAAAAAAA,EP0001-CUSA41712_00-CCCCCCCCCCCCCCCC'), 'legacy add-on choice sent');
 })();
