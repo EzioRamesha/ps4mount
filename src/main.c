@@ -2908,6 +2908,8 @@ static int list_updates(const char *game, const char *tid, update_t *out, int ma
         update_t *u = &out[n];
         if (first)
             snprintf(u->rel, sizeof(u->rel), "patch.pkg");
+        else if (!e)
+            break;
         else {
             size_t len = strlen(e->d_name);
             if (e->d_name[0] == '.' || len < 5 || len > 50 || strcasecmp(e->d_name + len - 4, ".pkg"))
