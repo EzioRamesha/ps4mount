@@ -144,6 +144,21 @@ static void game_location(const char *root, const char *tid, const char *app_pat
         snprintf(out, n, "%s", app_path);
 }
 
+/* The folder to keep patch.pkg and replaced/ in for tid: game_location()'s own result for
+ * a game PS4Mount organized into <root>/ps4/<TID> (already a folder), the folder of its
+ * own app.pkg otherwise (game_location() returns the pkg file itself in that case, so its
+ * own folder, not the pkg's path, is what update-related files sit alongside). */
+static void update_dir(const char *root, const char *tid, const char *app_path, char *out, size_t n) {
+    char loc[PATH_MAX];
+    game_location(root, tid, app_path, loc, sizeof(loc));
+    if (strcmp(loc, app_path)) {
+        snprintf(out, n, "%s", loc);
+        return;
+    }
+    const char *slash = strrchr(loc, '/');
+    snprintf(out, n, "%.*s", slash ? (int)(slash - loc) : 0, loc);
+}
+
 typedef struct { char useless[45]; char message[3075]; } notify_request_t;
 int sceUserServiceInitialize(void *);
 int sceUserServiceGetForegroundUser(uint32_t *user_id);
@@ -3692,8 +3707,10 @@ int app_game_json(const char *tid, buf_t *out, char *msg, size_t cap) {
         snprintf(msg, cap, "%s is not on any connected drive", tid);
         return -1;
     }
+    char updir[PATH_MAX];
+    update_dir(root, tid, t.app_path, updir, sizeof(updir));
     static update_t ups[32];
-    int nu = list_updates(t.dir, tid, ups, 32);
+    int nu = list_updates(updir, tid, ups, 32);
     buf_printf(out, "{\"title_id\":\"%s\",\"name\":", tid);
     json_str(out, t.name);
     buf_printf(out, ",\"dlc_limit\":%d,\"updates\":[", DLC_LIMIT);
@@ -3802,9 +3819,11 @@ int app_choose_dlc(const char *tid, const char *on, char *msg, size_t cap) {
 static void apply_update_choice(const char *tid, const char *rel) {
     char root[32], game[PATH_MAX], from[PATH_MAX + 64], cur[PATH_MAX + 16], aside[64], old[PATH_MAX + 64];
     char was_cur[PATH_MAX], was_new[PATH_MAX];
-    if (find_root(tid, root, sizeof(root)) || game_open(tid))
+    title_src_t t;
+    if (find_root(tid, root, sizeof(root)) || game_open(tid) || src_open(&t, root, tid))
         return;
-    snprintf(game, sizeof(game), "%s/ps4/%s", root, tid);
+    update_dir(root, tid, t.app_path, game, sizeof(game));
+    src_close(&t);
     snprintf(from, sizeof(from), "%s/%s", game, rel);
     snprintf(cur, sizeof(cur), "%s/patch.pkg", game);
     if (!exists(from) || aside_name(game, aside, sizeof(aside)))
