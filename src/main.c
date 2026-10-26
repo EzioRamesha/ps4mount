@@ -21,6 +21,7 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <pthread_np.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -5921,6 +5922,10 @@ static void local_ip(char *out, size_t cap) {
 }
 
 int main(void) {
+    /* elfldr runs every payload as "payload.elf": name this one so it can be told apart in
+     * the payload manager's process list and picked out safely when the panel or another
+     * tool needs to stop it. */
+    pthread_set_name_np(pthread_self(), "ps4mount");
     int lock = single_instance();
     if (lock < 0) {
         if (errno == EADDRINUSE) {
