@@ -144,21 +144,6 @@ static void game_location(const char *root, const char *tid, const char *app_pat
         snprintf(out, n, "%s", app_path);
 }
 
-/* The folder to keep patch.pkg and replaced/ in for tid: game_location()'s own result for
- * a game PS4Mount organized into <root>/ps4/<TID> (already a folder), the folder of its
- * own app.pkg otherwise (game_location() returns the pkg file itself in that case, so its
- * own folder, not the pkg's path, is what update-related files sit alongside). */
-static void update_dir(const char *root, const char *tid, const char *app_path, char *out, size_t n) {
-    char loc[PATH_MAX];
-    game_location(root, tid, app_path, loc, sizeof(loc));
-    if (strcmp(loc, app_path)) {
-        snprintf(out, n, "%s", loc);
-        return;
-    }
-    const char *slash = strrchr(loc, '/');
-    snprintf(out, n, "%.*s", slash ? (int)(slash - loc) : 0, loc);
-}
-
 typedef struct { char useless[45]; char message[3075]; } notify_request_t;
 int sceUserServiceInitialize(void *);
 int sceUserServiceGetForegroundUser(uint32_t *user_id);
@@ -3644,62 +3629,6 @@ static void addons_json(buf_t *out, const catalog_t *cat, const cat_game_t *g) {
 
 /* --- updates and add-ons chosen in the panel, starting a game --- */
 
-typedef struct {
-    char rel[64]; /* in the game folder: patch.pkg (in use) or replaced/<name> */
-    char ver[16], name[256];
-} update_t;
-
-static int update_cmp(const void *a, const void *b) {
-    const update_t *x = a, *y = b;
-    int ax = !strcmp(x->rel, "patch.pkg"), ay = !strcmp(y->rel, "patch.pkg");
-    if (ax != ay)
-        return ay - ax; /* the one in use first */
-    return strcmp(y->ver, x->ver); /* then the newest */
-}
-
-/* The updates of the game folder: patch.pkg and the ones kept in replaced/. */
-static int list_updates(const char *game, const char *tid, update_t *out, int max) {
-    int n = 0;
-    char sub[PATH_MAX], p[PATH_MAX + 64];
-    snprintf(sub, sizeof(sub), "%s/replaced", game);
-    DIR *d = opendir(sub);
-    struct dirent *e = NULL;
-    for (int first = 1; n < max && (first || (d && (e = readdir(d)))); first = 0) {
-        update_t *u = &out[n];
-        if (first)
-            snprintf(u->rel, sizeof(u->rel), "patch.pkg");
-        else if (!e)
-            break;
-        else {
-            size_t len = strlen(e->d_name);
-            if (e->d_name[0] == '.' || len < 5 || len > 50 || strcasecmp(e->d_name + len - 4, ".pkg"))
-                continue;
-            snprintf(u->rel, sizeof(u->rel), "replaced/%s", e->d_name);
-        }
-        snprintf(p, sizeof(p), "%s/%s", game, u->rel);
-        pkg_t pkg;
-        if (pkg_open(&pkg, p))
-            continue;
-        sfo_t sfo;
-        const sfo_item_t *v = read_sfo(&pkg, &sfo) ? NULL : sfo_get(&sfo, "APP_VER");
-        int ok = !strcmp(pkg.title_id, tid);
-        snprintf(u->ver, sizeof(u->ver), "%s", v && !v->is_int ? v->sval : "?");
-        pkg_close(&pkg);
-        if (!ok)
-            continue;
-        char was[PATH_MAX];
-        if (origin_find(game, u->rel, was, sizeof(was)))
-            snprintf(was, sizeof(was), "%s", u->rel);
-        const char *base = strrchr(was, '/');
-        snprintf(u->name, sizeof(u->name), "%s", base ? base + 1 : was);
-        n++;
-    }
-    if (d)
-        closedir(d);
-    qsort(out, (size_t)n, sizeof(*out), update_cmp);
-    return n;
-}
-
 int app_game_json(const char *tid, buf_t *out, char *msg, size_t cap) {
     char root[32];
     title_src_t t;
@@ -3707,21 +3636,23 @@ int app_game_json(const char *tid, buf_t *out, char *msg, size_t cap) {
         snprintf(msg, cap, "%s is not on any connected drive", tid);
         return -1;
     }
-    char updir[PATH_MAX];
-    update_dir(root, tid, t.app_path, updir, sizeof(updir));
-    static update_t ups[32];
-    int nu = list_updates(updir, tid, ups, 32);
+    const catalog_t *cat = drive_catalog(root);
+    const cat_game_t *g = cat ? catalog_game(cat, tid) : NULL;
+    const cat_pkg_t *ups[2 * CAT_MAX_UPDATES];
+    int nu = g ? catalog_updates_of(g_cat, cat, g, ups, 2 * CAT_MAX_UPDATES) : 0;
+    const cat_pkg_t *used = g ? catalog_patch(g_cat, cat, g) : NULL;
     buf_printf(out, "{\"title_id\":\"%s\",\"name\":", tid);
     json_str(out, t.name);
     buf_printf(out, ",\"dlc_limit\":%d,\"updates\":[", DLC_LIMIT);
     for (int i = 0; i < nu; i++) {
+        const char *base = strrchr(ups[i]->path, '/');
         buf_printf(out, "%s{\"file\":", i ? "," : "");
-        json_str(out, ups[i].rel);
+        json_str(out, ups[i]->app_ver); /* app_set_update() takes a version, not a path */
         buf_printf(out, ",\"version\":");
-        json_str(out, ups[i].ver);
+        json_str(out, ups[i]->app_ver);
         buf_printf(out, ",\"name\":");
-        json_str(out, ups[i].name);
-        buf_printf(out, ",\"active\":%s}", !strcmp(ups[i].rel, "patch.pkg") && t.has_patch ? "true" : "false");
+        json_str(out, base ? base + 1 : ups[i]->path);
+        buf_printf(out, ",\"active\":%s}", ups[i] == used ? "true" : "false");
     }
     buf_printf(out, "],\"dlcs\":[");
     for (int i = 0; i < t.ndlc_all; i++) {
@@ -3745,32 +3676,26 @@ static int game_open(const char *tid) {
 }
 
 /* Changes asked in the panel, made by the main loop between scans. */
-static char g_upd_tid[10], g_upd_rel[64], g_dlc_tid[10], *g_dlc_on;
+static char g_dlc_tid[10], *g_dlc_on;
 
+/* The game page's Updates dialog: rel is the version chosen, validated the same way the
+ * quick toggle's version= query is (see version_param() in web.c). app_set_update() is
+ * all either one needs -- no file is ever touched, the next scan picks whichever
+ * discovered update pkg has this version, wherever it is. */
 int app_choose_update(const char *tid, const char *rel, char *msg, size_t cap) {
-    char root[32];
-    const char *name = rel + 9;
-    if (strncmp(rel, "replaced/", 9) || strlen(rel) >= sizeof(g_upd_rel) || strchr(name, '/') || name[0] == '.' ||
-        strlen(name) < 5 || strcasecmp(name + strlen(name) - 4, ".pkg")) {
-        snprintf(msg, cap, "invalid update file");
-        return -1;
+    size_t l = strlen(rel);
+    if (l && strcmp(rel, CAT_NO_UPDATE)) {
+        if (l != 5 || rel[2] != '.') {
+            snprintf(msg, cap, "invalid update version");
+            return -1;
+        }
+        for (size_t i = 0; i < l; i++)
+            if (i != 2 && (rel[i] < '0' || rel[i] > '9')) {
+                snprintf(msg, cap, "invalid update version");
+                return -1;
+            }
     }
-    if (find_root(tid, root, sizeof(root))) {
-        snprintf(msg, cap, "%s is not on any connected drive", tid);
-        return -1;
-    }
-    if (game_open(tid)) {
-        snprintf(msg, cap, "Close the game before changing its update");
-        return -1;
-    }
-    if (g_upd_tid[0] || g_dlc_tid[0]) {
-        snprintf(msg, cap, "Another change is being made, try again in a moment");
-        return -1;
-    }
-    snprintf(g_upd_rel, sizeof(g_upd_rel), "%s", rel);
-    snprintf(g_upd_tid, sizeof(g_upd_tid), "%s", tid);
-    snprintf(msg, cap, "Changing the update of %s: the game is added again with it", tid);
-    return 0;
+    return app_set_update(tid, rel, msg, cap);
 }
 
 /* on: content IDs of the add-ons to keep on, comma separated (empty: all off). */
@@ -3800,7 +3725,7 @@ int app_choose_dlc(const char *tid, const char *on, char *msg, size_t cap) {
         snprintf(msg, cap, "Close the game before changing its add-ons");
         return -1;
     }
-    if (g_upd_tid[0] || g_dlc_tid[0]) {
+    if (g_dlc_tid[0]) {
         snprintf(msg, cap, "Another change is being made, try again in a moment");
         return -1;
     }
@@ -3812,41 +3737,6 @@ int app_choose_dlc(const char *tid, const char *on, char *msg, size_t cap) {
     snprintf(g_dlc_tid, sizeof(g_dlc_tid), "%s", tid);
     snprintf(msg, cap, "Changing the add-ons of %s: the game is added again with them", tid);
     return 0;
-}
-
-/* The update chosen in the panel becomes patch.pkg; the one in use is kept aside. Both
- * keep their original names for Move pkgs back. */
-static void apply_update_choice(const char *tid, const char *rel) {
-    char root[32], game[PATH_MAX], from[PATH_MAX + 64], cur[PATH_MAX + 16], aside[64], old[PATH_MAX + 64];
-    char was_cur[PATH_MAX], was_new[PATH_MAX];
-    title_src_t t;
-    if (find_root(tid, root, sizeof(root)) || game_open(tid) || src_open(&t, root, tid))
-        return;
-    update_dir(root, tid, t.app_path, game, sizeof(game));
-    src_close(&t);
-    snprintf(from, sizeof(from), "%s/%s", game, rel);
-    snprintf(cur, sizeof(cur), "%s/patch.pkg", game);
-    if (!exists(from) || aside_name(game, aside, sizeof(aside)))
-        return;
-    snprintf(old, sizeof(old), "%s/%s", game, aside);
-    int had = exists(cur), have_cur = !origin_find(game, "patch.pkg", was_cur, sizeof(was_cur)),
-        have_new = !origin_find(game, rel, was_new, sizeof(was_new));
-    if (had && rename(cur, old)) {
-        notify("Could not change the update of %s: %s", tid, strerror(errno));
-        return;
-    }
-    if (rename(from, cur)) {
-        notify("Could not change the update of %s: %s", tid, strerror(errno));
-        if (had)
-            rename(old, cur);
-        return;
-    }
-    if (had && have_cur)
-        origin_add(game, aside, was_cur);
-    /* without a record, the last one for patch.pkg would name the update kept aside */
-    origin_add(game, "patch.pkg", have_new ? was_new : rel + 9);
-    printf("[panel] %s: update %s now in use, %s kept as %s\n", tid, rel, had ? "patch.pkg" : "none", aside);
-    notify("%s: update changed, adding the game again", tid);
 }
 
 /* The add-ons not in on are turned off (/data/ps4mount/addons-off.txt, shared with the
@@ -6095,12 +5985,9 @@ int main(void) {
             g_launch_tid[0] = 0;
             continue;
         }
-        if ((g_upd_tid[0] || g_dlc_tid[0]) && !g_deleting) {
-            if (g_upd_tid[0])
-                apply_update_choice(g_upd_tid, g_upd_rel);
-            if (g_dlc_tid[0])
-                apply_dlc_choice(g_dlc_tid, g_dlc_on ? g_dlc_on : "");
-            g_upd_tid[0] = g_dlc_tid[0] = 0;
+        if (g_dlc_tid[0] && !g_deleting) {
+            apply_dlc_choice(g_dlc_tid, g_dlc_on ? g_dlc_on : "");
+            g_dlc_tid[0] = 0;
             g_next_scan = 0;
             continue;
         }
