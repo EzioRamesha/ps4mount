@@ -161,6 +161,9 @@ int sceAppInstUtilInitialize(void);
 int sceAppInstUtilAppInstallAll(void *);
 int sceAppInstUtilAppUnInstall(const char *);
 int sceKernelSendNotificationRequest(int, notify_request_t *, size_t, int);
+/* SCE_SYSTEM_SERVICE_PARAM_ID_LANG = 1; value is Sony's own SCE_SYSTEM_PARAM_LANG_* enum.
+ * Used by app_lang() to default the panel's language to the console's own. */
+int sceSystemServiceParamGetInt(int param_id, int *value);
 
 static void notify(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void notify(const char *fmt, ...) {
@@ -5393,6 +5396,29 @@ static int pin_valid(const char *s) {
 }
 
 const char *app_pin(void) { return g_cfg.pin; }
+
+/* The console's own language, read once and cached: one of the panel's languages
+ * ("en"/"es"/"pt"/"fr"), or "" when it is not one of them (the panel then falls back to
+ * the browser's own language, as it already did before this existed). */
+const char *app_lang(void) {
+    static char cached[3] = "?";
+    if (cached[0] == '?') {
+        cached[0] = 0;
+        int id;
+        if (!sceSystemServiceParamGetInt(1, &id)) {
+            static const struct {
+                int id;
+                char lang[3];
+            } map[] = {{1, "en"}, {18, "en"}, {3, "es"}, {20, "es"}, {7, "pt"}, {17, "pt"}, {2, "fr"}, {22, "fr"}};
+            for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++)
+                if (map[i].id == id) {
+                    snprintf(cached, sizeof(cached), "%s", map[i].lang);
+                    break;
+                }
+        }
+    }
+    return cached;
+}
 
 static void config_load(void) {
     FILE *f = fopen(CONFIG_PATH, "r");

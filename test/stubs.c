@@ -85,6 +85,7 @@ int app_addon(const char *content_id, int on, char *msg, size_t cap) {
 }
 void app_diag(buf_t *out) { buf_printf(out, "diag\n"); }
 const char *app_pin(void) { return ""; }
+const char *app_lang(void) { return ""; }
 int app_game_json(const char *tid, buf_t *out, char *msg, size_t cap) {
     record("game", tid, msg, cap);
     buf_printf(out, "{\"title_id\":\"%s\",\"updates\":[],\"dlcs\":[]}", tid);

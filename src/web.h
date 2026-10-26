@@ -71,6 +71,9 @@ int app_addon(const char *content_id, int on, char *msg, size_t cap);
 void app_diag(buf_t *out);
 /* Panel PIN (4 to 8 digits), "" when the panel is open to everyone on the network. */
 const char *app_pin(void);
+/* The console's own language as a panel language code ("en"/"es"/"pt"/"fr"), "" when it is
+ * not one of them. */
+const char *app_lang(void);
 
 /* Wrong PINs in a row before every /api/ request is refused for PIN_LOCK_SECONDS. */
 #define PIN_MAX_FAILS 5

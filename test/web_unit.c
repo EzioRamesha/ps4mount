@@ -68,6 +68,8 @@ int app_addon(const char *content_id, int on, char *msg, size_t cap) {
 }
 static const char *test_pin = "";
 const char *app_pin(void) { return test_pin; }
+static const char *test_lang_value = "pt";
+const char *app_lang(void) { return test_lang_value; }
 int app_set_update(const char *tid, const char *ver, char *msg, size_t cap) {
     return snprintf(msg, cap, "%s=[%s]", tid, ver) < 0;
 }
@@ -377,6 +379,13 @@ static void test_addon(int listen_fd) {
     }
 }
 
+static void test_lang(int listen_fd) {
+    printf("console language\n");
+    char resp[512];
+    request(listen_fd, "GET /api/lang HTTP/1.1\r\n\r\n", resp, sizeof(resp));
+    CHECK(strstr(resp, "{\"lang\":\"pt\"}") != NULL);
+}
+
 static void test_fm_api(int listen_fd) {
     printf("file manager parameters\n");
     char resp[4096];
@@ -585,6 +594,7 @@ int main(void) {
         test_speedtest(listen_fd);
         test_log_download(listen_fd);
         test_addon(listen_fd);
+        test_lang(listen_fd);
         test_pin_guard(listen_fd);
         test_stalled_reader(listen_fd);
         test_silent_client(listen_fd);

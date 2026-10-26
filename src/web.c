@@ -643,6 +643,10 @@ void web_handle(int fd) {
         send_log(fd);
     } else if (!strcmp(path, "/api/log.txt")) {
         send_log_file(fd);
+    } else if (!strcmp(path, "/api/lang")) {
+        char j[32];
+        snprintf(j, sizeof(j), "{\"lang\":\"%s\"}", app_lang());
+        reply(fd, "200 OK", "application/json; charset=utf-8", j, strlen(j));
     } else if (!strcmp(path, "/api/problems")) {
         buf_t b = {0};
         app_problems_json(&b);

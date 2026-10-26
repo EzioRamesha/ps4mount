@@ -720,8 +720,12 @@ fr: {
 }
 };
 function langPicked() { try { return localStorage.getItem('ps4mount-lang') || ''; } catch (e) { return ''; } }
+/* Cached result of the last /api/lang check, used (only when no language is picked above)
+ * so the console's own language is the default from the second load on, with no wait on
+ * the first: fetched after this load finishes, reloading once if it changes anything. */
+function langAuto() { try { return localStorage.getItem('ps4mount-lang-auto') || ''; } catch (e) { return ''; } }
 var LANG = (function () {
-  var l = langPicked() || ((navigator.languages && navigator.languages[0]) || navigator.language || 'en').slice(0, 2).toLowerCase();
+  var l = langPicked() || langAuto() || ((navigator.languages && navigator.languages[0]) || navigator.language || 'en').slice(0, 2).toLowerCase();
   return I18N[l] ? l : 'en';
 })();
 var DICT = I18N[LANG] || {};
@@ -1992,6 +1996,18 @@ $('stop').onclick = function () {
 };
 load();
 setInterval(load, 5000);
+/* Keeps the "automatic" default in step with the console's own language setting, without
+ * delaying the first paint above (which already has a language from langAuto() or the
+ * browser) and without ever overriding a language picked in Settings. */
+if (!langPicked()) {
+  fetch('/api/lang', {cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (j) {
+    var l = j && I18N[j.lang] ? j.lang : '';
+    if (l && l !== langAuto()) {
+      localStorage.setItem('ps4mount-lang-auto', l);
+      if (l !== LANG) location.reload();
+    }
+  }).catch(function (e) {});
+}
 </script>
 </body>
 </html>
