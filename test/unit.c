@@ -924,6 +924,9 @@ static void test_policy(void) {
     CHECK(!strcmp(policy_panel_state(&p), "pending"));
     p.mounted = p.registered = 1;
     CHECK(!strcmp(policy_panel_state(&p), "ready"));
+    p.installing_addons = 1;
+    CHECK(!strcmp(policy_panel_state(&p), "addons"));
+    p.installing_addons = 0;
     p.running = 1;
     CHECK(!strcmp(policy_panel_state(&p), "running"));
     p.removed = 1;

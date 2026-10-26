@@ -21,7 +21,6 @@ static int record(const char *call, const char *arg, char *msg, size_t cap) {
 void app_games_json(buf_t *out) { buf_printf(out, "{\"version\":\"test\",\"games\":[]}"); }
 int app_add(const char *tid, char *msg, size_t cap) { return record("add", tid, msg, cap); }
 int app_remove(const char *tid, char *msg, size_t cap) { return record("remove", tid, msg, cap); }
-int app_launch(const char *tid, char *msg, size_t cap) { return record("launch", tid, msg, cap); }
 int app_exclude(const char *tid, int on, char *msg, size_t cap) {
     return record(on ? "exclude" : "include", tid, msg, cap);
 }
@@ -86,3 +85,28 @@ int app_addon(const char *content_id, int on, char *msg, size_t cap) {
 }
 void app_diag(buf_t *out) { buf_printf(out, "diag\n"); }
 const char *app_pin(void) { return ""; }
+int app_game_json(const char *tid, buf_t *out, char *msg, size_t cap) {
+    record("game", tid, msg, cap);
+    buf_printf(out, "{\"title_id\":\"%s\",\"updates\":[],\"dlcs\":[]}", tid);
+    return 0;
+}
+int app_choose_update(const char *tid, const char *rel, char *msg, size_t cap) {
+    char arg[256];
+    snprintf(arg, sizeof(arg), "%s %s", tid, rel);
+    return record("update", arg, msg, cap);
+}
+int app_choose_dlc(const char *tid, const char *on, char *msg, size_t cap) {
+    char arg[4096];
+    snprintf(arg, sizeof(arg), "%s %s", tid, on);
+    return record("dlc", arg, msg, cap);
+}
+int app_launch(const char *tid, int force, char *msg, size_t cap) {
+    char arg[32];
+    snprintf(arg, sizeof(arg), "%s %d", tid, force);
+    record("launch", arg, msg, cap);
+    if (!strcmp(tid, "CUSA00002") && !force) {
+        snprintf(msg, cap, "Uncharted \"4\"");
+        return 1;
+    }
+    return 0;
+}

@@ -49,7 +49,10 @@ The web panel, opened from the **Media** tab:
 - Stops adding games as soon as the system reports a corrupted database, and stops retrying a game
   that failed 3 times, so a problem never turns into an endless loop (see [Safety](#safety)).
 - Remembers what it read of each `.pkg`, so after a restart only new or changed files are read.
-- Games run from the drive; no internal storage is used for the packages.
+- Games run from the drive; no internal storage is used for the game and update packages.
+- Add-ons are installed to internal storage by the system (copied from the drive), so they show up
+  under the game and in the system storage screen. This can be turned off in the settings to use them
+  from the drive instead.
 - Deleting a game from the PS5 removes it from the library only. The `.pkg` is never deleted.
 - Notifications while scanning (how many games were found on each drive) and for added and removed
   games.
@@ -129,6 +132,14 @@ package it uses into a folder per game on the same drive, as earlier versions di
 Games already in this layout keep working with the setting off. Each `CUSAxxxxx` folder also gets a
 `<game name>.txt` file with the title, version and the original file names, so the folders can be told
 apart on a computer.
+
+A game is reported as ready only after its add-ons are installed too. With add-ons copied to internal
+storage, the panel shows the game as **Installing add-ons** until the copies are done; the system copies
+them one at a time and shows its own notice for each. An add-on whose game is not on the
+same drive stays where it is and waits: it is moved and installed as soon as its game is on the drive.
+The scan notification says how many add-ons are waiting.
+
+Keep this layout. To add more games later, copy their `.pkg` files to the root of the drive again.
 
 ### Web panel
 
@@ -232,7 +243,8 @@ Buttons:
 | Games per group | 5 | Size of each group (1 to 50). |
 | Folders to ignore | (none) | Folders, relative to each drive, whose `.pkg` files and subfolders are never used (one per line), for example `/Backup`. |
 | Seconds between scans | 10 | How often the drives are checked (10 to 300). Longer is lighter on drives with many folders; **Scan for games** always checks at once. |
-| Install add-ons (DLC) | On | Installs add-on `.pkg` files. When off, add-ons are not used. |
+| Install add-ons (DLC) | On | Moves and installs add-on `.pkg` files. When off, add-ons are left where they are and not used. |
+| Copy add-ons to internal storage | On | Add-ons are installed to internal storage by the system. When off, they are used from the drive (at most about 29 per game). Turning it off uninstalls the copies. |
 | Use updates and add-ons from other drives | Off | Uses an update or add-on whose game is on another connected drive. Keep both drives connected: when the drive with the update or add-ons is unplugged, the game is added again without them. |
 | Panel PIN | (none) | 4 to 8 digits. With a PIN, each browser must enter it once before using the panel. Leave the field empty to keep the PIN, or tick **Remove the PIN**. |
 

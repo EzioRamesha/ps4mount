@@ -37,15 +37,19 @@ button.danger:hover{border-color:var(--bad)}
 button:disabled{opacity:.45;cursor:default}
 main{padding:20px;max-width:1400px;margin:0 auto}
 .summary{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;color:var(--muted);align-items:center}
-.summary span,.summary .chip{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px 12px}
+.summary span,.summary .chip{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px 12px;cursor:pointer}
+.summary span.on{border-color:var(--accent);color:var(--fg,#fff)}
 .summary span.low{background:#3a1f1d;border-color:#5c2c28;color:#ffb4ac}
 .summary .chip{font:inherit;color:var(--muted);min-height:0;display:inline-flex;font-weight:400}
 .summary .chip.on{border-color:var(--accent);color:var(--fg)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
 .art{aspect-ratio:1/1;background:#0b0d11 center/cover no-repeat;position:relative}
+.play{position:absolute;left:50%;top:50%;width:84px;height:84px;margin:-42px 0 0 -42px;border-radius:50%;padding:0;background:#000b;border:2px solid #fff;opacity:0;transition:opacity .15s}
+.art:hover .play,.play:focus{opacity:1;border-color:#fff}
+.play svg{width:36px;height:36px;margin-left:6px;fill:#fff;vertical-align:middle}
 .badge{position:absolute;left:10px;top:10px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;background:#000a}
-.b-ready{background:var(--ok)}.b-running{background:var(--accent)}.b-removed{background:#555}.b-internal{background:var(--warn)}.b-pending{background:var(--warn)}.b-retrying{background:var(--warn)}.b-duplicate{background:#555}.b-failed{background:var(--bad)}.b-excluded{background:#555}
+.b-ready{background:var(--ok)}.b-running{background:var(--accent)}.b-removed{background:#555}.b-internal{background:var(--warn)}.b-pending{background:var(--warn)}.b-addons{background:var(--warn)}.b-retrying{background:var(--warn)}.b-duplicate{background:#555}.b-failed{background:var(--bad)}.b-excluded{background:#555}
 .info{padding:12px 14px;display:flex;flex-direction:column;gap:4px;flex:1}
 .name{font-weight:600;font-size:16px}
 .meta{color:var(--muted);font-size:13px;word-break:break-all}
@@ -222,6 +226,7 @@ form.settings input.num{width:6em}
     <span class="hint">Smaller groups are gentler on the system when many games are added at once.</span>
   </label>
   <label class="check"><input type="checkbox" id="s-dlc"> Install add-ons (DLC)</label>
+  <label class="check"><input type="checkbox" id="s-dlccopy"> Copy add-ons to internal storage</label>
   <label class="check"><input type="checkbox" id="s-cross"> Use updates and add-ons from other drives</label>
   <div class="hint">For a game on one drive with its update or add-ons on another. Keep both drives connected: without the
     other drive, the game is added again without them.</div>
@@ -262,6 +267,25 @@ form.settings input.num{width:6em}
   <button type="button" id="cf-keep">Keep both</button>
   <button type="button" class="primary" id="cf-overwrite">Overwrite</button>
 </div></dialog>
+<dialog id="upddlg"><h3>Updates of <span id="u-name"></span></h3>
+<div class="note">One update is used at a time. Changing it adds the game again with the chosen update.</div>
+<div class="pickwrap"><table class="picker">
+  <thead><tr><th class="c"></th><th>Version</th><th>File</th></tr></thead>
+  <tbody id="u-rows"></tbody>
+</table></div>
+<div class="row" style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+  <button type="button" id="u-cancel">Cancel</button><button type="button" class="primary" id="u-go" disabled>Use this update</button>
+</div></dialog>
+<dialog id="dlcdlg"><h3>Add-ons of <span id="d-name"></span></h3>
+<div class="note">A game can use at most <span id="d-limit">29</span> add-ons. Changing them adds the game again.</div>
+<div class="pickwrap"><table class="picker">
+  <thead><tr><th class="c"><input type="checkbox" id="d-all" title="Select all"></th><th>Add-on</th><th>Type</th></tr></thead>
+  <tbody id="d-rows"></tbody>
+</table></div>
+<div class="hint" id="d-info"></div>
+<div class="row" style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+  <button type="button" id="d-cancel">Cancel</button><button type="button" class="primary" id="d-go">Save</button>
+</div></dialog>
 <dialog id="logdlg"><h3>Log</h3><pre id="log"></pre>
 <div class="actions" style="padding:10px 0 0"><button class="primary" id="logsave">Download the whole log</button><form method="dialog"><button>Close</button></form></div></dialog>
 <dialog id="diagdlg"><h3>Diagnostics</h3>
@@ -280,8 +304,8 @@ var addonLabels = {on: 'installed', adding: 'being added', off: 'turned off', de
 var kinds = {duplicate: 'Same game on more than one place (this copy is not used)', 'addon-without-game': 'Add-on without its game',
   'update-without-game': 'Update without its game', unusable: 'Cannot be read (damaged, not a PS4 pkg, or not game/update/add-on)',
   incomplete: 'Incomplete: still copying or cut off; used once complete'};
-var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', retrying: 'Retrying', duplicate: 'On another drive', failed: 'Failed', excluded: 'Never added'};
-var order = {running: 0, ready: 1, pending: 2, retrying: 3, failed: 4, removed: 5, excluded: 6, duplicate: 7, internal: 8};
+var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', addons: 'Installing add-ons', retrying: 'Retrying', duplicate: 'On another drive', failed: 'Failed', excluded: 'Never added'};
+var order = {running: 0, ready: 1, addons: 1.5, pending: 2, retrying: 3, failed: 4, removed: 5, excluded: 6, duplicate: 7, internal: 8};
 
 function $(id) { return document.getElementById(id); }
 
@@ -411,7 +435,18 @@ es: {
 'Select all loaded': 'Seleccionar todo lo cargado',
 '{n} selected (includes folders, size not shown)': '{n} seleccionados (incluye carpetas, tamaño no mostrado)',
 'Replace the {n} item(s) already waiting to copy?': '¿Reemplazar los {n} elemento(s) que ya esperan para copiarse?',
-'Replace the {n} item(s) already waiting to move?': '¿Reemplazar los {n} elemento(s) que ya esperan para moverse?'
+'Replace the {n} item(s) already waiting to move?': '¿Reemplazar los {n} elemento(s) que ya esperan para moverse?',
+'{open} is open. It will be closed without saving, then {name} starts.\n\nContinue?': '{open} está abierto. Se cerrará sin guardar y luego se iniciará {name}.\n\n¿Continuar?',
+'Updates': 'Actualizaciones', 'Add-ons': 'Complementos', 'With add-ons: {n}': 'Con complementos: {n}',
+'{n} of {m} add-ons on': '{n} de {m} complementos activados', 'limit reached': 'límite alcanzado',
+'Content': 'Contenido', 'Unlock': 'Desbloqueo', 'Installing add-ons': 'Instalando complementos',
+'Copy add-ons to internal storage': 'Copiar complementos al almacenamiento interno',
+'Updates of': 'Actualizaciones de',
+'One update is used at a time. Changing it adds the game again with the chosen update.': 'Se usa una actualización a la vez. Cambiarla vuelve a añadir el juego con la actualización elegida.',
+'Version': 'Versión', 'File': 'Archivo', 'Use this update': 'Usar esta actualización',
+'Add-ons of': 'Complementos de', 'A game can use at most': 'Un juego puede usar como máximo',
+'add-ons. Changing them adds the game again.': 'complementos. Cambiarlos vuelve a añadir el juego.',
+'Type': 'Tipo'
 },
 pt: {
 'Search game or CUSA': 'Buscar jogo ou CUSA', 'Sort': 'Ordenar', 'Sort by name': 'Ordenar por nome',
@@ -535,7 +570,18 @@ pt: {
 'Select all loaded': 'Selecionar tudo o que foi carregado',
 '{n} selected (includes folders, size not shown)': '{n} selecionados (inclui pastas, tamanho não mostrado)',
 'Replace the {n} item(s) already waiting to copy?': 'Substituir o(s) {n} item(ns) que já esperam para ser copiado(s)?',
-'Replace the {n} item(s) already waiting to move?': 'Substituir o(s) {n} item(ns) que já esperam para ser movido(s)?'
+'Replace the {n} item(s) already waiting to move?': 'Substituir o(s) {n} item(ns) que já esperam para ser movido(s)?',
+'{open} is open. It will be closed without saving, then {name} starts.\n\nContinue?': '{open} está aberto. Ele será fechado sem salvar e então {name} será iniciado.\n\nContinuar?',
+'Updates': 'Atualizações', 'Add-ons': 'Complementos', 'With add-ons: {n}': 'Com complementos: {n}',
+'{n} of {m} add-ons on': '{n} de {m} complementos ativados', 'limit reached': 'limite atingido',
+'Content': 'Conteúdo', 'Unlock': 'Desbloqueio', 'Installing add-ons': 'Instalando complementos',
+'Copy add-ons to internal storage': 'Copiar complementos para o armazenamento interno',
+'Updates of': 'Atualizações de',
+'One update is used at a time. Changing it adds the game again with the chosen update.': 'Apenas uma atualização é usada por vez. Alterá-la adiciona o jogo de novo com a atualização escolhida.',
+'Version': 'Versão', 'File': 'Arquivo', 'Use this update': 'Usar esta atualização',
+'Add-ons of': 'Complementos de', 'A game can use at most': 'Um jogo pode usar no máximo',
+'add-ons. Changing them adds the game again.': 'complementos. Alterá-los adiciona o jogo de novo.',
+'Type': 'Tipo'
 },
 fr: {
 'Search game or CUSA': 'Chercher un jeu ou CUSA', 'Sort': 'Trier', 'Sort by name': 'Trier par nom',
@@ -659,7 +705,18 @@ fr: {
 'Select all loaded': 'Tout sélectionner (chargé)',
 '{n} selected (includes folders, size not shown)': '{n} sélectionné(s) (inclut des dossiers, taille non affichée)',
 'Replace the {n} item(s) already waiting to copy?': 'Remplacer le(s) {n} élément(s) déjà en attente de copie ?',
-'Replace the {n} item(s) already waiting to move?': 'Remplacer le(s) {n} élément(s) déjà en attente de déplacement ?'
+'Replace the {n} item(s) already waiting to move?': 'Remplacer le(s) {n} élément(s) déjà en attente de déplacement ?',
+'{open} is open. It will be closed without saving, then {name} starts.\n\nContinue?': '{open} est ouvert. Il sera fermé sans enregistrer, puis {name} démarrera.\n\nContinuer ?',
+'Updates': 'Mises à jour', 'Add-ons': 'Extensions', 'With add-ons: {n}': 'Avec extensions : {n}',
+'{n} of {m} add-ons on': '{n} sur {m} extensions activées', 'limit reached': 'limite atteinte',
+'Content': 'Contenu', 'Unlock': 'Déverrouillage', 'Installing add-ons': 'Installation des extensions',
+'Copy add-ons to internal storage': 'Copier les extensions vers le stockage interne',
+'Updates of': 'Mises à jour de',
+'One update is used at a time. Changing it adds the game again with the chosen update.': 'Une seule mise à jour est utilisée à la fois. La changer ajoute le jeu à nouveau avec la mise à jour choisie.',
+'Version': 'Version', 'File': 'Fichier', 'Use this update': 'Utiliser cette mise à jour',
+'Add-ons of': 'Extensions de', 'A game can use at most': 'Un jeu peut utiliser au maximum',
+'add-ons. Changing them adds the game again.': 'extensions. Les changer ajoute le jeu à nouveau.',
+'Type': 'Type'
 }
 };
 function langPicked() { try { return localStorage.getItem('ps4mount-lang') || ''; } catch (e) { return ''; } }
@@ -810,6 +867,30 @@ function movedBack(g) {
   return t('Game') + (g.has_patch ? ' + ' + t('Update') : '') +
     (g.dlc ? ' + ' + t('{n} add-on(s)', {n: g.dlc}) : '');
 }
+function gameName(tid) { for (var i = 0; i < games.length; i++) if (games[i].title_id === tid) return games[i].name; return tid; }
+/* Starts the game. When another game is open, asks first (force=0 reports it in j.open
+ * instead of starting); force=1 closes it first, without saving, then starts this one. */
+function launch(tid, force) {
+  busy[tid] = 1; render();
+  api('/api/launch?title_id=' + tid + (force ? '&force=1' : ''), 'POST').then(function (j) {
+    if (j.confirm) {
+      delete busy[tid];
+      if (confirm(t('{open} is open. It will be closed without saving, then {name} starts.\n\nContinue?',
+          {open: j.open, name: gameName(tid)}))) return launch(tid, 1);
+      return;
+    }
+    toast(j.message);
+  }).catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); })
+    .then(function () { delete busy[tid]; load(); });
+}
+/* Internal-storage copy state of an add-on in the openDlcs() dialog (from ac_status: see
+ * src/main.c), or "" when the game does not copy add-ons to internal storage. */
+function copyText(d) {
+  var label = {installed: 'Installed', installing: 'Installing', store: 'From the store', missing: 'Not installed',
+    problem: 'Problem: {reason}'}[d.copy];
+  if (!label) return '';
+  return '<div class="meta">' + esc(d.copy === 'problem' ? t(label, {reason: d.reason || ''}) : t(label)) + '</div>';
+}
 /* Games per group when moving back: digits only, 1 to maxRestore. */
 function restoreSize() {
   var v = $('s-rsize').value;
@@ -827,8 +908,11 @@ function startRestore(size, body) {
     .catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); });
 }
 
+/* hasDlc/"dlc" is a pseudo-state: stateFilter is either a real g.state value or "dlc" (only
+ * games with add-ons, counted separately below since a game keeps its own state too). */
+function hasDlc(g) { return (g.dlc_total || g.dlc) > 0; }
 function render() {
-  var q = $('q').value.toLowerCase(), html = '', shown = 0, counts = {}, by = $('sort').value, dv = $('drive').value;
+  var q = $('q').value.toLowerCase(), html = '', shown = 0, counts = {}, withDlc = 0, by = $('sort').value, dv = $('drive').value;
   var list = games.slice().sort(function (a, b) {
     var k = by === 'state' ? (order[a.state] || 9) - (order[b.state] || 9) : by === 'source' ? (a.source < b.source ? -1 : a.source > b.source ? 1 : 0) : 0;
     return k || a.name.toLowerCase().localeCompare(b.name.toLowerCase());
@@ -838,12 +922,13 @@ function render() {
     if (dv && g.drive !== dv) return;
     onDrive++;
     counts[g.state] = (counts[g.state] || 0) + 1;
+    if (hasDlc(g)) withDlc++;
   });
-  if (stateFilter && !counts[stateFilter]) stateFilter = ''; /* the last game of that state is gone */
+  if (stateFilter && stateFilter !== 'dlc' && !counts[stateFilter]) stateFilter = ''; /* the last game of that state is gone */
   list.forEach(function (g) {
     if (q && (g.name + ' ' + g.title_id).toLowerCase().indexOf(q) < 0) return;
     if (dv && g.drive !== dv) return;
-    if (stateFilter && g.state !== stateFilter) return;
+    if (stateFilter && (stateFilter === 'dlc' ? !hasDlc(g) : g.state !== stateFilter)) return;
     shown++;
     var tid = g.title_id, act = '';
     if (g.state === 'removed') act = '<button class="primary" data-a="mount" data-t="' + tid + '">' + t('Add to library') + '</button>';
@@ -854,6 +939,14 @@ function render() {
     else if (g.state === 'running') act = '<button disabled>' + t('Close the game to remove it') + '</button>';
     if (g.state !== 'excluded' && g.state !== 'internal' && g.state !== 'running')
       act += '<button data-a="exclude" data-t="' + tid + '">' + t('Never add') + '</button>';
+    if (g.state !== 'internal' && g.state !== 'duplicate') {
+      /* Alternates to the inline update select and add-ons checklist below: a dedicated
+         dialog, for a game with more choices than fit comfortably inline. */
+      if (g.updates && g.updates.length > 1)
+        act += '<button data-a="updates" data-t="' + tid + '"' + (g.state === 'running' ? ' disabled' : '') + '>' + t('Updates') + '</button>';
+      if (g.dlc_total > 0)
+        act += '<button data-a="dlcs" data-t="' + tid + '"' + (g.state === 'running' ? ' disabled' : '') + '>' + t('Add-ons') + '</button>';
+    }
     if (g.state !== 'internal' && !/\.pkg$/i.test(g.source))
       act += '<button data-a="restore" data-t="' + tid + '">' + t('Move pkgs back') + '</button>';
     if (busy[tid]) act = '<button disabled>' + t('Please wait…') + '</button>';
@@ -907,6 +1000,9 @@ function render() {
   for (var k in counts)
     s += '<button type="button" data-state="' + k + '" class="chip' + (stateFilter === k ? ' on' : '') + '" title="' +
       t('Show only these games') + '">' + esc(labels[k] ? t(labels[k]) : k) + ': ' + counts[k] + '</button>';
+  if (withDlc)
+    s += '<button type="button" data-state="dlc" class="chip' + (stateFilter === 'dlc' ? ' on' : '') + '" title="' +
+      t('Show only these games') + '">' + t('With add-ons: {n}', {n: withDlc}) + '</button>';
   drives.forEach(function (d) {
     if (!dv || d.name === dv)
       s += '<span' + (d.low || d.speed_state === 'slow' || d.speed_state === 'usb2' ? ' class="low"' : '') +
@@ -981,6 +1077,9 @@ $('grid').addEventListener('click', function (e) {
   var b = e.target.closest('button[data-a]');
   if (!b) return;
   var tid = b.getAttribute('data-t'), a = b.getAttribute('data-a');
+  if (a === 'launch') return launch(tid);
+  if (a === 'updates') return openUpdates(tid);
+  if (a === 'dlcs') return openDlcs(tid);
   if (a === 'unmount' && !confirm(t('Remove {tid} from the library? The pkg stays on the USB drive.', {tid: tid}))) return;
   if (a === 'exclude' && !confirm(t('Never add {tid}? It leaves the library and is skipped by every scan until you click Allow. The pkgs stay on the drive.', {tid: tid}))) return;
   if (a === 'restore' && !confirm(t('Move the pkgs of {tid} (game, update and all its add-ons) back to where they came from, with their original names?\n\nThe open game is closed first. The game leaves the library and PS4Mount stops picking these pkgs up. No pkg is deleted.', {tid: tid}))) return;
@@ -1632,6 +1731,76 @@ $('summary').addEventListener('click', function (e) {
   stateFilter = stateFilter === st ? '' : st; /* click again to show all */
   render();
 });
+/* The per-game page (richer alternative to the inline update select and add-ons checklist
+ * above): opened by the Updates/Add-ons buttons, backed by app_game_json/app_choose_update/
+ * app_choose_dlc. */
+var cur = null;
+function openUpdates(tid) {
+  api('/api/game?title_id=' + tid).then(function (g) {
+    cur = g;
+    $('u-name').textContent = g.name;
+    var rows = '';
+    g.updates.forEach(function (u, i) {
+      rows += '<tr><td class="c"><input type="radio" name="upd" value="' + i + '"' + (u.active ? ' checked' : '') + '></td>' +
+        '<td>v' + esc(u.version) + (u.active ? ' <span class="meta">(' + t('in use') + ')</span>' : '') + '</td>' +
+        '<td>' + esc(u.name) + '<div class="meta">' + esc(u.file) + '</div></td></tr>';
+    });
+    $('u-rows').innerHTML = rows;
+    $('u-go').disabled = true;
+    $('upddlg').showModal();
+  }).catch(function (e) { toast(t('Error: {e}', {e: e.message}), true); });
+}
+$('u-rows').onchange = function () {
+  var r = document.querySelector('input[name=upd]:checked');
+  $('u-go').disabled = !r || cur.updates[+r.value].active;
+};
+$('u-cancel').onclick = function () { $('upddlg').close(); };
+$('u-go').onclick = function () {
+  var r = document.querySelector('input[name=upd]:checked');
+  if (!r) return;
+  var u = cur.updates[+r.value];
+  api('/api/update?title_id=' + cur.title_id, 'POST', 'file=' + encodeURIComponent(u.file))
+    .then(function (j) { toast(j.message); $('upddlg').close(); setTimeout(load, 3000); })
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); });
+};
+function dlcBoxes() { return $('d-rows').getElementsByTagName('input'); }
+function dlcUpdate() {
+  var boxes = dlcBoxes(), n = 0, limit = cur.dlc_limit;
+  for (var i = 0; i < boxes.length; i++) n += boxes[i].checked ? 1 : 0;
+  for (i = 0; i < boxes.length; i++) boxes[i].disabled = !boxes[i].checked && n >= limit;
+  $('d-all').checked = n > 0 && n === Math.min(boxes.length, limit);
+  $('d-info').textContent = t('{n} of {m} add-ons on', {n: n, m: boxes.length}) + (n >= limit ? ' (' + t('limit reached') + ')' : '');
+}
+function openDlcs(tid) {
+  api('/api/game?title_id=' + tid).then(function (g) {
+    cur = g;
+    $('d-name').textContent = g.name;
+    $('d-limit').textContent = g.dlc_limit;
+    var rows = '';
+    g.dlcs.forEach(function (d) {
+      rows += '<tr><td class="c"><input type="checkbox" value="' + esc(d.content_id) + '"' + (d.on ? ' checked' : '') + '></td>' +
+        '<td>' + esc(d.name) + '<div class="meta">' + esc(d.content_id) + '</div></td>' +
+        '<td>' + (d.data ? t('Content') : t('Unlock')) + copyText(d) + '</td></tr>';
+    });
+    $('d-rows').innerHTML = rows;
+    dlcUpdate();
+    $('dlcdlg').showModal();
+  }).catch(function (e) { toast(t('Error: {e}', {e: e.message}), true); });
+}
+$('d-rows').onchange = dlcUpdate;
+$('d-all').onchange = function () {
+  var boxes = dlcBoxes(), on = this.checked;
+  for (var i = 0; i < boxes.length; i++) boxes[i].checked = on && i < cur.dlc_limit;
+  dlcUpdate();
+};
+$('d-cancel').onclick = function () { $('dlcdlg').close(); };
+$('d-go').onclick = function () {
+  var boxes = dlcBoxes(), on = [];
+  for (var i = 0; i < boxes.length; i++) if (boxes[i].checked) on.push(boxes[i].value);
+  api('/api/dlc?title_id=' + cur.title_id, 'POST', 'on=' + encodeURIComponent(on.join(',')))
+    .then(function (j) { toast(j.message); $('dlcdlg').close(); setTimeout(load, 3000); })
+    .catch(function (err) { toast(t('Error: {e}', {e: err.message}), true); });
+};
 $('q').addEventListener('input', render);
 $('sort').onchange = render;
 $('drive').onchange = function () { rescanLabel(); render(); };
@@ -1702,6 +1871,7 @@ $('settingsbtn').onclick = function () {
     $('s-batch').checked = c.batch;
     $('s-size').value = c.batch_size;
     $('s-dlc').checked = c.dlc;
+    $('s-dlccopy').checked = c.dlc_copy;
     $('s-cross').checked = c.cross;
     $('s-organize').checked = c.organize;
     $('s-size').disabled = !c.batch;
@@ -1796,7 +1966,8 @@ $('setform').onsubmit = function (e) {
   var size = $('s-size').value;
   if (!/^[0-9]+$/.test(size) || +size < 1 || +size > 50) { toast('Games per group must be a number from 1 to 50'); return; }
   var body = 'batch=' + ($('s-batch').checked ? 1 : 0) + '&batch_size=' + encodeURIComponent($('s-size').value) +
-    '&dlc=' + ($('s-dlc').checked ? 1 : 0) + '&organize=' + ($('s-organize').checked ? 1 : 0) +
+    '&dlc=' + ($('s-dlc').checked ? 1 : 0) + '&dlc_copy=' + ($('s-dlccopy').checked ? 1 : 0) +
+    '&organize=' + ($('s-organize').checked ? 1 : 0) +
     '&cross=' + ($('s-cross').checked ? 1 : 0) + '&restore_batch=' + $('s-rsize').value +
     '&interval=' + encodeURIComponent($('s-interval').value) + '&ignore=' + encodeURIComponent($('s-ignore').value) +
     '&paths=' + encodeURIComponent($('s-paths').value);

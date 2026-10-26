@@ -22,14 +22,19 @@ input,textarea{font:inherit;background:#0b0d11;color:#e8eaed;border:1px solid #2
 textarea{width:100%;min-height:90px;font-family:monospace}
 .view{padding:16px;display:none}
 .view.on{display:block}
-.summary span{display:inline-block;background:#171b22;border:1px solid #262c36;border-radius:12px;padding:3px 10px;margin:0 6px 6px 0;color:#97a0ab}
+.summary span{display:inline-block;background:#171b22;border:1px solid #262c36;border-radius:12px;padding:3px 10px;margin:0 6px 6px 0;color:#97a0ab;cursor:pointer}
+.summary span.on{border-color:#4c8dff;color:#e6e9ee}
 .card{display:inline-block;vertical-align:top;width:250px;margin:0 12px 12px 0;background:#171b22;border:1px solid #262c36;border-radius:12px;overflow:hidden}
 .card img{display:block;width:250px;height:250px;background:#0b0d11}
+.art{position:relative;width:250px;height:250px}
+.play{position:absolute;left:83px;top:83px;width:84px;height:84px;margin:0;padding:0;border-radius:42px;background:#000;background:rgba(0,0,0,.7);border:2px solid #fff;visibility:hidden}
+.art:hover .play,.play:focus{visibility:visible}
+.tri{display:block;width:0;height:0;margin:0 0 0 32px;border-style:solid;border-width:18px 0 18px 30px;border-color:transparent transparent transparent #fff}
 .info{padding:10px 12px}
 .name{font-weight:bold;font-size:16px}
 .meta{color:#97a0ab;font-size:13px;word-wrap:break-word}
 .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:bold;background:#555;margin-bottom:4px}
-.b-ready{background:#2f9e57}.b-running{background:#3d7bfd}.b-internal,.b-pending{background:#c98b1f}
+.b-ready{background:#2f9e57}.b-running{background:#3d7bfd}.b-internal,.b-pending,.b-addons{background:#c98b1f}
 .actions{padding:0 12px 8px}
 .warn{color:#f0c060;font-size:13px;background:#3a2e12;border:1px solid #5c4818;border-radius:8px;padding:6px 8px;margin-top:4px}
 .box{border:1px solid #262c36;border-radius:10px;padding:12px 14px;margin:0 0 14px}
@@ -72,6 +77,7 @@ pre{white-space:pre-wrap;font-size:12px;background:#0b0d11;padding:12px;border-r
     <label><input type="checkbox" id="s-batch"> Add new games in groups</label>
     <label>Games per group <input type="number" id="s-size" inputmode="numeric" pattern="[0-9]*" min="1" max="50" style="width:6em"></label>
     <label><input type="checkbox" id="s-dlc"> Install add-ons (DLC)</label>
+    <label><input type="checkbox" id="s-dlccopy"> Copy add-ons to internal storage</label>
   </div>
   <div class="box">
     <h3>Restore games to the original path</h3>
@@ -98,6 +104,27 @@ pre{white-space:pre-wrap;font-size:12px;background:#0b0d11;padding:12px;border-r
   <button id="p-cancel">Back</button><button class="danger" id="p-go" disabled>Move selected back</button>
 </div>
 
+<div class="view" id="v-upd">
+  <h2>Updates of <span id="u-name"></span></h2>
+  <p class="note">One update is used at a time. Changing it adds the game again with the chosen update.</p>
+  <table>
+    <thead><tr><th class="c"></th><th>Version</th><th>File</th></tr></thead>
+    <tbody id="u-rows"></tbody>
+  </table>
+  <button id="u-cancel">Back</button><button class="primary" id="u-go" disabled>Use this update</button>
+</div>
+
+<div class="view" id="v-dlc">
+  <h2>Add-ons of <span id="d-name"></span></h2>
+  <p class="note">A game can use at most <span id="d-limit">29</span> add-ons. Changing them adds the game again.</p>
+  <table>
+    <thead><tr><th class="c"><input type="checkbox" id="d-all"></th><th>Add-on</th><th>Type</th></tr></thead>
+    <tbody id="d-rows"></tbody>
+  </table>
+  <p class="hint" id="d-info"></p>
+  <button id="d-cancel">Back</button><button class="primary" id="d-go">Save</button>
+</div>
+
 <div class="view" id="v-log">
   <h2>Log</h2>
   <pre id="log"></pre>
@@ -106,7 +133,8 @@ pre{white-space:pre-wrap;font-size:12px;background:#0b0d11;padding:12px;border-r
 
 <script>
 var games = [], busy = {}, maxRestore = 10, msgTimer = 0;
-var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', duplicate: 'On another drive'};
+var labels = {ready: 'Ready', running: 'Running', removed: 'Not in library', internal: 'Installed on console', pending: 'Adding', addons: 'Installing add-ons', duplicate: 'Duplicate'};
+var chipLabels = {duplicate: 'Duplicates'};
 
 function $(id) { return document.getElementById(id); }
 function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
@@ -134,52 +162,83 @@ function api(path, method, body, done) {
   x.send(body === undefined ? null : body);
 }
 function show(view) {
-  var v = ['v-games', 'v-settings', 'v-pick', 'v-log'];
+  var v = ['v-games', 'v-settings', 'v-pick', 'v-upd', 'v-dlc', 'v-log'];
   for (var i = 0; i < v.length; i++) $(v[i]).className = 'view' + (v[i] === view ? ' on' : '');
   window.scrollTo(0, 0);
 }
+function copyText(d) {
+  var t = { installed: 'Installed', installing: 'Installing', store: 'From the store', missing: 'Not installed', problem: 'Problem: ' + (d.reason || '') }[d.copy];
+  return t ? '<div class="meta">' + esc(t) + '</div>' : '';
+}
 function addons(g) { return g.dlc ? g.dlc + ' add-on' + (g.dlc > 1 ? 's' : '') : 'no add-ons'; }
+function addonsOf(g) {
+  var total = g.dlc_total || g.dlc;
+  return (g.dlc === total ? g.dlc : g.dlc + ' of ' + total) + ' add-on' + (total > 1 ? 's' : '');
+}
 function movedBack(g) { return 'Game' + (g.has_patch ? ', update' : '') + (g.dlc ? ' and ' + addons(g) : ''); }
 
+var filter = '';
+function hasDlc(g) { return (g.dlc_total || g.dlc) > 0; }
+function chip(f, text) { return '<span data-f="' + f + '" class="' + (f === filter ? 'on' : '') + '">' + esc(text) + '</span>'; }
+function byName(a, b) { var x = a.name.toLowerCase(), y = b.name.toLowerCase(); return x < y ? -1 : x > y ? 1 : 0; }
 function render() {
-  var html = '', counts = {}, i, g, act;
+  var html = '', counts = {}, i, g, act, withDlc = 0;
   for (i = 0; i < games.length; i++) {
     g = games[i];
     counts[g.state] = (counts[g.state] || 0) + 1;
+    if (hasDlc(g)) withDlc++;
+    if (filter && (filter === 'dlc' ? !hasDlc(g) : g.state !== filter)) continue;
     act = '';
     if (g.state === 'removed') act = '<button class="primary" data-a="mount" data-t="' + g.title_id + '">Add to library</button>';
     else if (g.state === 'ready') act = '<button class="danger" data-a="unmount" data-t="' + g.title_id + '">Remove from library</button>';
     else if (g.state === 'running') act = '<button disabled>Close the game to remove it</button>';
+    if (g.state !== 'internal' && g.state !== 'duplicate') {
+      if (g.updates > 1) act += '<button data-a="updates" data-t="' + g.title_id + '"' + (g.state === 'running' ? ' disabled' : '') + '>Updates</button>';
+      if (g.dlc_total > 0) act += '<button data-a="dlcs" data-t="' + g.title_id + '"' + (g.state === 'running' ? ' disabled' : '') + '>Add-ons</button>';
+    }
     if (g.state !== 'internal') act += '<button data-a="restore" data-t="' + g.title_id + '">Move pkgs back</button>';
     if (busy[g.title_id]) act = '<button disabled>Please wait...</button>';
-    html += '<div class="card"><img src="/icon/' + g.title_id + '" alt="">' +
+    html += '<div class="card"><div class="art"><img src="/icon/' + g.title_id + '" alt="">' +
+      (g.state === 'ready' && !busy[g.title_id] ? '<button class="play" data-a="launch" data-t="' + g.title_id + '" title="Play">' +
+        '<span class="tri" data-a="launch" data-t="' + g.title_id + '"></span></button>' : '') + '</div>' +
       '<div class="info"><span class="badge b-' + g.state + '">' + esc(labels[g.state] || g.state) + '</span>' +
       '<div class="name">' + esc(g.name) + '</div>' +
       '<div class="meta">' + g.title_id + ' - v' + esc(g.version) + (g.has_patch ? ' (with update)' : '') +
-        (g.dlc ? ' - ' + addons(g) : '') + ' - ' + gb(g.size) + '</div>' +
+        ((g.dlc_total || g.dlc) ? ' - ' + addonsOf(g) : '') + ' - ' + gb(g.size) + '</div>' +
       '<div class="meta">' + esc(g.source) + (g.mount ? ' - mounted ' + g.mount : '') + '</div>' +
       (g.update_issue ? '<div class="warn">' + esc(g.update_issue) + '</div>' : '') + '</div>' +
       '<div class="actions">' + act + '</div></div>';
   }
   $('grid').innerHTML = html;
   $('empty').style.display = games.length ? 'none' : 'block';
-  var s = '<span>' + games.length + ' game(s)</span>';
-  for (var k in counts) s += '<span>' + esc(labels[k] || k) + ': ' + counts[k] + '</span>';
+  var s = chip('', games.length + ' game(s)');
+  for (var k in counts) s += chip(k, (chipLabels[k] || labels[k] || k) + ': ' + counts[k]);
+  s += chip('dlc', 'With DLC: ' + withDlc);
   $('summary').innerHTML = s;
 }
 function load() {
   api('/api/games', 'GET', null, function (err, j) {
     if (err) { say('Could not read the list: ' + err); return; }
-    games = j.games;
+    games = j.games.sort(byName);
     $('ver').innerHTML = esc(j.version);
     render();
   });
 }
 
+$('summary').onclick = function (e) {
+  var c = e.target || e.srcElement;
+  if (!c || !c.getAttribute || c.getAttribute('data-f') === null) return;
+  filter = c.getAttribute('data-f');
+  render();
+};
+
 $('grid').onclick = function (e) {
   var b = e.target || e.srcElement;
   if (!b || !b.getAttribute || !b.getAttribute('data-a')) return;
   var tid = b.getAttribute('data-t'), a = b.getAttribute('data-a');
+  if (a === 'launch') { launch(tid, 0); return; }
+  if (a === 'updates') { openUpdates(tid); return; }
+  if (a === 'dlcs') { openDlcs(tid); return; }
   if (a === 'unmount' && !confirm('Remove ' + tid + ' from the library? The pkg stays on the USB drive.')) return;
   if (a === 'restore' && !confirm('Move the pkgs of ' + tid + ' (game, update and all its add-ons) back to where they came from, ' +
       'with their original names?\n\nThe open game is closed first. The game leaves the library and PS4Mount stops picking ' +
@@ -218,6 +277,7 @@ $('nav-settings').onclick = function () {
     $('s-size').value = c.batch_size;
     $('s-size').disabled = !c.batch;
     $('s-dlc').checked = c.dlc;
+    $('s-dlccopy').checked = c.dlc_copy;
     maxRestore = c.max_restore_batch || 10;
     $('rmax').innerHTML = maxRestore;
     $('s-rsize').value = c.restore_batch || 5;
@@ -257,7 +317,7 @@ $('s-save').onclick = function () {
   var size = $('s-size').value;
   if (!/^[0-9]+$/.test(size) || +size < 1 || +size > 50) { say('Games per group must be a number from 1 to 50'); return; }
   var body = 'batch=' + ($('s-batch').checked ? 1 : 0) + '&batch_size=' + encodeURIComponent($('s-size').value) +
-    '&dlc=' + ($('s-dlc').checked ? 1 : 0) + '&restore_batch=' + $('s-rsize').value + '&paths=' + encodeURIComponent($('s-paths').value);
+    '&dlc=' + ($('s-dlc').checked ? 1 : 0) + '&dlc_copy=' + ($('s-dlccopy').checked ? 1 : 0) + '&restore_batch=' + $('s-rsize').value + '&paths=' + encodeURIComponent($('s-paths').value);
   api('/api/config', 'POST', body, function (err, j) {
     say(err ? (j && j.error ? j.error : 'Error: ' + err) : j.message);
     if (!err) show('v-games');
@@ -326,6 +386,102 @@ $('p-go').onclick = function () {
       'came from?\n\nThe open game is closed now, without saving. The games leave the library' +
       (tids.length > size ? ', ' + size + ' at a time' : '') + '. No pkg is deleted.')) return;
   startRestore(size, 'title_ids=' + tids.join(','));
+};
+
+function gameName(tid) { for (var i = 0; i < games.length; i++) if (games[i].title_id === tid) return games[i].name; return tid; }
+/* Starts the game. Another open game is closed first, without saving, after asking. */
+function launch(tid, force) {
+  busy[tid] = 1;
+  render();
+  api('/api/launch?title_id=' + tid + (force ? '&force=1' : ''), 'POST', null, function (err, j) {
+    delete busy[tid];
+    if (!err && j.confirm) {
+      if (confirm(j.open + ' is open. It will be closed without saving, then ' + gameName(tid) + ' starts.\n\nContinue?')) launch(tid, 1);
+      else load();
+      return;
+    }
+    say(err ? 'Error: ' + err : j.message);
+    load();
+  });
+}
+
+/* --- updates and add-ons of a game --- */
+var cur = null;
+function openUpdates(tid) {
+  api('/api/game?title_id=' + tid, 'GET', null, function (err, g) {
+    if (err) { say('Error: ' + err); return; }
+    cur = g;
+    $('u-name').innerHTML = esc(g.name);
+    var rows = '', u;
+    for (var i = 0; i < g.updates.length; i++) {
+      u = g.updates[i];
+      rows += '<tr><td class="c"><input type="radio" name="upd" value="' + i + '"' + (u.active ? ' checked' : '') + '></td>' +
+        '<td>v' + esc(u.version) + (u.active ? ' <span class="meta">(in use)</span>' : '') + '</td>' +
+        '<td>' + esc(u.name) + '<div class="meta">' + esc(u.file) + '</div></td></tr>';
+    }
+    $('u-rows').innerHTML = rows;
+    var r = $('u-rows').getElementsByTagName('input');
+    for (var k = 0; k < r.length; k++) r[k].onclick = updPick;
+    $('u-go').disabled = true;
+    show('v-upd');
+  });
+}
+function updChosen() {
+  var r = $('u-rows').getElementsByTagName('input');
+  for (var i = 0; i < r.length; i++) if (r[i].checked) return cur.updates[+r[i].value];
+  return null;
+}
+function updPick() { var u = updChosen(); $('u-go').disabled = !u || u.active; }
+$('u-cancel').onclick = function () { show('v-games'); };
+$('u-go').onclick = function () {
+  var u = updChosen();
+  if (!u) return;
+  api('/api/update?title_id=' + cur.title_id, 'POST', 'file=' + encodeURIComponent(u.file), function (err, j) {
+    say(err ? 'Error: ' + err : j.message);
+    if (!err) { show('v-games'); setTimeout(load, 3000); }
+  });
+};
+function dlcBoxes() { return $('d-rows').getElementsByTagName('input'); }
+function dlcUpdate() {
+  var b = dlcBoxes(), n = 0, limit = cur.dlc_limit, i;
+  for (i = 0; i < b.length; i++) n += b[i].checked ? 1 : 0;
+  for (i = 0; i < b.length; i++) b[i].disabled = !b[i].checked && n >= limit;
+  $('d-all').checked = n > 0 && n === Math.min(b.length, limit);
+  $('d-info').innerHTML = n + ' of ' + b.length + ' on' + (n >= limit ? ' (limit reached)' : '');
+}
+function openDlcs(tid) {
+  api('/api/game?title_id=' + tid, 'GET', null, function (err, g) {
+    if (err) { say('Error: ' + err); return; }
+    cur = g;
+    $('d-name').innerHTML = esc(g.name);
+    $('d-limit').innerHTML = g.dlc_limit;
+    var rows = '', d;
+    for (var i = 0; i < g.dlcs.length; i++) {
+      d = g.dlcs[i];
+      rows += '<tr><td class="c"><input type="checkbox" value="' + esc(d.content_id) + '"' + (d.on ? ' checked' : '') + '></td>' +
+        '<td>' + esc(d.name) + '<div class="meta">' + esc(d.content_id) + '</div></td>' +
+        '<td>' + (d.data ? 'Content' : 'Unlock') + copyText(d) + '</td></tr>';
+    }
+    $('d-rows').innerHTML = rows;
+    var b = dlcBoxes();
+    for (var k = 0; k < b.length; k++) b[k].onclick = dlcUpdate;
+    dlcUpdate();
+    show('v-dlc');
+  });
+}
+$('d-all').onclick = function () {
+  var b = dlcBoxes(), on = this.checked;
+  for (var i = 0; i < b.length; i++) b[i].checked = on && i < cur.dlc_limit;
+  dlcUpdate();
+};
+$('d-cancel').onclick = function () { show('v-games'); };
+$('d-go').onclick = function () {
+  var b = dlcBoxes(), on = [];
+  for (var i = 0; i < b.length; i++) if (b[i].checked) on.push(b[i].value);
+  api('/api/dlc?title_id=' + cur.title_id, 'POST', 'on=' + encodeURIComponent(on.join(',')), function (err, j) {
+    say(err ? 'Error: ' + err : j.message);
+    if (!err) { show('v-games'); setTimeout(load, 3000); }
+  });
 };
 
 load();

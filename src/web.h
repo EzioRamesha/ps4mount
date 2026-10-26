@@ -13,8 +13,6 @@
 void app_games_json(buf_t *out);
 int app_add(const char *tid, char *msg, size_t cap);
 int app_remove(const char *tid, char *msg, size_t cap);
-/* Starts a ready game on the console. 0 when the system accepted the launch. */
-int app_launch(const char *tid, char *msg, size_t cap);
 /* on: removes the game from the library and never adds it again; off: allows it again. 0 on success. */
 int app_exclude(const char *tid, int on, char *msg, size_t cap);
 /* Scans every drive now, or only drive ("usb0" ... "ext1") when not NULL. 0 when started. */
@@ -51,6 +49,16 @@ int app_restored_forget(char *msg, size_t cap);
 void app_config_json(buf_t *out);
 /* body: form-encoded settings; 0 when saved, msg says why not. */
 int app_config_set(const char *body, char *msg, size_t cap);
+/* Updates and add-ons of one game, for the panel's dialogs. 0 on success. */
+int app_game_json(const char *tid, buf_t *out, char *msg, size_t cap);
+/* Puts the update rel ("replaced/<name>") in use; the game is added again. */
+int app_choose_update(const char *tid, const char *rel, char *msg, size_t cap);
+/* Keeps on only the add-ons in on (content IDs, comma separated); the game is added again. */
+int app_choose_dlc(const char *tid, const char *on, char *msg, size_t cap);
+/* Starts a ready game on the console (sceSystemServiceLaunchApp; LncUtil lookups do not work
+ * on firmware 11.20). 1 when another game is open and force is 0 (msg: its name); with force
+ * that game is closed first, without saving, before this one is started. 0 on success. */
+int app_launch(const char *tid, int force, char *msg, size_t cap);
 /* Fills an icon0.png for tid; 0 on success. */
 int app_icon(const char *tid, buf_t *out);
 /* {"problems":[{drive, kind, title_id, path}]}: unusable pkgs, duplicates, add-ons and updates without game. */

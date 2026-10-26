@@ -35,7 +35,10 @@ void app_games_json(buf_t *out) {
 }
 int app_add(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "%s", tid) < 0; }
 int app_remove(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "%s", tid) < 0; }
-int app_launch(const char *tid, char *msg, size_t cap) { return snprintf(msg, cap, "launch[%s]", tid) < 0; }
+int app_launch(const char *tid, int force, char *msg, size_t cap) {
+    (void)force;
+    return snprintf(msg, cap, "launch[%s]", tid) < 0;
+}
 int app_rescan(const char *drive, char *msg, size_t cap) {
     return snprintf(msg, cap, "rescan[%s]", drive ? drive : "all") < 0;
 }
@@ -45,6 +48,18 @@ int app_speedtest(const char *drive, char *msg, size_t cap) {
         return -1;
     }
     return snprintf(msg, cap, "speed[%s]", drive) < 0;
+}
+int app_game_json(const char *tid, buf_t *out, char *msg, size_t cap) {
+    (void)msg;
+    (void)cap;
+    buf_printf(out, "{\"title_id\":\"%s\",\"updates\":[],\"dlcs\":[]}", tid);
+    return 0;
+}
+int app_choose_update(const char *tid, const char *rel, char *msg, size_t cap) {
+    return snprintf(msg, cap, "update[%s %s]", tid, rel) < 0;
+}
+int app_choose_dlc(const char *tid, const char *on, char *msg, size_t cap) {
+    return snprintf(msg, cap, "dlc[%s %s]", tid, on) < 0;
 }
 void app_diag(buf_t *out) { buf_printf(out, "diag \"line\"\n"); }
 void app_problems_json(buf_t *out) { buf_printf(out, "{\"problems\":[]}"); }

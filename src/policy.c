@@ -41,7 +41,7 @@ const char *policy_panel_state(const panel_facts_t *f) {
     if (f->running)
         return "running";
     if (f->mounted && f->registered)
-        return "ready";
+        return f->installing_addons ? "addons" : "ready";
     if (f->given_up)
         return "failed";
     return f->retrying ? "retrying" : "pending";

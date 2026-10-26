@@ -157,6 +157,38 @@ static int content_param(const char *path, char *cid) {
     return (p[36] && p[36] != '&') || strncmp(cid + 7, "CUSA", 4) ? -1 : 0;
 }
 
+/* The form field name in body, URL-decoded into out. 0 when present and it fits. */
+static int form_value(const char *body, const char *name, char *out, size_t n) {
+    size_t nl = strlen(name);
+    const char *p = body;
+    while (p && *p) {
+        if (!strncmp(p, name, nl) && p[nl] == '=') {
+            size_t o = 0;
+            for (p += nl + 1; *p && *p != '&'; p++) {
+                int c = (unsigned char)*p;
+                if (c == '%' && p[1] && p[2]) {
+                    char hex[3] = {p[1], p[2], 0};
+                    char *end;
+                    c = (int)strtol(hex, &end, 16);
+                    if (*end)
+                        return -1;
+                    p += 2;
+                } else if (c == '+')
+                    c = ' ';
+                if (o + 1 >= n || c < 0x20)
+                    return -1;
+                out[o++] = (char)c;
+            }
+            out[o] = 0;
+            return 0;
+        }
+        p = strchr(p, '&');
+        if (p)
+            p++;
+    }
+    return -1;
+}
+
 /* drive= of the query: usb0 to usb7 or ext0 to ext1. 1 when given and valid, 0 when absent,
  * -1 when invalid. */
 static int drive_param(const char *path, char *drive, size_t n) {
@@ -404,13 +436,6 @@ void web_handle(int fd) {
             int rc = app_remove(tid, msg, sizeof(msg));
             json_msg(fd, !rc, msg);
         }
-    } else if (post && !strncmp(path, "/api/launch", 11)) {
-        if (title_param(path, tid))
-            json_msg(fd, 0, "invalid title_id");
-        else {
-            int rc = app_launch(tid, msg, sizeof(msg));
-            json_msg(fd, !rc, msg);
-        }
     } else if (!post && !strncmp(path, "/api/fm/list", 12)) {
         char p[1024];
         if (fm_param(path, "path", p, sizeof(p)) || !fm_path_ok(p))
@@ -515,6 +540,72 @@ void web_handle(int fd) {
             int rc = app_speedtest(drive, msg, sizeof(msg));
             json_msg(fd, !rc, msg);
         }
+    } else if (post && !strncmp(path, "/api/launch", 11) && (path[11] == 0 || path[11] == '?')) {
+        /* force comes from the query (e.g. &force=1); our panel's plain /api/launch call never
+         * sends it, so it keeps behaving like a plain launch attempt that can report a blocking
+         * game (rc == 1) without closing it. */
+        if (title_param(path, tid))
+            json_msg(fd, 0, "invalid title_id");
+        else {
+            int rc = app_launch(tid, strstr(path, "&force=1") != NULL, msg, sizeof(msg));
+            if (rc == 1) {
+                /* another game is open: the panel asks before it is closed */
+                buf_t b = {0};
+                buf_printf(&b, "{\"ok\":false,\"confirm\":true,\"open\":\"");
+                for (const char *c = msg; *c; c++) {
+                    if (*c == '"' || *c == '\\')
+                        buf_put(&b, "\\", 1);
+                    if ((unsigned char)*c >= 0x20)
+                        buf_put(&b, c, 1);
+                }
+                buf_printf(&b, "\"}");
+                reply(fd, "200 OK", "application/json; charset=utf-8", b.data, b.len);
+                buf_free(&b);
+            } else
+                json_msg(fd, !rc, msg);
+        }
+    } else if (!post && !strncmp(path, "/api/game?", 10)) {
+        buf_t b = {0};
+        if (title_param(path, tid))
+            json_msg(fd, 0, "invalid title_id");
+        else if (app_game_json(tid, &b, msg, sizeof(msg)))
+            json_msg(fd, 0, msg);
+        else
+            reply(fd, "200 OK", "application/json; charset=utf-8", b.data, b.len);
+        buf_free(&b);
+    } else if (post && !strncmp(path, "/api/update?", 12)) {
+        /* Same URL serves two panel flows: our quick toggle sends the chosen version in the
+         * query ("version="), the game page sends the chosen update file in the POST body
+         * ("file="). Dispatch on which one is present. */
+        if (title_param(path, tid))
+            json_msg(fd, 0, "invalid title_id");
+        else if (strstr(path, "version=")) {
+            char ver[8];
+            if (version_param(path, ver, sizeof(ver)))
+                json_msg(fd, 0, "invalid title_id or version");
+            else {
+                int rc = app_set_update(tid, ver, msg, sizeof(msg));
+                json_msg(fd, !rc, msg);
+            }
+        } else {
+            char file[128];
+            if (form_value(body, "file", file, sizeof(file)))
+                json_msg(fd, 0, "invalid update file");
+            else {
+                int rc = app_choose_update(tid, file, msg, sizeof(msg));
+                json_msg(fd, !rc, msg);
+            }
+        }
+    } else if (post && !strncmp(path, "/api/dlc?", 9)) {
+        char on[64 * 37 + 1];
+        if (title_param(path, tid))
+            json_msg(fd, 0, "invalid title_id");
+        else if (form_value(body, "on", on, sizeof(on)))
+            json_msg(fd, 0, "invalid add-on list");
+        else {
+            int rc = app_choose_dlc(tid, on, msg, sizeof(msg));
+            json_msg(fd, !rc, msg);
+        }
     } else if (post && !strncmp(path, "/api/restore", 12) && (path[12] == 0 || path[12] == '?')) {
         /* ?title_id=<one game>, body title_ids=<games, comma separated>, or neither for all */
         int rc;
@@ -557,14 +648,6 @@ void web_handle(int fd) {
         app_problems_json(&b);
         reply(fd, "200 OK", "application/json; charset=utf-8", b.data, b.len);
         buf_free(&b);
-    } else if (post && !strncmp(path, "/api/update?", 12)) {
-        char ver[8];
-        if (title_param(path, tid) || version_param(path, ver, sizeof(ver)))
-            json_msg(fd, 0, "invalid title_id or version");
-        else {
-            int rc = app_set_update(tid, ver, msg, sizeof(msg));
-            json_msg(fd, !rc, msg);
-        }
     } else if (post && !strncmp(path, "/api/addon?", 11)) {
         char cid[37];
         const char *on = strstr(path, "on=");

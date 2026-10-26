@@ -16,6 +16,9 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
@@ -37,6 +40,7 @@
 
 #include <ps5/kernel.h>
 
+#include "accopy.h"
 #include "build.h"
 #include "catalog.h"
 #include "crypto.h"
@@ -54,7 +58,7 @@
 #include "web.h"
 #include "icon_data.h"
 
-#define VERSION "PS4Mount 0.6.1"
+#define VERSION "PS4Mount 0.7.0"
 #define LOCK_PORT 9032
 #define SCAN_SECONDS 10
 #define STATE_DIR "/data/ps4mount"
@@ -65,18 +69,24 @@
 #define HOLD_DIR "/system_data/ps4mount"
 #define MAX_TITLES 256
 #define MAX_DLC 64
+#define DLC_LIMIT 29 /* add-ons a running game can use (see the README) */
 #define BATCH_QUIET 10 /* seconds without writes to the system databases between groups */
 #define MAX_DLC_TIDS 8
 
 #define MAX_SCAN_PATHS 8
 #define CONFIG_PATH STATE_DIR "/config.txt"
 #define RESTORED_LIST STATE_DIR "/restored.txt" /* pkgs moved back: not picked up again */
+/* Add-ons turned off in the panel (content IDs): left out when their game is added. Shared
+ * by the quick toggle (app_addon), the per-game page (app_choose_dlc) and an add-on deleted
+ * from the system storage screen. */
+#define ADDONS_OFF_FILE STATE_DIR "/addons-off.txt"
 
 /* Settings, kept in CONFIG_PATH and edited in the panel. */
 typedef struct {
     int batch;      /* new games are added in groups */
     int batch_size; /* games per group */
     int dlc;        /* add-ons are moved and installed */
+    int dlc_copy;   /* add-ons are copied to internal storage by the system, not mounted */
     char paths[MAX_SCAN_PATHS][128]; /* organize: folders whose pkgs are moved, relative to each drive; "" is the root */
     int npaths;
     int organize; /* pkgs are moved into <root>/ps4/<TID>/; off: they are used where they are */
@@ -92,7 +102,7 @@ typedef struct {
 #define MAX_INTERVAL 300
 #define MAX_RESTORE_BATCH 10
 
-static config_t g_cfg = {1, 5, 1, {""}, 1, 0, {""}, 0, SCAN_SECONDS, "", 0, 5};
+static config_t g_cfg = {1, 5, 1, 1, {""}, 1, 0, {""}, 0, SCAN_SECONDS, "", 0, 5};
 
 /* Set when the system log reports a corrupted system database: no game is added until
  * the user resumes in the panel. Kept in HALT_FILE across restarts. */
@@ -137,6 +147,15 @@ static void game_location(const char *root, const char *tid, const char *app_pat
 typedef struct { char useless[45]; char message[3075]; } notify_request_t;
 int sceUserServiceInitialize(void *);
 int sceUserServiceGetForegroundUser(uint32_t *user_id);
+/* Starting a game uses sceSystemServiceLaunchApp, the call other PS5 homebrew launchers
+ * use (ps5-payload-dev/websrv). The context layout is theirs too; LncUtil-based lookups
+ * do not work on firmware 11.20, this call does. */
+typedef struct {
+    uint32_t structsize, user_id, app_opt;
+    uint64_t crash_report;
+    uint32_t check_flag;
+} launch_ctx_t;
+int sceSystemServiceLaunchApp(const char *title_id, char **argv, launch_ctx_t *ctx);
 int sceAppInstUtilInitialize(void);
 int sceAppInstUtilAppInstallAll(void *);
 int sceAppInstUtilAppUnInstall(const char *);
@@ -294,6 +313,24 @@ static int layers_on(const char *path) {
     return count;
 }
 
+/* Mounts of the game's package images (/mnt/sandbox/pfsmnt/<TID>-app0 and others). The
+ * system releases them a while after the game process ended. */
+static int pfs_mounts(const char *tid) {
+    int n = getfsstat(NULL, 0, MNT_NOWAIT), count = 0;
+    if (n <= 0)
+        return 0;
+    struct statfs *list = malloc(sizeof(*list) * (size_t)(n + 16));
+    if (!list)
+        return 0;
+    char tag[32];
+    snprintf(tag, sizeof(tag), "/pfsmnt/%s-", tid);
+    n = getfsstat(list, (long)(sizeof(*list) * (size_t)(n + 16)), MNT_NOWAIT);
+    for (int i = 0; i < n; i++)
+        count += strstr(list[i].f_mntonname, tag) != NULL;
+    free(list);
+    return count;
+}
+
 /* A layer is on path but cannot be read: its drive was disconnected (and maybe
  * connected again, which gives it a new mount). */
 static int dead_layer(const char *path) {
@@ -358,6 +395,14 @@ typedef struct {
     int data; /* 1: has data (mounted by the game), 0: only unlocks content */
 } dlc_src_t;
 
+/* Content IDs appear one per line in list (itself wrapped in leading/trailing newlines);
+ * used both to read the add-ons the panel submitted for a game and to test membership. */
+static int dlc_listed(const char *list, const char *cid) {
+    char line[40];
+    snprintf(line, sizeof(line), "\n%.36s\n", cid);
+    return strstr(list, line) != NULL;
+}
+
 /* One game: its pkg plus an optional update and add-ons. */
 typedef struct {
     char dir[PATH_MAX]; /* where the game is: see game_location */
@@ -367,8 +412,8 @@ typedef struct {
     sfo_t app_sfo, patch_sfo;
     char name[128], ver[8], marker[PATH_MAX + 160];
     char update_issue[256]; /* why patch.pkg was ignored, empty when used or absent */
-    dlc_src_t *dlc;
-    int ndlc, dlc_cap;
+    dlc_src_t *dlc; /* add-ons in use, then the ones turned off, up to ndlc_all */
+    int ndlc, ndlc_all, dlc_cap;
     char dlc_tids[MAX_DLC_TIDS][10]; /* add-on title IDs: /user/addcont/<TID> folders */
     int ndlc_tids;
 } title_src_t;
@@ -385,11 +430,11 @@ static void src_close(title_src_t *t) {
     pkg_close(&t->app);
     if (t->has_patch)
         pkg_close(&t->patch);
-    for (int i = 0; i < t->ndlc; i++)
+    for (int i = 0; i < t->ndlc_all; i++)
         pkg_close(&t->dlc[i].pkg);
     free(t->dlc);
     t->dlc = NULL;
-    t->ndlc = t->dlc_cap = 0;
+    t->ndlc = t->ndlc_all = t->dlc_cap = 0;
 }
 
 static int dlc_cmp(const void *a, const void *b) {
@@ -398,21 +443,23 @@ static int dlc_cmp(const void *a, const void *b) {
 
 static int addon_off(const char *content_id);
 
-/* The add-ons the catalog grouped with the game. A second copy of an add-on, and add-ons
- * deleted on the console or turned off in the panel, are left out. */
+/* The add-ons the catalog grouped with the game: the ones in use first, then the ones
+ * turned off in the panel (/data/ps4mount/addons-off.txt, shared with app_addon and the
+ * per-game page's app_choose_dlc), up to ndlc_all, so the per-game page can list and
+ * re-enable them. A second copy of an add-on, and one deleted on the console, is left out. */
 static void dlc_open(title_src_t *t, const catalog_t *c, const cat_game_t *g) {
     const cat_pkg_t *list[CAT_MAX_DLC];
     int nlist = catalog_dlc_of(g_cat, c, g, list, CAT_MAX_DLC);
-    for (int k = 0; k < nlist && t->ndlc < MAX_DLC; k++) {
+    for (int k = 0; k < nlist && t->ndlc_all < MAX_DLC; k++) {
         const cat_pkg_t *p = list[k];
         int dup = 0;
-        for (int i = 0; i < t->ndlc; i++)
+        for (int i = 0; i < t->ndlc_all; i++)
             dup |= !strcmp(t->dlc[i].pkg.content_id, p->content_id);
         char rm[96];
         snprintf(rm, sizeof(rm), STATE_DIR "/%s.removed", p->content_id);
-        if (dup || exists(rm) || addon_off(p->content_id)) /* removed: deleted on the console */
+        if (dup || exists(rm)) /* removed: deleted on the console */
             continue;
-        if (t->ndlc == t->dlc_cap) { /* about 100 KB per add-on: grown as they are found */
+        if (t->ndlc_all == t->dlc_cap) { /* about 100 KB per add-on: grown as they are found */
             int cap = t->dlc_cap ? t->dlc_cap * 2 : 4;
             if (cap > MAX_DLC)
                 cap = MAX_DLC;
@@ -422,7 +469,7 @@ static void dlc_open(title_src_t *t, const catalog_t *c, const cat_game_t *g) {
             t->dlc = grown;
             t->dlc_cap = cap;
         }
-        dlc_src_t *a = &t->dlc[t->ndlc];
+        dlc_src_t *a = &t->dlc[t->ndlc_all];
         snprintf(a->path, sizeof(a->path), "%s", p->path);
         /* the catalog checked the category and the fake key when it first read the pkg;
          * checking the key again on every scan would cost an RSA operation per add-on */
@@ -432,15 +479,33 @@ static void dlc_open(title_src_t *t, const catalog_t *c, const cat_game_t *g) {
             continue;
         }
         a->data = a->pkg.header[0x77] == 0x1b; /* content type: 0x1b with data, 0x1c license only */
-        t->ndlc++;
-        int known = 0;
-        for (int i = 0; i < t->ndlc_tids; i++)
-            known |= !strcmp(t->dlc_tids[i], a->pkg.title_id);
-        if (!known && t->ndlc_tids < MAX_DLC_TIDS)
-            snprintf(t->dlc_tids[t->ndlc_tids++], 10, "%s", a->pkg.title_id);
+        t->ndlc_all++;
     }
-    if (t->ndlc)
-        qsort(t->dlc, (size_t)t->ndlc, sizeof(*t->dlc), dlc_cmp);
+    if (!t->ndlc_all)
+        return;
+    qsort(t->dlc, (size_t)t->ndlc_all, sizeof(*t->dlc), dlc_cmp);
+    /* the add-ons turned off go after the ones in use, in the same order within each group */
+    dlc_src_t *sorted = malloc(sizeof(*sorted) * (size_t)t->ndlc_all);
+    if (!sorted)
+        return;
+    int on = 0, k = 0;
+    for (int pass = 0; pass < 2; pass++)
+        for (int i = 0; i < t->ndlc_all; i++) {
+            int is_off = addon_off(t->dlc[i].pkg.content_id) != 0;
+            if (is_off == pass)
+                sorted[k++] = t->dlc[i];
+            on += !pass && !is_off;
+        }
+    memcpy(t->dlc, sorted, sizeof(*sorted) * (size_t)t->ndlc_all);
+    free(sorted);
+    t->ndlc = on;
+    for (int i = 0; i < t->ndlc; i++) {
+        int known = 0;
+        for (int j = 0; j < t->ndlc_tids; j++)
+            known |= !strcmp(t->dlc_tids[j], t->dlc[i].pkg.title_id);
+        if (!known && t->ndlc_tids < MAX_DLC_TIDS)
+            snprintf(t->dlc_tids[t->ndlc_tids++], 10, "%s", t->dlc[i].pkg.title_id);
+    }
 }
 
 static int first_time(const char *path);
@@ -690,9 +755,25 @@ static int place_dlc(dlc_src_t *a) {
     return rc ? -1 : 0;
 }
 
+/* An add-on turned off: its internal folder and records go, so the game no longer sees it. */
+static void drop_dlc(const pkg_t *pkg) {
+    char p[PATH_MAX];
+    snprintf(p, sizeof(p), HOLD_DIR "/addcont/%s/%s", pkg->title_id, pkg->content_id + 20);
+    if (!exists(p))
+        return;
+    rm_tree(p);
+    snprintf(p, sizeof(p), "/user/playgo/addcont/%s", pkg->content_id);
+    rm_tree(p);
+    snprintf(p, sizeof(p), "/user/appmeta/addcont/%s/%s", pkg->title_id, pkg->content_id + 20);
+    rm_tree(p);
+    printf("[reg] add-on %s turned off\n", pkg->content_id);
+}
+
 /* The ac.pkg link of every add-on exists and reaches its pkg. */
 static int dlc_ready(const title_src_t *t) {
     char p[PATH_MAX];
+    if (g_cfg.dlc_copy)
+        return 1; /* copy mode keeps no links */
     for (int i = 0; i < t->ndlc; i++) {
         snprintf(p, sizeof(p), HOLD_DIR "/addcont/%s/%s/ac.pkg", t->dlc[i].pkg.title_id,
                  t->dlc[i].pkg.content_id + 20);
@@ -700,6 +781,456 @@ static int dlc_ready(const title_src_t *t) {
             return 0;
     }
     return 1;
+}
+
+/* --- add-ons copied to internal storage (copy mode) --- */
+
+/* sceAppInstUtilInstallByPackage arguments: the system copies the pkg at uri into
+ * /user/addcont/<ADD-ON TID>/<LABEL>/ and writes the add-on's addcont.db row itself. */
+typedef struct {
+    const char *uri, *ex_uri, *playgo_scenario_id, *content_id, *content_name, *icon_url;
+    uint64_t unknown_30;
+    uint64_t reserved[7];
+} ac_meta_t;
+typedef struct {
+    char content_id[0x30];
+    int content_type, content_platform;
+} ac_pkg_t;
+typedef struct {
+    char languages[30][8];
+    char scenario_ids[64][3];
+    char content_ids[64][0x30];
+    unsigned char unknown[6480];
+} ac_playgo_t;
+int sceAppInstUtilInstallByPackage(ac_meta_t *, ac_pkg_t *, ac_playgo_t *);
+int sceAppInstUtilAppUnInstallAddcont(const char *title_id, const char *addcont_name);
+
+#define AC_POLL_SECONDS 2
+#define AC_NOT_FOUND 0x80A30004 /* AppInstUtil: no such add-on */
+
+/* One batch of copies at a time: all add-ons to install, of every game, are handed to the
+ * system together after a scan, which copies them one by one in that order. The calls run in their own
+ * thread; the main loop follows each copy in ac_poll (klog copy lines, then the file size). */
+#define AC_RETURN_S 60 /* a call still running this long after the copy reached full size is not waited for */
+#define AC_MAX_JOBS MAX_DLC
+
+typedef struct {
+    int data, started, ended, copy_start, copy_end; /* copy_*: klog lines seen */
+    int no_progress; /* ac.pkg was fully allocated at once: written space shows no progress */
+    volatile int called, rc;
+    time_t full_at; /* when the copy reached full size */
+    char cid[40], game[10], pkg_path[PATH_MAX], name[128], title[128]; /* title: the game's name */
+    uint64_t size;
+    acwait_t wait;
+} ac_job_t;
+
+static ac_job_t g_acj[AC_MAX_JOBS];
+static char g_ac_left[MAX_TITLES][10]; /* games with add-ons past the full batch: not ready after it */
+static int g_ac_nleft;
+static int g_acn, g_ac_ok, g_ac_bad;
+static volatile int g_ac_gen; /* a new batch changes it: late returns of older calls are ignored */
+static time_t g_ac_next, g_ac_since;
+static ac_playgo_t g_ac_playgo;
+
+static int g_ac_submitted; /* the batch was handed to the system; before that it is still being built */
+
+static int ac_busy(void) { return g_acn > 0; }
+
+static ac_job_t *ac_job_of(const char *cid) {
+    for (int i = 0; i < g_acn; i++)
+        if (!g_acj[i].ended && !strcmp(g_acj[i].cid, cid))
+            return &g_acj[i];
+    return NULL;
+}
+
+static void ac_copy_path(char *out, size_t n, const char *cid) {
+    snprintf(out, n, "/user/addcont/%.9s/%s/ac.pkg", cid + 7, cid + 20);
+}
+
+/* <CID>.acpend: written with .accopy when a copy starts, removed when it succeeded. Left
+ * behind, it means a failed or partial copy that ac_reconcile still has to clean up. */
+static void ac_pend_path(char *out, size_t n, const char *cid) { snprintf(out, n, STATE_DIR "/%s.acpend", cid); }
+
+static void *ac_install_thread(void *arg) {
+    int gen = (int)(intptr_t)arg;
+    for (int i = 0; i < g_acn && g_ac_gen == gen; i++) {
+        ac_job_t *j = &g_acj[i];
+        ac_meta_t meta;
+        ac_pkg_t info;
+        char name[32];
+        memset(&meta, 0, sizeof(meta));
+        memset(&info, 0, sizeof(info));
+        memset(&g_ac_playgo, 0, sizeof(g_ac_playgo));
+        snprintf(name, sizeof(name), "%s (Add-on)", j->game);
+        meta.uri = j->pkg_path;
+        meta.ex_uri = meta.playgo_scenario_id = meta.content_id = meta.icon_url = "";
+        meta.content_name = name;
+        int rc = sceAppInstUtilInstallByPackage(&meta, &info, &g_ac_playgo);
+        printf("[accopy] %s: InstallByPackage=0x%08x\n", meta.uri, rc);
+        if (g_ac_gen != gen)
+            break; /* given up on: a newer batch owns the jobs */
+        j->rc = rc;
+        j->called = 1;
+    }
+    return NULL;
+}
+
+/* Adds one add-on to the batch being built. 0 when added; 1 when the batch is full (it goes
+ * in the next one, not a failure); -1 with why set. The free space
+ * must hold every add-on of the batch. */
+static int ac_queue(const dlc_src_t *a, const char *game_tid, char *why, size_t cap) {
+    struct statfs sf;
+    if (g_acn == AC_MAX_JOBS) {
+        return 1;
+    }
+    if (statfs("/user", &sf)) {
+        snprintf(why, cap, "free space unknown (%s)", strerror(errno));
+        return -1;
+    }
+    uint64_t queued = 0;
+    for (int i = 0; i < g_acn; i++)
+        queued += g_acj[i].size;
+    if (!accopy_space_ok((uint64_t)sf.f_bavail * sf.f_bsize, queued + a->pkg.pkg_size)) {
+        snprintf(why, cap, "not enough free space");
+        return -1;
+    }
+    ac_job_t *j = &g_acj[g_acn];
+    memset(j, 0, sizeof(*j));
+    j->data = a->data;
+    snprintf(j->cid, sizeof(j->cid), "%s", a->pkg.content_id);
+    snprintf(j->game, sizeof(j->game), "%s", game_tid);
+    snprintf(j->pkg_path, sizeof(j->pkg_path), "%s", a->path);
+    const sfo_item_t *it = sfo_get(&a->sfo, "TITLE");
+    snprintf(j->name, sizeof(j->name), "%s", it && !it->is_int ? it->sval : a->pkg.content_id);
+    j->size = a->pkg.pkg_size;
+    char pend[96];
+    ac_pend_path(pend, sizeof(pend), j->cid);
+    if (accopy_mark(STATE_DIR, j->cid, a->path) || write_file(pend, "", 0, 0666)) {
+        snprintf(why, cap, "state files not written");
+        return -1;
+    }
+    g_acn++;
+    printf("[accopy] %s: queued %s (%llu bytes)\n", j->cid, a->path, (unsigned long long)j->size);
+    return 0;
+}
+
+/* Hands the batch to the system. */
+static void ac_submit(void) {
+    if (!g_acn || g_ac_submitted)
+        return;
+    g_ac_submitted = 1;
+    int gen = ++g_ac_gen;
+    g_ac_ok = g_ac_bad = 0;
+    g_ac_since = time(NULL);
+    g_ac_next = g_ac_since + AC_POLL_SECONDS;
+    for (int i = 0; i < g_acn; i++)
+        acwait_start(&g_acj[i].wait, g_ac_since);
+    printf("[accopy] installing %d add-on(s)\n", g_acn);
+    pthread_t th;
+    if (pthread_create(&th, NULL, ac_install_thread, (void *)(intptr_t)gen)) {
+        for (int i = 0; i < g_acn; i++) {
+            g_acj[i].called = 1;
+            g_acj[i].rc = -1; /* failed at the next poll; the partial-copy cleanup undoes the marks */
+        }
+        return;
+    }
+    pthread_detach(th);
+}
+
+/* klog: the system's copy of an add-on started or ended ("...transferSessionId = 0..0-<CID>"). */
+static void ac_copy_event(const char *line) {
+    const char *p = strstr(line, "transferSessionId = ");
+    if (!p || !ac_busy())
+        return;
+    p += 20;
+    const char *dash = strchr(p, '-');
+    if (!dash)
+        return;
+    char cid[40];
+    snprintf(cid, sizeof(cid), "%.36s", dash + 1);
+    ac_job_t *j = ac_job_of(cid);
+    if (!j)
+        return;
+    if (strstr(line, "SendDownloadCopyEnd")) {
+        j->copy_end = 1;
+        g_ac_next = 0; /* followed at once, not at the next poll */
+    } else {
+        j->copy_start = 1;
+        if (!j->started) {
+            j->started = 1;
+            acwait_start(&j->wait, time(NULL));
+        }
+    }
+}
+
+/* Uninstalls an add-on PS4Mount installed: by label, then by content ID. "Not found"
+ * counts as done (the system may have removed it already). */
+static int ac_uninstall(const char *cid) {
+    char dtid[10];
+    snprintf(dtid, sizeof(dtid), "%.9s", cid + 7);
+    int rc = sceAppInstUtilAppUnInstallAddcont(dtid, cid + 20);
+    printf("[accopy] %s: uninstall by label 0x%08x\n", cid, rc);
+    if (rc) {
+        int rc2 = sceAppInstUtilAppUnInstallAddcont(dtid, cid);
+        printf("[accopy] %s: uninstall by content id 0x%08x\n", cid, rc2);
+        if (!rc2 || (rc == (int)AC_NOT_FOUND && rc2 == (int)AC_NOT_FOUND))
+            rc = 0;
+    }
+    return rc;
+}
+
+/* Uninstalls the add-ons PS4Mount copied for game (every game when NULL): their .accopy
+ * file holds the pkg path, <root>/ps4/<GAME>/addcont/... */
+static void ac_uninstall_copies(const char *game) {
+    DIR *d = opendir(STATE_DIR);
+    if (!d)
+        return;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (strlen(e->d_name) != 36 + 7 || strcmp(e->d_name + 36, ".accopy"))
+            continue;
+        char cid[40], path[96], pkg[PATH_MAX] = "", tag[16];
+        snprintf(cid, sizeof(cid), "%.36s", e->d_name);
+        snprintf(path, sizeof(path), STATE_DIR "/%s", e->d_name);
+        int fd = open(path, O_RDONLY);
+        if (fd >= 0) {
+            ssize_t n = read(fd, pkg, sizeof(pkg) - 1);
+            pkg[n > 0 ? n : 0] = 0;
+            close(fd);
+        }
+        snprintf(tag, sizeof(tag), "/ps4/%s/", game ? game : "");
+        if (game && !strstr(pkg, tag))
+            continue;
+        char copy[PATH_MAX];
+        ac_copy_path(copy, sizeof(copy), cid);
+        if (ac_uninstall(cid) || exists(copy))
+            continue;
+        accopy_unmark(STATE_DIR, cid);
+        acfail_clear(STATE_DIR, cid);
+        snprintf(path, sizeof(path), STATE_DIR "/%s.acpg", cid);
+        unlink(path);
+        ac_pend_path(path, sizeof(path), cid);
+        unlink(path);
+        printf("[accopy] %s: uninstalled\n", cid);
+    }
+    closedir(d);
+}
+
+/* Copy status of an add-on for the panel: "installed", "installing", "problem" (why set),
+ * "store", "missing" (not copied) or "" (mount mode). */
+static const char *ac_status(const dlc_src_t *a, int on, char *why, size_t cap) {
+    const char *cid = a->pkg.content_id;
+    char p[PATH_MAX];
+    if (!g_cfg.dlc_copy)
+        return "";
+    if (ac_job_of(cid))
+        return "installing";
+    int marked = accopy_marked(STATE_DIR, cid);
+    ac_pend_path(p, sizeof(p), cid);
+    int pending = exists(p);
+    ac_copy_path(p, sizeof(p), cid);
+    if (!pending && marked && (!a->data || exists(p)))
+        return "installed";
+    if (!pending && a->data && exists(p))
+        return "store";
+    if (on && acfail_get(STATE_DIR, cid, why, cap) >= ACFAIL_MAX)
+        return "problem";
+    why[0] = 0;
+    return "missing";
+}
+
+/* Copy mode: an add-on turned on is not in yet (copying or still to copy). A problem add-on
+ * is never tried again, so it does not hold the game. */
+static int ac_game_waiting(const title_src_t *t) {
+    char why[64];
+    for (int i = 0; i < t->ndlc; i++) {
+        const char *st = ac_status(&t->dlc[i], 1, why, sizeof(why));
+        if (!strcmp(st, "installing") || !strcmp(st, "missing"))
+            return 1;
+    }
+    return 0;
+}
+
+/* Work that waits for the copy in progress: back to mount mode, games removed. */
+static int g_ac_revert;
+static char g_ac_drop[MAX_TITLES][10];
+static int g_ac_ndrop;
+
+static void ac_drop_game(const char *tid) {
+    if (g_ac_ndrop < MAX_TITLES)
+        snprintf(g_ac_drop[g_ac_ndrop++], 10, "%s", tid);
+}
+
+static void ac_tasks(int deleting) {
+    if (ac_busy() || deleting)
+        return;
+    if (g_ac_revert && !g_cfg.dlc_copy) {
+        printf("[accopy] mount mode: removing the copies\n");
+        ac_uninstall_copies(NULL);
+    }
+    g_ac_revert = 0;
+    for (int i = 0; i < g_ac_ndrop; i++)
+        ac_uninstall_copies(g_ac_drop[i]);
+    g_ac_ndrop = 0;
+}
+
+/* STATE_DIR/<CID>.acpg: the system install made /user/playgo/addcont/<CID>, so losing it
+ * later (a registration of the game removes it) means the copy must be installed again. */
+static void ac_playgo_note(const char *cid) {
+    char p[PATH_MAX], q[96];
+    snprintf(p, sizeof(p), "/user/playgo/addcont/%s", cid);
+    snprintf(q, sizeof(q), STATE_DIR "/%s.acpg", cid);
+    if (exists(p))
+        write_file(q, "", 0, 0666);
+    else
+        unlink(q);
+}
+
+static int ac_playgo_ok(const char *cid) {
+    char p[PATH_MAX], q[96];
+    snprintf(p, sizeof(p), "/user/playgo/addcont/%s", cid);
+    snprintf(q, sizeof(q), STATE_DIR "/%s.acpg", cid);
+    return !exists(q) || exists(p);
+}
+
+/* One job of the batch: 1 done, -1 failed (why set), 0 still running. A copy only counts
+ * as running from its klog start line, or once every job before it ended (the system copies
+ * in order), so add-ons waiting in the queue are not taken for stalled. */
+/* The copy is over but its result is not known from the call: done only if the system
+ * wrote its files, after giving the call AC_RETURN_S to return. 1, -1 or 0 (waiting). */
+static int ac_files_written(ac_job_t *j, time_t now, char *why, size_t cap) {
+    if (j->called)
+        return 1;
+    if (!j->full_at)
+        j->full_at = now;
+    if (now - j->full_at < AC_RETURN_S)
+        return 0;
+    char dir[PATH_MAX], q[PATH_MAX + 16];
+    snprintf(dir, sizeof(dir), "/user/addcont/%.9s/%s", j->cid + 7, j->cid + 20);
+    snprintf(q, sizeof(q), "%s/ac.json", dir);
+    int ok = exists(q);
+    snprintf(q, sizeof(q), "%s/ac.pbm", dir);
+    ok = ok && exists(q);
+    printf("[accopy] %s: copy over, call not returned after %d s, ac.json/ac.pbm %s\n", j->cid, AC_RETURN_S,
+           ok ? "present" : "missing");
+    if (ok)
+        return 1;
+    snprintf(why, cap, "install did not finish");
+    return -1;
+}
+
+static int ac_job_step(ac_job_t *j, int head, int next_started, time_t now, char *why, size_t cap) {
+    char p[PATH_MAX];
+    if (j->called && j->rc) {
+        snprintf(why, cap, "install call 0x%08x", j->rc);
+        return -1;
+    }
+    if (!exists(j->pkg_path)) {
+        snprintf(why, cap, "drive disconnected");
+        return -1;
+    }
+    if (!j->data) {
+        /* unlock only: nothing is copied, the call's result is the answer */
+        if (j->called)
+            return 1;
+        if (acwait_step(&j->wait, 0, 1, now) == ACW_TIMEOUT) {
+            snprintf(why, cap, "install call never returned");
+            return -1;
+        }
+        return 0;
+    }
+    if (!j->started) {
+        if (!head)
+            return 0;
+        j->started = 1;
+        acwait_start(&j->wait, now);
+    }
+    /* the system creates ac.pkg at full size first: progress is the space really written,
+     * and only the klog end line says the copy is done */
+    struct stat st;
+    ac_copy_path(p, sizeof(p), j->cid);
+    uint64_t cur = stat(p, &st) ? 0 : (uint64_t)st.st_blocks * 512;
+    int r = acwait_step(&j->wait, cur < j->size ? cur : j->size - 1, j->size, now);
+    if (j->copy_end)
+        return j->called ? 1 : ac_files_written(j, now, why, cap);
+    if (next_started)
+        return ac_files_written(j, now, why, cap); /* the system moved on: its end line was missed */
+    if (r == ACW_TIMEOUT) {
+        snprintf(why, cap, "copy timed out");
+        return -1;
+    }
+    if (cur >= j->size - j->size / 64 && cur && !j->copy_end && j->wait.last == cur && now == j->wait.grew)
+        j->no_progress |= now - j->wait.start < 2 * AC_POLL_SECONDS + 1;
+    if (r == ACW_STALL && !j->no_progress) {
+        snprintf(why, cap, "copy stopped");
+        return -1;
+    }
+    return 0;
+}
+
+/* Called from the main loop: follows the batch, at most every AC_POLL_SECONDS. A failed copy
+ * releases nothing for the others: each job ends on its own. */
+static void ac_poll(void) {
+    if (!g_ac_submitted || time(NULL) < g_ac_next)
+        return;
+    time_t now = time(NULL);
+    g_ac_next = now + AC_POLL_SECONDS;
+    int head = 1, left = 0;
+    for (int i = 0; i < g_acn; i++) {
+        ac_job_t *j = &g_acj[i];
+        if (j->ended)
+            continue;
+        char why[64] = "";
+        int next_started = 0;
+        for (int k = i + 1; k < g_acn; k++)
+            next_started |= g_acj[k].data && g_acj[k].started && g_acj[k].copy_start;
+        int r = ac_job_step(j, head, next_started, now, why, sizeof(why));
+        if (j->data && !r)
+            head = 0;
+        if (!r) {
+            left++;
+            continue;
+        }
+        j->ended = 1;
+        if (r > 0) {
+            j->ended = 2;
+            char pend[96];
+            ac_pend_path(pend, sizeof(pend), j->cid);
+            unlink(pend);
+            acfail_clear(STATE_DIR, j->cid);
+            ac_playgo_note(j->cid);
+            printf("[accopy] %s: copied\n", j->cid);
+            g_ac_ok++;
+        } else {
+            /* .accopy and .acpend stay: ac_reconcile removes the partial copy */
+            int n = acfail_add(STATE_DIR, j->cid, why);
+            printf("[accopy] %s: failed (%s), %d of %d\n", j->cid, why, n, ACFAIL_MAX);
+            notify("%s: add-on %s not installed (%s)", j->game, j->name, why);
+            g_ac_bad++;
+        }
+    }
+    if (left)
+        return;
+    printf("[accopy] batch done in %ld s, %d installed, %d failed\n", (long)(now - g_ac_since), g_ac_ok, g_ac_bad);
+    if (g_ac_ok)
+        notify("%d add-on%s installed", g_ac_ok, g_ac_ok > 1 ? "s" : "");
+    /* a game is ready to play once all of its add-ons in the batch are in */
+    for (int i = 0; i < g_acn; i++) {
+        int first = 1, all = 1;
+        for (int k = 0; k < g_acn; k++)
+            if (!strcmp(g_acj[k].game, g_acj[i].game)) {
+                first &= k >= i;
+                all &= g_acj[k].ended == 2;
+            }
+        for (int k = 0; k < g_ac_nleft; k++)
+            all &= strcmp(g_ac_left[k], g_acj[i].game) != 0;
+        if (first && all)
+            notify("%s ready to play", g_acj[i].title[0] ? g_acj[i].title : g_acj[i].game);
+    }
+    g_ac_gen++; /* a call that has not returned yet is ignored */
+    g_acn = 0;
+    g_ac_nleft = 0;
+    g_ac_submitted = 0;
 }
 
 static int place_files(title_src_t *t) {
@@ -727,8 +1258,12 @@ static int place_files(title_src_t *t) {
 
     if (place_license(app))
         return -1;
-    for (int i = 0; i < t->ndlc; i++)
-        rc |= place_dlc(&t->dlc[i]);
+    if (!g_cfg.dlc_copy) { /* copy mode: the system installs them (ac_reconcile) */
+        for (int i = 0; i < t->ndlc; i++)
+            rc |= place_dlc(&t->dlc[i]);
+        for (int i = t->ndlc; i < t->ndlc_all; i++)
+            drop_dlc(&t->dlc[i].pkg);
+    }
 
     size_t pl = 0, ppl = 0;
     uint8_t *pg = pkg_entry(app, 0x1001, &pl), *ppg = pat ? pkg_entry(pat, 0x1001, &ppl) : NULL;
@@ -980,6 +1515,118 @@ static int addcont_installed(const char *dtid) {
     return used;
 }
 
+/* The game was registered after the copy started (STATE_DIR/<GAME>.src is written by each
+ * registration): a copy lost now was removed by that registration, not by the user. */
+static int ac_rereg(const char *tid, const char *cid) {
+    char a[64], b[96];
+    struct stat sa, sb;
+    snprintf(a, sizeof(a), STATE_DIR "/%s.src", tid);
+    snprintf(b, sizeof(b), STATE_DIR "/%s.accopy", cid);
+    return !stat(a, &sa) && !stat(b, &sb) && sa.st_mtime > sb.st_mtime;
+}
+
+/* Copy mode, once per scan for a game already in the library: releases add-on folders
+ * still mounted by the mount mode, then takes one step for each add-on (install, uninstall,
+ * turn off). At most one copy runs at a time. */
+static int g_scan_again; /* games were just added: scan again without waiting */
+
+static void ac_reconcile(title_src_t *t) {
+    if (!g_cfg.dlc_copy || !t->ndlc_all)
+        return;
+    const char *tid = t->app.title_id;
+    for (int i = 0; i < t->ndlc_tids; i++) {
+        char target[64], hold[PATH_MAX], from[PATH_MAX];
+        snprintf(target, sizeof(target), "/user/addcont/%s", t->dlc_tids[i]);
+        if (!mounted_from(target, from, sizeof(from)))
+            continue;
+        hold_path(hold, sizeof(hold), "addcont", t->dlc_tids[i]);
+        if (strcmp(from, hold)) {
+            printf("[accopy] %s mounted from %s, add-ons not copied\n", target, from);
+            return;
+        }
+        unmount_all_layers(target, 1);
+        if (mounted_from(target, NULL, 0))
+            return;
+        for (int k = 0; k < t->ndlc_all; k++)
+            if (!strcmp(t->dlc[k].pkg.title_id, t->dlc_tids[i]))
+                drop_dlc(&t->dlc[k].pkg);
+        printf("[accopy] %s: mounted add-ons released for copying\n", target);
+    }
+    int submit_later = g_ac_submitted; /* a batch is running: these add-ons go in the next one */
+    for (int i = 0; i < t->ndlc_all; i++) {
+        dlc_src_t *a = &t->dlc[i];
+        const char *cid = a->pkg.content_id;
+        char p[PATH_MAX], why[64];
+        ac_copy_path(p, sizeof(p), cid);
+        char pend[96];
+        ac_pend_path(pend, sizeof(pend), cid);
+        int busy = ac_job_of(cid) != NULL;
+        if (!busy && exists(pend)) {
+            /* a failed or partial copy: removed before anything else is tried */
+            ac_uninstall(cid);
+            if (!exists(p)) {
+                accopy_unmark(STATE_DIR, cid);
+                unlink(pend);
+                printf("[accopy] %s: failed copy removed\n", cid);
+            }
+            continue;
+        }
+        acin_t in = {0};
+        in.on = i < t->ndlc;
+        in.marked = accopy_marked(STATE_DIR, cid);
+        /* unlock-only add-ons leave no ac.pkg: only our mark says they are there */
+        in.files = a->data ? exists(p) : in.marked;
+        in.store = in.files && !in.marked;
+        in.rereg = in.marked && ac_rereg(tid, cid);
+        in.playgo = ac_playgo_ok(cid);
+        in.fails = acfail_get(STATE_DIR, cid, NULL, 0);
+        in.busy = busy;
+        switch (accopy_decide(&in)) {
+        case AC_REINSTALL:
+            if (submit_later)
+                break;
+            printf("[accopy] %s: lost after the game was registered again, installing again\n", cid);
+            ac_uninstall(cid);
+            if (exists(p))
+                break; /* still there: tried again next scan */
+            accopy_unmark(STATE_DIR, cid);
+            /* fall through */
+        case AC_INSTALL:
+            if (submit_later)
+                break;
+            int q = ac_queue(a, tid, why, sizeof(why));
+            if (!q) {
+                snprintf(g_acj[g_acn - 1].title, sizeof(g_acj[0].title), "%s", t->name);
+            } else if (q > 0) {
+                int k = 0;
+                while (k < g_ac_nleft && strcmp(g_ac_left[k], tid))
+                    k++;
+                if (k == g_ac_nleft && g_ac_nleft < MAX_TITLES)
+                    snprintf(g_ac_left[g_ac_nleft++], 10, "%s", tid);
+            } else {
+                int n = acfail_add(STATE_DIR, cid, why);
+                printf("[accopy] %s: not started (%s), %d of %d\n", cid, why, n, ACFAIL_MAX);
+                notify("%s: add-on %s not installed (%s)", tid, cid + 20, why);
+            }
+            break;
+        case AC_UNINSTALL:
+            if (!ac_uninstall(cid) && !(a->data && exists(p))) {
+                accopy_unmark(STATE_DIR, cid);
+                printf("[accopy] %s: uninstalled (turned off)\n", cid);
+            }
+            break;
+        case AC_TURN_OFF:
+            /* deleted from the system storage screen: off until turned on in the panel */
+            kv_set(ADDONS_OFF_FILE, cid, "off");
+            accopy_unmark(STATE_DIR, cid);
+            printf("[accopy] %s: deleted on the console, turned off\n", cid);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
 /* /user/app/<TID> always, /user/patch/<TID> only with an update and
  * /user/addcont/<ADD-ON TID> for each add-on title. */
 static int mount_paths(const char *tid, int has_patch, char (*dtids)[10], int ndtids) {
@@ -992,7 +1639,14 @@ static int mount_paths(const char *tid, int has_patch, char (*dtids)[10], int nd
     hold_path(hold, sizeof(hold), "patch", tid);
     if (has_patch ? mount_dir(hold, target) : (unmount_all_layers(target, 1), 0))
         return -1;
-    for (int i = 0; i < ndtids; i++) {
+    for (int i = 0; !g_cfg.dlc_copy && i < ndtids; i++) {
+        int copying = 0;
+        for (int k = 0; k < g_acn; k++)
+            copying |= !g_acj[k].ended && !strncmp(g_acj[k].cid + 7, dtids[i], 9);
+        if (copying) {
+            printf("[mount] /user/addcont/%s: a copy is still running, not mounted\n", dtids[i]);
+            continue;
+        }
         if (addcont_installed(dtids[i])) {
             printf("[mount] /user/addcont/%s holds add-ons installed the normal way, not mounted\n", dtids[i]);
             continue;
@@ -1156,8 +1810,6 @@ static const char *update_choice(const char *tid) {
     return NULL;
 }
 
-/* Add-ons turned off in the panel (content IDs): left out when their game is added. */
-#define ADDONS_OFF_FILE STATE_DIR "/addons-off.txt"
 #define MAX_ADDONS_OFF 512
 
 static char g_off[MAX_ADDONS_OFF][37];
@@ -1695,6 +2347,25 @@ static const char *drive_rel(const char *root, const char *path) {
 }
 
 /* Records where a pkg moved into <root>/ps4/<TID>/<rel> came from. */
+/* A free name for an update kept aside: replaced/patch-<time>.pkg, with -1, -2... when two
+ * are kept in the same second. 0 when found. */
+static int aside_name(const char *game, char *rel, size_t n) {
+    char p[PATH_MAX + 64];
+    snprintf(p, sizeof(p), "%s/replaced", game);
+    mkdirs(p, 0777);
+    long now = (long)time(NULL);
+    for (int k = 0; k < 100; k++) {
+        if (k)
+            snprintf(rel, n, "replaced/patch-%ld-%d.pkg", now, k);
+        else
+            snprintf(rel, n, "replaced/patch-%ld.pkg", now);
+        snprintf(p, sizeof(p), "%s/%s", game, rel);
+        if (!exists(p))
+            return 0;
+    }
+    return -1;
+}
+
 static void record_origin(const char *root, const char *tid, const char *rel, const char *from) {
     char game[PATH_MAX];
     snprintf(game, sizeof(game), "%s/ps4/%s", root, tid);
@@ -1817,9 +2488,15 @@ static int adopt_dir_pkgs(const char *root, const char *dir) {
         snprintf(dst, sizeof(dst), "%s/ps4/%s/%s", root, tid, is_app ? "app.pkg" : "patch.pkg");
         if (exists(dst)) {
             pkg_t cur;
+            char cur_ver[16] = "";
             int same = !pkg_open(&cur, dst) && !memcmp(cur.digest, digest, sizeof(digest));
-            if (cur.fd > 0)
+            if (cur.fd > 0) {
+                sfo_t cs;
+                const sfo_item_t *cv = read_sfo(&cur, &cs) ? NULL : sfo_get(&cs, "APP_VER");
+                if (cv && !cv->is_int)
+                    snprintf(cur_ver, sizeof(cur_ver), "%s", cv->sval);
                 pkg_close(&cur);
+            }
             if (same || is_app) {
                 /* duplicates, and a second copy of a game, stay where they are */
                 if (first_time(path))
@@ -1828,24 +2505,31 @@ static int adopt_dir_pkgs(const char *root, const char *dir) {
                            e->d_name, tid);
                 continue;
             }
-            /* a different update: it replaces the current one, which is kept aside */
-            char old[PATH_MAX];
-            snprintf(old, sizeof(old), "%s/ps4/%s/replaced", root, tid);
-            mkdirs(old, 0777);
-            long now = (long)time(NULL);
-            struct stat taken;
-            snprintf(old, sizeof(old), "%s/ps4/%s/replaced/patch-%ld.pkg", root, tid, now);
-            for (int k = 2; !stat(old, &taken) && k < 100; k++) /* rename() would replace it */
-                snprintf(old, sizeof(old), "%s/ps4/%s/replaced/patch-%ld-%d.pkg", root, tid, now, k);
+            char game[PATH_MAX], rel[64], old[PATH_MAX + 64], was[PATH_MAX];
+            snprintf(game, sizeof(game), "%s/ps4/%s", root, tid);
+            if (aside_name(game, rel, sizeof(rel)))
+                continue;
+            snprintf(old, sizeof(old), "%s/%s", game, rel);
+            if (cur_ver[0] && strcmp(ver, cur_ver) < 0) {
+                /* an older update: kept aside, the newest stays in use */
+                if (rename(path, old)) {
+                    printf("[scan] keep %s aside: %s\n", path, strerror(errno));
+                    continue;
+                }
+                printf("[scan] moved %s -> %s\n", path, old);
+                record_origin(root, tid, rel, path);
+                notify("Older update for %s (v%s) kept in ps4/%s/replaced, v%s stays in use", tid, ver, tid, cur_ver);
+                moved++;
+                continue;
+            }
+            /* a newer (or other) update: it replaces the current one, which is kept aside */
             if (rename(dst, old)) {
                 printf("[scan] keep %s aside: %s\n", dst, strerror(errno));
                 continue;
             }
             /* the update kept aside keeps its original name */
-            char game[PATH_MAX], was[PATH_MAX];
-            snprintf(game, sizeof(game), "%s/ps4/%s", root, tid);
             if (!origin_find(game, "patch.pkg", was, sizeof(was)))
-                origin_add(game, old + strlen(game) + 1, was);
+                origin_add(game, rel, was);
             notify("New update for %s (v%s): the previous one was moved to ps4/%s/replaced", tid, ver, tid);
         }
         if (rename(path, dst)) {
@@ -2001,7 +2685,7 @@ static void keep_mounted(title_src_t *src) {
  * the panel asks every 5 seconds and must not read every pkg on the drives each time. */
 typedef struct {
     char dir[PATH_MAX], name[128], ver[8], update_issue[256];
-    int has_patch, ndlc;
+    int has_patch, ndlc, ndlc_all, addons_waiting;
     unsigned long long size;
 } info_t;
 
@@ -2028,6 +2712,8 @@ static info_t *info_store(const title_src_t *t) {
     snprintf(in->update_issue, sizeof(in->update_issue), "%s", t->update_issue);
     in->has_patch = t->has_patch;
     in->ndlc = t->ndlc;
+    in->ndlc_all = t->ndlc_all;
+    in->addons_waiting = g_cfg.dlc_copy && ac_game_waiting(t);
     in->size = t->app.pkg_size + (t->has_patch ? t->patch.pkg_size : 0);
     return in;
 }
@@ -2183,6 +2869,26 @@ static void scan_root(const char *root, int fresh, int reconnected) {
     if (paused && fresh)
         notify("%s: %d game(s) not added: adding games is paused (%s). Resume in the PS4Mount panel", label, paused,
                g_halt);
+    /* games already in the library: keep them mounted */
+    for (int i = 0; i < count; i++) {
+        title_t *t = &titles[i];
+        title_src_t src;
+        if (t->state != 0 || src_open(&src, root, t->tid))
+            continue;
+        enforce_patch_sfo(&src);
+        manage(&src);
+        managed_t *m = managed_by(t->tid, NULL);
+        int running = title_running(t->tid);
+        if (m && running && !m->running) {
+            m->running = 1; /* open before this daemon started (restart or crash) */
+        } else if (m && !running && m->running && time(NULL) - m->running_since > 60) {
+            m->running = 0; /* closed without a klog end event */
+        }
+        if (mount_title(&src))
+            notify("Failed to mount %s (%s)", src.name, t->tid);
+        ac_reconcile(&src);
+        src_close(&src);
+    }
     if (!pending)
         return;
 
@@ -2267,7 +2973,9 @@ static void scan_root(const char *root, int fresh, int reconnected) {
             } else {
                 retry_clear(&g_retry, t->tid);
                 ok++;
-                if (!grouped)
+                if (!grouped && g_cfg.dlc_copy && t->ndlc)
+                    notify("%s added, its add-ons are installed next", t->name);
+                else if (!grouped)
                     notify("%s ready to play", t->name);
             }
             src_close(&src);
@@ -2278,6 +2986,8 @@ static void scan_root(const char *root, int fresh, int reconnected) {
     free(ids);
     free(prepared);
     free(doing_tids);
+    if (ok)
+        g_scan_again = 1; /* their add-on copies start at the next pass, right away */
     if (pending > 1)
         notify("%s: %d of %d game(s) added%s", label, ok, pending, ok == pending ? ", ready to play" : "");
 }
@@ -2513,6 +3223,7 @@ static void scan_all(void) {
         fresh[i] = present[i] && !seen[i];
         seen[i] = present[i];
     }
+    ac_submit(); /* the add-ons of every game, in one batch */
     first = 0;
     g_manual_scan = 0;
     speed_poll(present, fresh);
@@ -2654,6 +3365,8 @@ static void handle_klog_line(const char *line) {
     } else if ((p = after(line, "system file disagree ["))) {
         snprintf(id, sizeof(id), "%.9s", p);
         disagree_seen(id);
+    } else if (strstr(line, "[BGFT/Telemetry] SendDownloadCopy")) {
+        ac_copy_event(line);
     } else if ((p = after(line, "[PlayGoService][End] end ("))) {
         snprintf(id, sizeof(id), "%.9s", p);
         managed_t *m = managed_by(id, NULL);
@@ -2679,9 +3392,10 @@ static void handle_klog_line(const char *line) {
             rm_tree(hold);
             hold_path(hold, sizeof(hold), "patch", m->tid);
             rm_tree(hold);
+            ac_drop_game(m->tid);
             notify("%s removed from the library. The pkg stays on the USB drive.", m->name);
             m->used = 0;
-        } else if (strlen(id) == 36 && g_deleting) {
+        } else if (strlen(id) == 36 && g_deleting && !g_cfg.dlc_copy) {
             /* an add-on of one of our games deleted on a delete screen: keep it out until the
              * drive is reconnected. Outside those screens the uninstall is the system's own:
              * registering a game again uninstalls its add-ons' PlayGo data, and taking that
@@ -2882,6 +3596,313 @@ static void addons_json(buf_t *out, const catalog_t *cat, const cat_game_t *g) {
     }
 }
 
+/* --- updates and add-ons chosen in the panel, starting a game --- */
+
+typedef struct {
+    char rel[64]; /* in the game folder: patch.pkg (in use) or replaced/<name> */
+    char ver[16], name[256];
+} update_t;
+
+static int update_cmp(const void *a, const void *b) {
+    const update_t *x = a, *y = b;
+    int ax = !strcmp(x->rel, "patch.pkg"), ay = !strcmp(y->rel, "patch.pkg");
+    if (ax != ay)
+        return ay - ax; /* the one in use first */
+    return strcmp(y->ver, x->ver); /* then the newest */
+}
+
+/* The updates of the game folder: patch.pkg and the ones kept in replaced/. */
+static int list_updates(const char *game, const char *tid, update_t *out, int max) {
+    int n = 0;
+    char sub[PATH_MAX], p[PATH_MAX + 64];
+    snprintf(sub, sizeof(sub), "%s/replaced", game);
+    DIR *d = opendir(sub);
+    struct dirent *e = NULL;
+    for (int first = 1; n < max && (first || (d && (e = readdir(d)))); first = 0) {
+        update_t *u = &out[n];
+        if (first)
+            snprintf(u->rel, sizeof(u->rel), "patch.pkg");
+        else if (!e)
+            break;
+        else {
+            size_t len = strlen(e->d_name);
+            if (e->d_name[0] == '.' || len < 5 || len > 50 || strcasecmp(e->d_name + len - 4, ".pkg"))
+                continue;
+            snprintf(u->rel, sizeof(u->rel), "replaced/%s", e->d_name);
+        }
+        snprintf(p, sizeof(p), "%s/%s", game, u->rel);
+        pkg_t pkg;
+        if (pkg_open(&pkg, p))
+            continue;
+        sfo_t sfo;
+        const sfo_item_t *v = read_sfo(&pkg, &sfo) ? NULL : sfo_get(&sfo, "APP_VER");
+        int ok = !strcmp(pkg.title_id, tid);
+        snprintf(u->ver, sizeof(u->ver), "%s", v && !v->is_int ? v->sval : "?");
+        pkg_close(&pkg);
+        if (!ok)
+            continue;
+        char was[PATH_MAX];
+        if (origin_find(game, u->rel, was, sizeof(was)))
+            snprintf(was, sizeof(was), "%s", u->rel);
+        const char *base = strrchr(was, '/');
+        snprintf(u->name, sizeof(u->name), "%s", base ? base + 1 : was);
+        n++;
+    }
+    if (d)
+        closedir(d);
+    qsort(out, (size_t)n, sizeof(*out), update_cmp);
+    return n;
+}
+
+int app_game_json(const char *tid, buf_t *out, char *msg, size_t cap) {
+    char root[32];
+    title_src_t t;
+    if (find_root(tid, root, sizeof(root)) || src_open(&t, root, tid)) {
+        snprintf(msg, cap, "%s is not on any connected drive", tid);
+        return -1;
+    }
+    static update_t ups[32];
+    int nu = list_updates(t.dir, tid, ups, 32);
+    buf_printf(out, "{\"title_id\":\"%s\",\"name\":", tid);
+    json_str(out, t.name);
+    buf_printf(out, ",\"dlc_limit\":%d,\"updates\":[", DLC_LIMIT);
+    for (int i = 0; i < nu; i++) {
+        buf_printf(out, "%s{\"file\":", i ? "," : "");
+        json_str(out, ups[i].rel);
+        buf_printf(out, ",\"version\":");
+        json_str(out, ups[i].ver);
+        buf_printf(out, ",\"name\":");
+        json_str(out, ups[i].name);
+        buf_printf(out, ",\"active\":%s}", !strcmp(ups[i].rel, "patch.pkg") && t.has_patch ? "true" : "false");
+    }
+    buf_printf(out, "],\"dlcs\":[");
+    for (int i = 0; i < t.ndlc_all; i++) {
+        const sfo_item_t *n = sfo_get(&t.dlc[i].sfo, "TITLE");
+        buf_printf(out, "%s{\"content_id\":\"%s\",\"name\":", i ? "," : "", t.dlc[i].pkg.content_id);
+        json_str(out, n && !n->is_int ? n->sval : t.dlc[i].pkg.content_id + 20);
+        buf_printf(out, ",\"on\":%s,\"data\":%s", i < t.ndlc ? "true" : "false", t.dlc[i].data ? "true" : "false");
+        char why[128] = "";
+        buf_printf(out, ",\"copy\":\"%s\",\"reason\":", ac_status(&t.dlc[i], i < t.ndlc, why, sizeof(why)));
+        json_str(out, why);
+        buf_printf(out, "}");
+    }
+    buf_printf(out, "]}");
+    src_close(&t);
+    return 0;
+}
+
+static int game_open(const char *tid) {
+    managed_t *m = managed_by(tid, NULL);
+    return (m && m->running) || title_running(tid);
+}
+
+/* Changes asked in the panel, made by the main loop between scans. */
+static char g_upd_tid[10], g_upd_rel[64], g_dlc_tid[10], *g_dlc_on;
+
+int app_choose_update(const char *tid, const char *rel, char *msg, size_t cap) {
+    char root[32];
+    const char *name = rel + 9;
+    if (strncmp(rel, "replaced/", 9) || strlen(rel) >= sizeof(g_upd_rel) || strchr(name, '/') || name[0] == '.' ||
+        strlen(name) < 5 || strcasecmp(name + strlen(name) - 4, ".pkg")) {
+        snprintf(msg, cap, "invalid update file");
+        return -1;
+    }
+    if (find_root(tid, root, sizeof(root))) {
+        snprintf(msg, cap, "%s is not on any connected drive", tid);
+        return -1;
+    }
+    if (game_open(tid)) {
+        snprintf(msg, cap, "Close the game before changing its update");
+        return -1;
+    }
+    if (g_upd_tid[0] || g_dlc_tid[0]) {
+        snprintf(msg, cap, "Another change is being made, try again in a moment");
+        return -1;
+    }
+    snprintf(g_upd_rel, sizeof(g_upd_rel), "%s", rel);
+    snprintf(g_upd_tid, sizeof(g_upd_tid), "%s", tid);
+    snprintf(msg, cap, "Changing the update of %s: the game is added again with it", tid);
+    return 0;
+}
+
+/* on: content IDs of the add-ons to keep on, comma separated (empty: all off). */
+int app_choose_dlc(const char *tid, const char *on, char *msg, size_t cap) {
+    char root[32];
+    int n = 0;
+    for (const char *p = on; *p;) {
+        size_t len = strcspn(p, ",");
+        if (len != 36 || strspn(p, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") < 36) {
+            snprintf(msg, cap, "invalid add-on: %.40s", p);
+            return -1;
+        }
+        n++;
+        p += len;
+        if (*p == ',')
+            p++;
+    }
+    if (n > DLC_LIMIT) {
+        snprintf(msg, cap, "At most %d add-ons can be on", DLC_LIMIT);
+        return -1;
+    }
+    if (find_root(tid, root, sizeof(root))) {
+        snprintf(msg, cap, "%s is not on any connected drive", tid);
+        return -1;
+    }
+    if (game_open(tid)) {
+        snprintf(msg, cap, "Close the game before changing its add-ons");
+        return -1;
+    }
+    if (g_upd_tid[0] || g_dlc_tid[0]) {
+        snprintf(msg, cap, "Another change is being made, try again in a moment");
+        return -1;
+    }
+    free(g_dlc_on);
+    if (!(g_dlc_on = strdup(on))) {
+        snprintf(msg, cap, "out of memory");
+        return -1;
+    }
+    snprintf(g_dlc_tid, sizeof(g_dlc_tid), "%s", tid);
+    snprintf(msg, cap, "Changing the add-ons of %s: the game is added again with them", tid);
+    return 0;
+}
+
+/* The update chosen in the panel becomes patch.pkg; the one in use is kept aside. Both
+ * keep their original names for Move pkgs back. */
+static void apply_update_choice(const char *tid, const char *rel) {
+    char root[32], game[PATH_MAX], from[PATH_MAX + 64], cur[PATH_MAX + 16], aside[64], old[PATH_MAX + 64];
+    char was_cur[PATH_MAX], was_new[PATH_MAX];
+    if (find_root(tid, root, sizeof(root)) || game_open(tid))
+        return;
+    snprintf(game, sizeof(game), "%s/ps4/%s", root, tid);
+    snprintf(from, sizeof(from), "%s/%s", game, rel);
+    snprintf(cur, sizeof(cur), "%s/patch.pkg", game);
+    if (!exists(from) || aside_name(game, aside, sizeof(aside)))
+        return;
+    snprintf(old, sizeof(old), "%s/%s", game, aside);
+    int had = exists(cur), have_cur = !origin_find(game, "patch.pkg", was_cur, sizeof(was_cur)),
+        have_new = !origin_find(game, rel, was_new, sizeof(was_new));
+    if (had && rename(cur, old)) {
+        notify("Could not change the update of %s: %s", tid, strerror(errno));
+        return;
+    }
+    if (rename(from, cur)) {
+        notify("Could not change the update of %s: %s", tid, strerror(errno));
+        if (had)
+            rename(old, cur);
+        return;
+    }
+    if (had && have_cur)
+        origin_add(game, aside, was_cur);
+    /* without a record, the last one for patch.pkg would name the update kept aside */
+    origin_add(game, "patch.pkg", have_new ? was_new : rel + 9);
+    printf("[panel] %s: update %s now in use, %s kept as %s\n", tid, rel, had ? "patch.pkg" : "none", aside);
+    notify("%s: update changed, adding the game again", tid);
+}
+
+/* The add-ons not in on are turned off (/data/ps4mount/addons-off.txt, shared with the
+ * quick toggle in app_addon). */
+static void apply_dlc_choice(const char *tid, const char *on) {
+    char root[32];
+    title_src_t t;
+    if (find_root(tid, root, sizeof(root)) || game_open(tid) || src_open(&t, root, tid))
+        return;
+    char *list = malloc(strlen(on) + 3);
+    if (list) {
+        snprintf(list, strlen(on) + 3, "\n%s\n", on);
+        for (char *c = list; *c; c++)
+            if (*c == ',')
+                *c = '\n';
+        for (int i = 0; i < t.ndlc_all; i++) {
+            int keep_on = dlc_listed(list, t.dlc[i].pkg.content_id);
+            kv_set(ADDONS_OFF_FILE, t.dlc[i].pkg.content_id, keep_on ? NULL : "off");
+            if (keep_on && i >= t.ndlc)
+                acfail_clear(STATE_DIR, t.dlc[i].pkg.content_id); /* turned on again: tried anew */
+        }
+        printf("[panel] %s: add-ons changed\n", tid);
+        notify("%s: add-ons changed, adding the game again", tid);
+    }
+    free(list);
+    src_close(&t);
+}
+
+static int open_games(uint32_t *ids, char (*tids)[10], int max);
+static int close_open_games(const char *why);
+static char g_launch_tid[10];
+
+/* Starts a game of the library for the foreground user. Starting a game uses
+ * sceSystemServiceLaunchApp, the call other PS5 homebrew launchers use
+ * (ps5-payload-dev/websrv); an LncUtil-based lookup does not work on firmware 11.20. */
+static int launch_now(const char *tid, char *msg, size_t cap) {
+    launch_ctx_t ctx = {0};
+    if (sceUserServiceGetForegroundUser(&ctx.user_id)) {
+        snprintf(msg, cap, "No user is logged in on the console");
+        return -1;
+    }
+    ctx.structsize = sizeof(ctx);
+    kv_set(LAUNCH_HELD_FILE, tid, NULL); /* pressing Play again is the user's own "try again";
+                                          * cleared only once a launch is genuinely attempted */
+    char *noargs[] = {NULL};
+    int owned_launching = doing_mark("launching", tid);
+    int rc = sceSystemServiceLaunchApp(tid, noargs, &ctx);
+    if (owned_launching)
+        doing_clear("launching");
+    printf("[panel] launch %s: rc=0x%08x user=%u\n", tid, rc, ctx.user_id);
+    if (rc < 0) {
+        snprintf(msg, cap, "Failed to start %s (0x%08x)", tid, rc);
+        return -1;
+    }
+    snprintf(msg, cap, "Starting %s", tid);
+    return 0;
+}
+
+/* 1 (msg names the open game) when another game is open and force is 0: the panel asks
+ * first, since that game is closed without saving. With force, the open game is closed by
+ * the main loop, which then starts this one. */
+int app_launch(const char *tid, int force, char *msg, size_t cap) {
+    char target[64];
+    snprintf(target, sizeof(target), "/user/app/%s", tid);
+    if (!db_is_registered(tid) || !mounted_from(target, NULL, 0)) {
+        snprintf(msg, cap, "%s is not ready to play", tid);
+        return -1;
+    }
+    if (g_install_busy || g_adding) {
+        snprintf(msg, cap, "Games are being added; try again in a moment");
+        return -1;
+    }
+    uint32_t ids[8];
+    char tids[8][10];
+    int n = open_games(ids, tids, 8);
+    if (!n)
+        return launch_now(tid, msg, cap);
+    if (!strcmp(tids[0], tid)) {
+        snprintf(msg, cap, "%s is already open", tid);
+        return -1;
+    }
+    managed_t *m = managed_by(tids[0], NULL);
+    if (!force) {
+        snprintf(msg, cap, "%s", m ? m->name : tids[0]);
+        return 1;
+    }
+    if (g_launch_tid[0]) {
+        snprintf(msg, cap, "Another game is being started, try again in a moment");
+        return -1;
+    }
+    snprintf(g_launch_tid, sizeof(g_launch_tid), "%s", tid);
+    snprintf(msg, cap, "Closing %s, then starting %s", m ? m->name : tids[0], tid);
+    return 0;
+}
+
+/* The deferred start: closes the open game and waits until the system let go of its files. */
+static void launch_after_close(const char *tid) {
+    char msg[128];
+    if (close_open_games("to start another game")) {
+        notify("The open game did not close; %s was not started", tid);
+        return;
+    }
+    if (launch_now(tid, msg, sizeof(msg)))
+        notify("%s", msg);
+}
+
 void app_games_json(buf_t *out) {
     buf_printf(out, "{\"version\":");
     json_str(out, VERSION);
@@ -2922,6 +3943,7 @@ void app_games_json(buf_t *out) {
             pf.registered = db_is_registered(tid);
             pf.given_up = retry_given_up(&g_retry, tid);
             pf.retrying = retry_in > 0;
+            pf.installing_addons = in->addons_waiting;
             state = policy_panel_state(&pf);
             buf_printf(out, "%s{\"title_id\":\"%s\",\"name\":", first ? "" : ",", tid);
             json_str(out, in->name);
@@ -2930,7 +3952,7 @@ void app_games_json(buf_t *out) {
             buf_printf(out, ",\"has_patch\":%s,\"size\":%llu,\"state\":\"%s\",\"mount\":\"%s\",\"source\":",
                        in->has_patch ? "true" : "false", in->size, state, mount);
             json_str(out, in->dir);
-            buf_printf(out, ",\"dlc\":%d,\"update_issue\":", in->ndlc);
+            buf_printf(out, ",\"dlc\":%d,\"dlc_total\":%d,\"update_issue\":", in->ndlc, in->ndlc_all);
             json_str(out, in->update_issue);
             buf_printf(out, ",\"retry_in\":%ld,\"fail_reason\":", retry_in);
             json_str(out, retry_reason(&g_retry, tid));
@@ -3183,6 +4205,8 @@ int app_remove(const char *tid, char *msg, size_t cap) {
     int rc = db_is_registered(tid) ? uninstall_title(tid) : 0;
     if (m)
         m->used = 0;
+    if (!rc)
+        ac_drop_game(tid);
     printf("[web] remove %s: uninstall=0x%08x\n", tid, rc);
     if (rc == -2)
         snprintf(msg, cap, "The system did not finish removing %s yet; try again in a moment", tid);
@@ -3217,51 +4241,6 @@ int app_exclude(const char *tid, int on, char *msg, size_t cap) {
     }
     printf("[web] %s set to never be added\n", tid);
     snprintf(msg, cap, "%s will not be added again. The pkgs stay on the drive.", tid);
-    return 0;
-}
-
-/* Starting a game uses sceSystemServiceLaunchApp, the call other PS5 homebrew launchers
- * use (ps5-payload-dev/websrv). The context layout is theirs too. */
-typedef struct {
-    uint32_t structsize, user_id, app_opt;
-    uint64_t crash_report;
-    uint32_t check_flag;
-} launch_ctx_t;
-int sceSystemServiceLaunchApp(const char *title_id, char **argv, launch_ctx_t *ctx);
-
-int app_launch(const char *tid, char *msg, size_t cap) {
-    char app[64];
-    snprintf(app, sizeof(app), "/user/app/%s", tid);
-    if (!db_is_registered(tid) || !mounted_from(app, NULL, 0)) {
-        snprintf(msg, cap, "%s is not ready to play", tid);
-        return -1;
-    }
-    if (g_install_busy || g_adding) {
-        snprintf(msg, cap, "Games are being added; try again in a moment");
-        return -1;
-    }
-    if (own_game_running()) {
-        snprintf(msg, cap, "Close the running game first");
-        return -1;
-    }
-    launch_ctx_t ctx = {0};
-    if (sceUserServiceGetForegroundUser(&ctx.user_id)) {
-        snprintf(msg, cap, "No user is logged in on the console");
-        return -1;
-    }
-    kv_set(LAUNCH_HELD_FILE, tid, NULL); /* pressing Play again is the user's own "try again";
-                                          * cleared only once a launch is genuinely attempted */
-    char *noargs[] = {NULL};
-    int owned_launching = doing_mark("launching", tid);
-    int rc = sceSystemServiceLaunchApp(tid, noargs, &ctx);
-    if (owned_launching)
-        doing_clear("launching");
-    printf("[web] launch %s: rc=0x%08x user=%u\n", tid, rc, ctx.user_id);
-    if (rc < 0) {
-        snprintf(msg, cap, "Failed to start %s (0x%08x)", tid, rc);
-        return -1;
-    }
-    snprintf(msg, cap, "Starting %s", tid);
     return 0;
 }
 
@@ -4107,7 +5086,7 @@ static int open_games(uint32_t *ids, char (*tids)[10], int max) {
 /* Every pkg operation that takes games out of the library closes the open game first,
  * whichever it is: a game left open keeps reading pkgs that are being moved. 0 once no
  * game is open; -1 when one did not close within 30 seconds. */
-static int close_open_games(void) {
+static int close_open_games(const char *why) {
     uint32_t ids[8];
     char tids[8][10];
     int n = open_games(ids, tids, 8);
@@ -4115,9 +5094,9 @@ static int close_open_games(void) {
         return 0;
     for (int i = 0; i < n && i < 8; i++) {
         managed_t *m = managed_by(tids[i], NULL);
-        notify("Closing %s to move pkgs back", m ? m->name : tids[i]);
+        notify("Closing %s %s", m ? m->name : tids[i], why);
         int rc = sceSystemServiceKillApp(ids[i], -1, 0, 0);
-        printf("[restore] close %s (app 0x%08x): 0x%08x\n", tids[i], ids[i], rc);
+        printf("[close] %s (app 0x%08x): 0x%08x\n", tids[i], ids[i], rc);
     }
     char closing[8][10];
     int nc = n < 8 ? n : 8;
@@ -4128,6 +5107,16 @@ static int close_open_games(void) {
         for (int i = 0; i < nc; i++)
             mounted |= title_running(closing[i]);
         if (!open_games(ids, tids, 8) && !mounted) {
+            /* its package images are released last: a game started before that cannot
+             * read its own files (0x80020060) */
+            for (int w = 0; w < 20; w++) {
+                int left = 0;
+                for (int i = 0; i < nc; i++)
+                    left += pfs_mounts(closing[i]);
+                if (!left)
+                    break;
+                pump_events(1000);
+            }
             pump_events(2000); /* let the system finish unmounting the game */
             for (int i = 0; i < MAX_TITLES; i++)
                 g_managed[i].running = 0;
@@ -4140,6 +5129,7 @@ static int close_open_games(void) {
 /* Folders of games on every connected drive (or only tid), with their name. */
 typedef struct {
     char root[32], tid[10], name[128];
+    int other; /* the game has another copy on another drive: it stays in the library with it */
 } restore_item_t;
 
 /* only: n title ids to keep, or NULL for every game. */
@@ -4184,6 +5174,29 @@ static int restore_collect(char (*only)[10], int nonly, restore_item_t *items, i
         if (d)
             closedir(d);
     }
+    /* a game picked by title ID on two drives: only the copy in use goes back, the other one
+     * stays and is used from the next scan */
+    for (int i = 0; only && i < n; i++)
+        for (int k = i + 1; k < n; k++) {
+            if (strcmp(items[i].tid, items[k].tid))
+                continue;
+            /* <TID>.src names the folder in use */
+            char path[64], used[PATH_MAX + 256] = {0}, game[PATH_MAX];
+            snprintf(path, sizeof(path), STATE_DIR "/%s.src", items[k].tid);
+            int fd = open(path, O_RDONLY);
+            if (fd >= 0) {
+                if (read(fd, used, sizeof(used) - 1) < 0)
+                    used[0] = 0;
+                close(fd);
+            }
+            used[strcspn(used, "\n")] = 0;
+            snprintf(game, sizeof(game), "%s/ps4/%s", items[k].root, items[k].tid);
+            int drop = !strcmp(used, game) ? i : k;
+            items[drop == i ? k : i].other = 1;
+            memmove(&items[drop], &items[drop + 1], sizeof(items[0]) * (size_t)(n - drop - 1));
+            n--;
+            k = i; /* items[i] may have changed: compare it again with the rest */
+        }
     return n;
 }
 
@@ -4197,7 +5210,7 @@ static void run_restore(char (*only)[10], int nonly) {
         notify("No PS4Mount games to move back");
         return;
     }
-    if (close_open_games()) {
+    if (close_open_games("to move pkgs back")) {
         notify("The open game did not close; no pkgs were moved back");
         return;
     }
@@ -4211,6 +5224,16 @@ static void run_restore(char (*only)[10], int nonly) {
             wait_db_quiet(BATCH_QUIET, 120);
         int end = i + size < n ? i + size : n;
         for (int k = i; k < end; k++) {
+            if (items[k].other) {
+                /* the scan moves the game over to the other copy, registered as it is */
+                char game[PATH_MAX], dtids[MAX_DLC_TIDS][10];
+                snprintf(game, sizeof(game), "%s/ps4/%s", items[k].root, items[k].tid);
+                unmount_title(items[k].tid, dtids, folder_dlc_tids(game, dtids, MAX_DLC_TIDS));
+                restore_files(items[k].root, items[k].tid, items[k].name, &moved, &failed);
+                printf("[restore] %s: kept in the library with its copy on another drive\n", items[k].tid);
+                done++;
+                continue;
+            }
             if (restore_unregister(items[k].root, items[k].tid)) {
                 kept++;
                 continue;
@@ -4225,7 +5248,8 @@ static void run_restore(char (*only)[10], int nonly) {
      * game added again later is not taken for one removed on the console */
     pump_events(3000);
     for (int i = 0; i < n; i++)
-        restore_clear_state(items[i].tid);
+        if (!items[i].other)
+            restore_clear_state(items[i].tid);
     clear_removed_dlc();
     g_next_scan = 0;
     if (n == 1 && done)
@@ -4323,8 +5347,9 @@ static int clean_scan_path(const char *in, char *out, size_t n, char *why, size_
 
 static void config_save(void) {
     buf_t b = {0};
-    buf_printf(&b, "batch=%d\nbatch_size=%d\ndlc=%d\norganize=%d\ninterval=%d\ncross=%d\nrestore_batch=%d\n",
-               g_cfg.batch, g_cfg.batch_size, g_cfg.dlc, g_cfg.organize, g_cfg.interval, g_cfg.cross,
+    buf_printf(&b,
+               "batch=%d\nbatch_size=%d\ndlc=%d\ndlc_copy=%d\norganize=%d\ninterval=%d\ncross=%d\nrestore_batch=%d\n",
+               g_cfg.batch, g_cfg.batch_size, g_cfg.dlc, g_cfg.dlc_copy, g_cfg.organize, g_cfg.interval, g_cfg.cross,
                g_cfg.restore_batch);
     for (int i = 0; i < g_cfg.npaths; i++)
         buf_printf(&b, "path=%s\n", g_cfg.paths[i]);
@@ -4363,6 +5388,8 @@ static void config_load(void) {
             c.batch_size = atoi(line + 11);
         else if (!strncmp(line, "dlc=", 4))
             c.dlc = atoi(line + 4) != 0;
+        else if (!strncmp(line, "dlc_copy=", 9))
+            c.dlc_copy = atoi(line + 9) != 0;
         else if (!strncmp(line, "organize=", 9))
             c.organize = atoi(line + 9) != 0;
         else if (!strncmp(line, "interval=", 9))
@@ -4397,11 +5424,11 @@ static void config_load(void) {
 
 void app_config_json(buf_t *out) {
     buf_printf(out,
-               "{\"batch\":%s,\"batch_size\":%d,\"dlc\":%s,\"organize\":%s,\"interval\":%d,\"cross\":%s,"
-               "\"restore_batch\":%d,\"max_restore_batch\":%d,\"paths\":[",
+               "{\"batch\":%s,\"batch_size\":%d,\"dlc\":%s,\"dlc_copy\":%s,\"organize\":%s,\"interval\":%d,"
+               "\"cross\":%s,\"restore_batch\":%d,\"max_restore_batch\":%d,\"paths\":[",
                g_cfg.batch ? "true" : "false", g_cfg.batch_size, g_cfg.dlc ? "true" : "false",
-               g_cfg.organize ? "true" : "false", g_cfg.interval, g_cfg.cross ? "true" : "false", g_cfg.restore_batch,
-               MAX_RESTORE_BATCH);
+               g_cfg.dlc_copy ? "true" : "false", g_cfg.organize ? "true" : "false", g_cfg.interval,
+               g_cfg.cross ? "true" : "false", g_cfg.restore_batch, MAX_RESTORE_BATCH);
     for (int i = 0; i < g_cfg.npaths; i++) {
         char shown[130];
         snprintf(shown, sizeof(shown), "/%s", g_cfg.paths[i]);
@@ -4433,7 +5460,7 @@ static void url_decode(const char *in, size_t len, char *out, size_t n) {
     out[o] = 0;
 }
 
-/* body: batch=0|1&batch_size=N&dlc=0|1&organize=0|1&interval=N&cross=0|1&restore_batch=N
+/* body: batch=0|1&batch_size=N&dlc=0|1&dlc_copy=0|1&organize=0|1&interval=N&cross=0|1&restore_batch=N
  * &paths=<folders, one per line>&ignore=<folders, one per line>
  * &pin=<4 to 8 digits, empty to remove; absent keeps it> (form encoded); keys left out keep
  * their value. */
@@ -4454,6 +5481,8 @@ int app_config_set(const char *body, char *msg, size_t cap) {
                 c.dlc = atoi(value) != 0;
             else if (k == 8 && !strncmp(p, "organize", 8))
                 c.organize = atoi(value) != 0;
+            else if (k == 8 && !strncmp(p, "dlc_copy", 8))
+                c.dlc_copy = atoi(value) != 0;
             else if (k == 13 && !strncmp(p, "restore_batch", 13)) {
                 char *end;
                 long v = strtol(value, &end, 10);
@@ -4530,6 +5559,8 @@ int app_config_set(const char *body, char *msg, size_t cap) {
         snprintf(msg, cap, "Not saved: add at least one folder (/ is the drive root)");
         return -1;
     }
+    if (g_cfg.dlc_copy && !c.dlc_copy)
+        g_ac_revert = 1;
     g_cfg = c;
     config_save();
     printf("[config] saved: batch=%d batch_size=%d dlc=%d organize=%d restore_batch=%d folders=%d\n", c.batch,
@@ -4858,6 +5889,22 @@ void app_diag(buf_t *out) {
     free(tail);
 }
 
+/* The console's address on the local network: the first IPv4 address of an interface
+ * that is up, other than loopback. "<PS5 IP>" when there is none. */
+static void local_ip(char *out, size_t cap) {
+    struct ifaddrs *list, *i;
+    snprintf(out, cap, "<PS5 IP>");
+    if (getifaddrs(&list))
+        return;
+    for (i = list; i; i = i->ifa_next)
+        if (i->ifa_addr && i->ifa_addr->sa_family == AF_INET && (i->ifa_flags & IFF_UP) &&
+            !(i->ifa_flags & IFF_LOOPBACK)) {
+            inet_ntop(AF_INET, &((struct sockaddr_in *)i->ifa_addr)->sin_addr, out, cap);
+            break;
+        }
+    freeifaddrs(list);
+}
+
 int main(void) {
     int lock = single_instance();
     if (lock < 0) {
@@ -4915,13 +5962,17 @@ int main(void) {
     if (g_reg_mode != REG_NONE && !g_halt[0])
         install_panel_shortcut(); /* registered by the system like the games */
     g_web = web_listen();
-    if (g_reg_mode == REG_ALL)
-        notify(g_web >= 0 ? VERSION " running. Panel in the Media tab or http://<PS5 IP>:8770"
-                          : VERSION " running (panel unavailable)");
-    else if (g_reg_mode == REG_TITLEDIR)
+    char ip[INET_ADDRSTRLEN];
+    local_ip(ip, sizeof(ip));
+    if (g_reg_mode == REG_ALL) {
+        if (g_web >= 0)
+            notify(VERSION " running. Panel in the Media tab or http://%s:8770", ip);
+        else
+            notify(VERSION " running (panel unavailable)");
+    } else if (g_reg_mode == REG_TITLEDIR)
         notify(VERSION " running (firmware %s: games are added one at a time). Panel in the Media tab or "
-                       "http://<PS5 IP>:8770",
-               g_fw_text);
+                       "http://%s:8770",
+               g_fw_text, ip);
     else
         notify(VERSION ": firmware %s is not supported yet. To protect the system database, no games are added.",
                g_fw_text);
@@ -4964,11 +6015,28 @@ int main(void) {
             g_restore_all = 0;
             continue;
         }
+        if (g_launch_tid[0]) {
+            char tid[10];
+            snprintf(tid, sizeof(tid), "%s", g_launch_tid);
+            launch_after_close(tid);
+            g_launch_tid[0] = 0;
+            continue;
+        }
+        if ((g_upd_tid[0] || g_dlc_tid[0]) && !g_deleting) {
+            if (g_upd_tid[0])
+                apply_update_choice(g_upd_tid, g_upd_rel);
+            if (g_dlc_tid[0])
+                apply_dlc_choice(g_dlc_tid, g_dlc_on ? g_dlc_on : "");
+            g_upd_tid[0] = g_dlc_tid[0] = 0;
+            g_next_scan = 0;
+            continue;
+        }
         if (g_readd_tid[0] && !g_deleting) {
             char tid[10];
             snprintf(tid, sizeof(tid), "%s", g_readd_tid);
             g_readd_tid[0] = 0;
             readd_title(tid);
+            g_next_scan = 0; /* its add-on copies start now, not at the next scan */
             continue;
         }
         {
@@ -4993,8 +6061,11 @@ int main(void) {
             log_limit();
             trash_purge_old();
             if (g_next_scan)
-                g_next_scan = time(NULL) + g_cfg.interval;
+                g_next_scan = time(NULL) + (g_scan_again ? 0 : g_cfg.interval);
+            g_scan_again = 0;
         }
+        ac_poll();
+        ac_tasks(g_deleting);
         pump_events(1000);
     }
 }
