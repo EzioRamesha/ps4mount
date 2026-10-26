@@ -820,6 +820,9 @@ typedef struct {
     volatile int called, rc;
     time_t full_at; /* when the copy reached full size */
     char cid[40], game[10], pkg_path[PATH_MAX], name[128], title[128]; /* title: the game's name */
+    char copy_session[24]; /* transferSessionId of copy_start: an end line only counts for the
+                             * same session, never a stale one from the system uninstalling a
+                             * prior partial copy before overwriting it */
     uint64_t size;
     acwait_t wait;
 } ac_job_t;
@@ -937,7 +940,10 @@ static void ac_submit(void) {
     pthread_detach(th);
 }
 
-/* klog: the system's copy of an add-on started or ended ("...transferSessionId = 0..0-<CID>"). */
+/* klog: the system's copy of an add-on started or ended ("...transferSessionId = 0..0-<CID>").
+ * Re-installing over a stale partial copy makes the system uninstall it first, which emits
+ * its own "end" line for that old session: taking it for this job's end would mark the job
+ * done before its real copy (started by a later, differently-numbered session) even begins. */
 static void ac_copy_event(const char *line) {
     const char *p = strstr(line, "transferSessionId = ");
     if (!p || !ac_busy())
@@ -946,15 +952,24 @@ static void ac_copy_event(const char *line) {
     const char *dash = strchr(p, '-');
     if (!dash)
         return;
+    char session[24];
+    size_t slen = (size_t)(dash - p);
+    if (slen >= sizeof(session))
+        slen = sizeof(session) - 1;
+    memcpy(session, p, slen);
+    session[slen] = 0;
     char cid[40];
     snprintf(cid, sizeof(cid), "%.36s", dash + 1);
     ac_job_t *j = ac_job_of(cid);
     if (!j)
         return;
     if (strstr(line, "SendDownloadCopyEnd")) {
+        if (!j->copy_session[0] || strcmp(j->copy_session, session))
+            return; /* end of a different, stale session: not this job's copy */
         j->copy_end = 1;
         g_ac_next = 0; /* followed at once, not at the next poll */
     } else {
+        snprintf(j->copy_session, sizeof(j->copy_session), "%s", session);
         j->copy_start = 1;
         if (!j->started) {
             j->started = 1;
