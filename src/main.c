@@ -1757,8 +1757,13 @@ static int relocate(title_src_t *t, char *stored) {
         return -1;
     }
     printf("[scan] %s: drive renamed (was %s), kept registered\n", t->dir, was);
-    char path[64]; /* named after the folder, which src_open matched to the pkg */
-    snprintf(path, sizeof(path), STATE_DIR "/%s.src", strrchr(t->dir, '/') + 1);
+    /* Every other .src marker is keyed by title ID (see marker_matches(), the reader this
+     * write must agree with); t->dir is the pkg's own path for a title served from its
+     * original folder, not a /ps4/<TID> one, so its basename is the pkg's filename, never
+     * the title ID -- keying on it here would write a marker nothing ever reads back,
+     * re-detecting the same "rename" on every scan forever. */
+    char path[64];
+    snprintf(path, sizeof(path), STATE_DIR "/%s.src", t->app.title_id);
     return write_file(path, t->marker, strlen(t->marker), 0666);
 }
 
