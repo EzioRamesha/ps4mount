@@ -472,7 +472,7 @@ PS4Mount does not contain code copied from other projects except where noted bel
 | [PS5 Payload SDK](https://github.com/ps5-payload-dev/sdk) | John Törnblom | GPL-3.0-or-later | Toolchain, headers and runtime linked into the payload |
 | [LibOrbisPkg](https://github.com/maxton/LibOrbisPkg) | maxton | LGPL-3.0 | Source of the fake PKG key (`PkgDerivedKey3Keyset`, in `src/keys.h`) and reference for the PKG entry encryption, entry IDs and the `playgo-chunk.dat` layout |
 | [SQLite](https://sqlite.org) | SQLite authors | Public domain | `third_party/sqlite/` (amalgamation 3.46.1), used to write the library databases |
-| [ShadowMountPlus](https://github.com/drakmor/ShadowMountPlus) | drakmor | GPL-3.0 | Inspiration for auto-mounting games from USB drives and for registering titles with `sceAppInstUtilAppInstallAll` on firmware 12.00+. No code was used. |
+| [ShadowMountPlus](https://github.com/drakmor/ShadowMountPlus) | drakmor | GPL-3.0 | Inspiration for auto-mounting games from USB drives, for registering titles with `sceAppInstUtilAppInstallAll` on firmware 12.00+, and for defaulting the panel's language to the console's own via `sceSystemServiceParamGetInt`. No code was used. |
 | [ps5-app-dumper](https://github.com/EchoStretch/ps5-app-dumper) | EchoStretch | see project | Reference for the Media tab shortcut (`applicationCategoryType` 65536 with `deeplinkUri`). No code was used. |
 | [ps5-web-file-manager](https://github.com/owendswang/ps5-web-file-manager) | owendswang | GPL-3.0 | Model for the Files panel's layout, task model and copy/move interaction (select, then paste into the open folder). Same license as PS4Mount; no code was used. |
 
