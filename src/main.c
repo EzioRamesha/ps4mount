@@ -3558,21 +3558,29 @@ static int find_game(const char *tid, char *root, size_t n, char *app_path, size
     return -1;
 }
 
-/* Finds the organized folder <root>/ps4/<tid> on any connected storage. */
+/* The drive serving tid's registered copy right now, read from the .src marker
+ * register_finish() writes for every game and relocate() keeps current: its first line is
+ * the game's real location (<root>/ps4/<tid> only for a game PS4Mount organized into that
+ * folder; the game's own pkg path otherwise, see game_location()), so the drive is its
+ * first path component. -1 when the marker is missing or that drive is gone. */
 static int find_root(const char *tid, char *root, size_t n) {
-    for (int i = 0; i < 10; i++) {
-        char r[32], p[PATH_MAX];
-        if (i < 8)
-            snprintf(r, sizeof(r), "/mnt/usb%d", i);
-        else
-            snprintf(r, sizeof(r), "/mnt/ext%d", i - 8);
-        snprintf(p, sizeof(p), "%s/ps4/%s/app.pkg", r, tid);
-        if (is_mountpoint(r) && exists(p)) {
-            snprintf(root, n, "%s", r);
-            return 0;
-        }
-    }
-    return -1;
+    char path[64], buf[PATH_MAX + 256] = {0};
+    snprintf(path, sizeof(path), STATE_DIR "/%s.src", tid);
+    int fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return -1;
+    ssize_t r = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (r <= 0 || strncmp(buf, "/mnt/", 5))
+        return -1;
+    buf[strcspn(buf, "\n")] = 0;
+    const char *slash = strchr(buf + 5, '/');
+    size_t len = slash ? (size_t)(slash - buf) : strlen(buf);
+    if (len >= n)
+        return -1;
+    memcpy(root, buf, len);
+    root[len] = 0;
+    return is_mountpoint(root) ? 0 : -1;
 }
 
 /* Panel details of a folder no scan has opened yet (the scan is paused while a
