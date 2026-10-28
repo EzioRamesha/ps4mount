@@ -274,6 +274,9 @@ static void test_sfo_check(void) {
     sfo_set(&s, "SERVICE_ID_ADDCONT_ADD_4", "\r\n  ");
     CHECK(sfo_check(&s, why, sizeof(why)) == -1 && !strcmp(why, "SERVICE_ID_ADDCONT_ADD_4 is malformed"));
     good_sfo(&s);
+    sfo_set(&s, "SERVICE_ID_ADDCONT_ADD_8", "UP9000-CUSA0047_00");
+    CHECK(sfo_check(&s, why, sizeof(why)) == -1 && !strcmp(why, "SERVICE_ID_ADDCONT_ADD_8 is malformed"));
+    good_sfo(&s);
     snprintf(s.items[1].sval, sizeof(s.items[1].sval), "UP9000-CUSA00810_00-LBP3GAME0000001\n");
     CHECK(sfo_check(&s, why, sizeof(why)) == -1 && !strcmp(why, "CONTENT_ID is malformed"));
     good_sfo(&s);

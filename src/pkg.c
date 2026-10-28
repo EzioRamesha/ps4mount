@@ -213,12 +213,13 @@ int sfo_check(const sfo_t *sfo, char *why, size_t n) {
             return -1;
         }
     }
-    char key[32];
-    for (int i = 1; i <= 7; i++) {
-        snprintf(key, sizeof(key), "SERVICE_ID_ADDCONT_ADD_%d", i);
-        const sfo_item_t *it = sfo_get(sfo, key);
-        if (it && (it->is_int || (it->sval[0] && !id_like(it->sval, "AA9999-AAAA99999_00")))) {
-            snprintf(why, n, "%s is malformed", key);
+    /* every add-on service ID key, also ones past the usual _1.._7 */
+    for (int i = 0; i < sfo->count; i++) {
+        const sfo_item_t *it = &sfo->items[i];
+        if (strncmp(it->key, "SERVICE_ID_ADDCONT_ADD_", 23))
+            continue;
+        if (it->is_int || (it->sval[0] && !id_like(it->sval, "AA9999-AAAA99999_00"))) {
+            snprintf(why, n, "%s is malformed", it->key);
             return -1;
         }
     }
