@@ -5,6 +5,7 @@
 #include "pkg.h"
 
 #include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -180,4 +181,46 @@ const sfo_item_t *sfo_get(const sfo_t *sfo, const char *key) {
         if (!strcmp(sfo->items[i].key, key))
             return &sfo->items[i];
     return NULL;
+}
+
+/* s matches pat: 'A' an uppercase letter, '9' a digit, 'X' a letter or digit, anything
+ * else itself. */
+static int id_like(const char *s, const char *pat) {
+    for (; *pat; s++, pat++) {
+        int up = *s >= 'A' && *s <= 'Z', dig = *s >= '0' && *s <= '9';
+        if (*pat == 'A' ? !up : *pat == '9' ? !dig : *pat == 'X' ? !(up || dig) : *s != *pat)
+            return 0;
+    }
+    return !*s;
+}
+
+int sfo_check(const sfo_t *sfo, char *why, size_t n) {
+    static const struct {
+        const char *key, *pat;
+        int optional;
+    } k_fields[] = {
+        {"TITLE_ID", "AAAA99999", 0},
+        {"CONTENT_ID", "AA9999-AAAA99999_00-XXXXXXXXXXXXXXXX", 0},
+        {"APP_VER", "99.99", 1},
+        {"VERSION", "99.99", 1},
+    };
+    for (size_t i = 0; i < sizeof(k_fields) / sizeof(k_fields[0]); i++) {
+        const sfo_item_t *it = sfo_get(sfo, k_fields[i].key);
+        if (!it && k_fields[i].optional)
+            continue;
+        if (!it || it->is_int || !id_like(it->sval, k_fields[i].pat)) {
+            snprintf(why, n, "%s is %s", k_fields[i].key, it ? "malformed" : "missing");
+            return -1;
+        }
+    }
+    char key[32];
+    for (int i = 1; i <= 7; i++) {
+        snprintf(key, sizeof(key), "SERVICE_ID_ADDCONT_ADD_%d", i);
+        const sfo_item_t *it = sfo_get(sfo, key);
+        if (it && (it->is_int || (it->sval[0] && !id_like(it->sval, "AA9999-AAAA99999_00")))) {
+            snprintf(why, n, "%s is malformed", key);
+            return -1;
+        }
+    }
+    return 0;
 }

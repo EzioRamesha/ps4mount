@@ -397,6 +397,17 @@ static int src_open(title_src_t *t, const char *root, const char *tid) {
         pkg_close(&t->app);
         return -1;
     }
+    /* a damaged param.sfo has powered the console off and damaged its storage: never registered */
+    char why[64];
+    if (sfo_check(&t->app_sfo, why, sizeof(why))) {
+        printf("[scan] %s: not added, its param.sfo is damaged (%s)\n", t->app_path, why);
+        if (first_time(t->app_path)) {
+            const sfo_item_t *title = sfo_get(&t->app_sfo, "TITLE");
+            notify("%s: not added, the game package is damaged (%s)", title ? title->sval : tid, why);
+        }
+        pkg_close(&t->app);
+        return -1;
+    }
     if (exists(t->patch_path)) {
         const sfo_item_t *gv = sfo_get(&t->app_sfo, "VERSION");
         if (pkg_open(&t->patch, t->patch_path) || read_sfo(&t->patch, &t->patch_sfo)) {
@@ -412,6 +423,10 @@ static int src_open(title_src_t *t, const char *root, const char *tid) {
                 snprintf(t->update_issue, sizeof(t->update_issue),
                          "Update ignored: it is for %s version %s, the game is %s version %s", t->patch.title_id, uver,
                          tid, gver);
+                pkg_close(&t->patch);
+            } else if (sfo_check(&t->patch_sfo, why, sizeof(why))) {
+                snprintf(t->update_issue, sizeof(t->update_issue),
+                         "Update ignored: the update package is damaged (%s)", why);
                 pkg_close(&t->patch);
             } else {
                 t->has_patch = 1;
