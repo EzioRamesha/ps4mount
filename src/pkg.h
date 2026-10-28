@@ -50,3 +50,6 @@ typedef struct {
 
 int sfo_parse(const uint8_t *data, size_t len, sfo_t *out);
 const sfo_item_t *sfo_get(const sfo_t *sfo, const char *key);
+/* Checks the ID fields the system parses (title and content IDs, versions, add-on service
+ * IDs). 0 when they are well formed; otherwise -1 with the first bad field named in why. */
+int sfo_check(const sfo_t *sfo, char *why, size_t n);
