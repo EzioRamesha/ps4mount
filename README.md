@@ -10,6 +10,16 @@
 > **Back up your save data** (to a USB drive) before using PS4Mount, and
 > [report any problem](#reporting-problems) with the log.
 
+> [!WARNING]
+> **Never put the console in rest mode while PS4Mount is running.** Entering rest mode with PS4Mount
+> loaded can corrupt the PS5 system software. The console then asks for a system software reinstall,
+> which **erases all data on the console**. Turn the console off instead (**Power > Turn Off PS5**).
+>
+> The PS5 also enters rest mode by itself after some time without use, so turn that off before using
+> PS4Mount (and again after every system software reinstall, which turns it back on):
+> 1. Go to **Settings > System > Power Saving > Set Time Until PS5 Enters Rest Mode**.
+> 2. Set both **During Media Playback** and **While Playing Games** to **Don't Put in Rest Mode**.
+
 Play PS4 fake PKGs on a jailbroken PS5 straight from a USB drive, without installing them.
 
 Put the game (and its update) `.pkg` files on a USB drive, plug it in and load `ps4mount.elf`.
@@ -183,10 +193,8 @@ settings. A `.pkg` you move, rename or replace yourself is picked up as usual.
   of the game pkg (for example 01.00). The game runs with the update; the web panel shows its version.
 - Games already installed the normal way on the console are never touched, and their add-ons on the
   drive are not installed.
-- **Close PS4Mount games before putting the console in rest mode.** Rest mode powers the drive off, and a
-  game left open cannot read its files from the drive after waking up: it locks up, and closing it can
-  hang on the "Closing" screen, which needs a console restart. Games that were not open stay in the
-  library and work normally after waking up.
+- **Do not use rest mode while PS4Mount is running** (see the warning at the top). Rest mode can corrupt
+  the system software, and a game left open also locks up after waking up because the drive was powered off.
 - **Games with more than about 29 add-ons:** while a game runs, the console mounts each of its packages (the game,
   the update and every add-on) with two virtual devices: a PS4 package holds an outer filesystem with the
   real content as a second filesystem inside it. The console has 64 of these devices, so a running game
