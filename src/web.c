@@ -53,15 +53,19 @@ static void reply(int fd, const char *status, const char *type, const void *body
     send_all(fd, body, len);
 }
 
+static void json_text(buf_t *b, const char *s) {
+    for (const char *p = s; *p; p++) {
+        if (*p == '"' || *p == '\\')
+            buf_put(b, "\\", 1);
+        if ((unsigned char)*p >= 0x20)
+            buf_put(b, p, 1);
+    }
+}
+
 static void json_msg(int fd, int ok, const char *msg) {
     buf_t b = {0};
     buf_printf(&b, "{\"ok\":%s,\"%s\":\"", ok ? "true" : "false", ok ? "message" : "error");
-    for (const char *p = msg; *p; p++) {
-        if (*p == '"' || *p == '\\')
-            buf_put(&b, "\\", 1);
-        if ((unsigned char)*p >= 0x20)
-            buf_put(&b, p, 1);
-    }
+    json_text(&b, msg);
     buf_printf(&b, "\"}");
     reply(fd, ok ? "200 OK" : "400 Bad Request", "application/json; charset=utf-8", b.data, b.len);
     buf_free(&b);
@@ -299,6 +303,15 @@ void web_handle(int fd) {
         json_msg(fd, !rc, msg);
     } else if (!strcmp(path, "/api/log")) {
         send_log(fd);
+    } else if (!strcmp(path, "/api/stop/check")) {
+        char name[128] = "";
+        buf_t b = {0};
+        app_stop_open(name, sizeof(name));
+        buf_printf(&b, "{\"ok\":true,\"open\":\"");
+        json_text(&b, name);
+        buf_printf(&b, "\"}");
+        reply(fd, "200 OK", "application/json; charset=utf-8", b.data, b.len);
+        buf_free(&b);
     } else if (post && !strcmp(path, "/api/stop")) {
         int rc = app_stop(msg, sizeof(msg));
         json_msg(fd, !rc, msg);

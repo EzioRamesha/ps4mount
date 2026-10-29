@@ -2878,10 +2878,13 @@ static int open_game_name(char *name, size_t cap) {
     return 1;
 }
 
+int app_stop_open(char *name, size_t cap) { return open_game_name(name, cap); }
+
 int app_stop(char *msg, size_t cap) {
     char name[128];
     if (open_game_name(name, sizeof(name))) {
         snprintf(msg, cap, "Close %s before stopping PS4Mount", name);
+        printf("[panel] stop refused: %s is open\n", name);
         return -1;
     }
     g_stop = 1;

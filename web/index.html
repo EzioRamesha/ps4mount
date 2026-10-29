@@ -429,9 +429,12 @@ $('setform').onsubmit = function (e) {
     .catch(function (err) { toast('Error: ' + err.message); });
 };
 $('stop').onclick = function () {
-  if (!confirm('Stop PS4Mount? The games are unmounted and stay unavailable until it is loaded again.\n\n' +
-      'Stop it before putting the console in rest mode.')) return;
-  api('/api/stop', 'POST').then(function (j) { toast(j.message); }).catch(function (err) { toast(err.message); });
+  api('/api/stop/check').then(function (j) {
+    if (j.open) { alert('Close ' + j.open + ' before stopping PS4Mount.'); return; }
+    if (!confirm('Stop PS4Mount? The games are unmounted and stay unavailable until it is loaded again.\n\n' +
+        'Stop it before putting the console in rest mode.')) return;
+    return api('/api/stop', 'POST').then(function (j) { toast(j.message); });
+  }).catch(function (err) { alert(err.message); });
 };
 load();
 setInterval(load, 5000);
