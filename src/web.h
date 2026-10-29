@@ -12,7 +12,9 @@ void app_games_json(buf_t *out);
 int app_add(const char *tid, char *msg, size_t cap);
 int app_remove(const char *tid, char *msg, size_t cap);
 void app_rescan(void);
-void app_stop(void);
+/* Unmounts every game and stops PS4Mount (from the main loop). -1 with the reason in msg
+ * when a game is open. */
+int app_stop(char *msg, size_t cap);
 /* Closes the open game and moves the pkgs of the games in tids (comma separated title ids)
  * or of all games (NULL) back to where they came from. */
 int app_restore(const char *tids, char *msg, size_t cap);

@@ -25,10 +25,7 @@ void app_rescan(void) {
     char m[8];
     record("rescan", NULL, m, sizeof(m));
 }
-void app_stop(void) {
-    char m[8];
-    record("stop", NULL, m, sizeof(m));
-}
+int app_stop(char *msg, size_t cap) { return record("stop", NULL, msg, cap); }
 int app_restore(const char *tids, char *msg, size_t cap) { return record("restore", tids, msg, cap); }
 int app_restored_forget(char *msg, size_t cap) { return record("forget", NULL, msg, cap); }
 void app_config_json(buf_t *out) { buf_printf(out, "{\"batch\":true}"); }

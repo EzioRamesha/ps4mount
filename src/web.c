@@ -300,8 +300,8 @@ void web_handle(int fd) {
     } else if (!strcmp(path, "/api/log")) {
         send_log(fd);
     } else if (post && !strcmp(path, "/api/stop")) {
-        json_msg(fd, 1, "PS4Mount is stopping");
-        app_stop();
+        int rc = app_stop(msg, sizeof(msg));
+        json_msg(fd, !rc, msg);
     } else {
         reply(fd, "404 Not Found", "text/plain", "not found\n", 10);
     }
