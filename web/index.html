@@ -70,7 +70,7 @@ form.settings input.num{width:6em}
     <button id="rescan" class="primary">Scan for games</button>
     <button id="settingsbtn">Settings</button>
     <button id="logbtn">Log</button>
-    <button id="stop" class="danger">Stop</button>
+    <button id="stop" class="danger">Stop (before rest mode)</button>
   </div>
 </header>
 <main>
@@ -429,8 +429,9 @@ $('setform').onsubmit = function (e) {
     .catch(function (err) { toast('Error: ' + err.message); });
 };
 $('stop').onclick = function () {
-  if (!confirm('Stop PS4Mount? The games stay unavailable until it is loaded again.')) return;
-  api('/api/stop', 'POST').then(function (j) { toast(j.message); });
+  if (!confirm('Stop PS4Mount? The games are unmounted and stay unavailable until it is loaded again.\n\n' +
+      'Stop it before putting the console in rest mode.')) return;
+  api('/api/stop', 'POST').then(function (j) { toast(j.message); }).catch(function (err) { toast(err.message); });
 };
 load();
 setInterval(load, 5000);

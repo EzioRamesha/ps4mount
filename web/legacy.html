@@ -56,7 +56,7 @@ pre{white-space:pre-wrap;font-size:12px;background:#0b0d11;padding:12px;border-r
   <button id="rescan" class="primary">Scan for games</button>
   <button id="nav-settings">Settings</button>
   <button id="nav-log">Log</button>
-  <button id="stop" class="danger">Stop</button>
+  <button id="stop" class="danger">Stop (before rest mode)</button>
   <div id="msg"></div>
 </header>
 
@@ -264,7 +264,8 @@ $('nav-log').onclick = function () {
 };
 $('l-back').onclick = function () { show('v-games'); };
 $('stop').onclick = function () {
-  if (!confirm('Stop PS4Mount? The games stay unavailable until it is loaded again.')) return;
+  if (!confirm('Stop PS4Mount? The games are unmounted and stay unavailable until it is loaded again.\n\n' +
+      'Stop it before putting the console in rest mode.')) return;
   api('/api/stop', 'POST', null, function (err, j) { say(err ? 'Error: ' + err : j.message); });
 };
 
