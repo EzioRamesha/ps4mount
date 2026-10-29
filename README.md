@@ -13,7 +13,8 @@
 > [!WARNING]
 > **Never put the console in rest mode while PS4Mount is running.** Entering rest mode with PS4Mount
 > loaded can corrupt the PS5 system software. The console then asks for a system software reinstall,
-> which **erases all data on the console**. Turn the console off instead (**Power > Turn Off PS5**).
+> which **erases all data on the console**. Turn the console off instead (**Power > Turn Off PS5**), or
+> first stop PS4Mount with **Stop (before rest mode)** in the web panel, which unmounts every game.
 >
 > The PS5 also enters rest mode by itself after some time without use, so turn that off before using
 > PS4Mount (and again after every system software reinstall, which turns it back on):
@@ -131,7 +132,8 @@ Buttons:
 - **Scan for games**: checks the drives now and shows how many games were found on each one.
 - **Settings**: see below.
 - **Log**: shows the PS4Mount log.
-- **Stop**: stops PS4Mount. Its games cannot start until it is loaded again.
+- **Stop (before rest mode)**: unmounts every game and stops PS4Mount. With a game open, it asks you to
+  close the game first. Its games cannot start until it is loaded again.
 
 ### Settings
 
