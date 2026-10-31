@@ -365,6 +365,7 @@ es: {
 'Select': 'Seleccionar', 'with update from another drive': 'con actualización de otra unidad', 'with update': 'con actualización',
 '{n} add-on(s)': '{n} complemento(s)', 'mounted {how}': 'montado {how}', '{n} game(s)': '{n} juego(s)',
 '{name}: {free} free of {total}': '{name}: {free} libres de {total}', 'Almost full': 'Casi llena', 'almost full': 'casi llena',
+'{n} pkg(s) unreadable': '{n} pkg(s) ilegible(s)',
 '{n} selected': '{n} seleccionados', '{name} ({n} games)': '{name} ({n} juegos)',
 'Adding games is paused: {why}. Games already added still work. Restart the console before resuming.': 'Se ha pausado la adición de juegos: {why}. Los juegos ya añadidos siguen funcionando. Reinicia la consola antes de reanudar.',
 'Could not read the list: {e}': 'No se pudo leer la lista: {e}',
@@ -501,6 +502,7 @@ pt: {
 'Select': 'Selecionar', 'with update from another drive': 'com atualização de outra unidade', 'with update': 'com atualização',
 '{n} add-on(s)': '{n} complemento(s)', 'mounted {how}': 'montado {how}', '{n} game(s)': '{n} jogo(s)',
 '{name}: {free} free of {total}': '{name}: {free} livres de {total}', 'Almost full': 'Quase cheia', 'almost full': 'quase cheia',
+'{n} pkg(s) unreadable': '{n} pkg(s) ilegível(eis)',
 '{n} selected': '{n} selecionados', '{name} ({n} games)': '{name} ({n} jogos)',
 'Adding games is paused: {why}. Games already added still work. Restart the console before resuming.': 'A adição de jogos está pausada: {why}. Os jogos já adicionados continuam funcionando. Reinicie o console antes de retomar.',
 'Could not read the list: {e}': 'Não foi possível ler a lista: {e}',
@@ -637,6 +639,7 @@ fr: {
 'Select': 'Sélectionner', 'with update from another drive': 'avec mise à jour d’un autre disque', 'with update': 'avec mise à jour',
 '{n} add-on(s)': '{n} extension(s)', 'mounted {how}': 'monté {how}', '{n} game(s)': '{n} jeu(x)',
 '{name}: {free} free of {total}': '{name} : {free} libres sur {total}', 'Almost full': 'Presque plein', 'almost full': 'presque plein',
+'{n} pkg(s) unreadable': '{n} pkg(s) illisible(s)',
 '{n} selected': '{n} sélectionné(s)', '{name} ({n} games)': '{name} ({n} jeux)',
 'Adding games is paused: {why}. Games already added still work. Restart the console before resuming.': 'L’ajout de jeux est en pause : {why}. Les jeux déjà ajoutés fonctionnent toujours. Redémarrez la console avant de reprendre.',
 'Could not read the list: {e}': 'Impossible de lire la liste : {e}',
@@ -1017,7 +1020,8 @@ function render() {
       s += '<span' + (d.low || d.speed_state === 'slow' || d.speed_state === 'usb2' ? ' class="low"' : '') +
         (d.low ? ' title="' + t('Almost full') + '"' : '') + '>' +
         t('{name}: {free} free of {total}', {name: esc(d.name), free: gb(d.free), total: gb(d.total)}) +
-        (d.low ? ' · ' + t('almost full') : '') + speedText(d) + '</span>';
+        (d.low ? ' · ' + t('almost full') : '') + speedText(d) +
+        (d.bad > 0 ? ' · ' + t('{n} pkg(s) unreadable', {n: d.bad}) : '') + '</span>';
   });
   $('summary').innerHTML = s;
   selbar();

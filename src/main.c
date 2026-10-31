@@ -4035,9 +4035,9 @@ void app_games_json(buf_t *out) {
         unsigned long long avail, total;
         if (!is_mountpoint(root) || drive_space(root, &avail, &total))
             continue;
-        buf_printf(out, "%s{\"name\":\"%s\",\"games\":%d,\"pkgs\":%d,\"free\":%llu,\"total\":%llu,\"low\":%s",
-                   first ? "" : ",", root + 5, g_cat[i].ngames, g_cat[i].npkgs, avail, total,
-                   policy_space_low(avail, total) ? "true" : "false");
+        buf_printf(out, "%s{\"name\":\"%s\",\"games\":%d,\"pkgs\":%d,\"bad\":%d,\"free\":%llu,\"total\":%llu,\"low\":%s",
+                   first ? "" : ",", root + 5, g_cat[i].ngames, g_cat[i].npkgs, catalog_bad_count(&g_cat[i]), avail,
+                   total, policy_space_low(avail, total) ? "true" : "false");
         speed_json(out, i);
         buf_printf(out, "}");
         first = 0;
