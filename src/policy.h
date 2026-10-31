@@ -58,7 +58,13 @@ int policy_at_capacity(int n_used, int max);
 /* How many scan rounds to let pass before the next one, once idle_in_a_row consecutive
  * scans found nothing new anywhere: 1 (no backoff) for 0 or 1, doubling after that, capped
  * at SCAN_BACKOFF_MAX so a newly plugged drive or added pkg is still found within
- * SCAN_BACKOFF_MAX * the configured interval. */
+ * SCAN_BACKOFF_MAX * the configured interval -- as long as it is a newly plugged drive
+ * (always walked immediately, see the !seen[] override in scan_all) or the drive's own
+ * walk is due too. Combined with the per-drive backoff (policy_drive_walk_due), the
+ * effective worst case for a pkg appearing on an already-connected, idle drive is bounded
+ * by SCAN_BACKOFF_MAX * the configured interval, not SCAN_BACKOFF_MAX * DRIVE_IDLE_ROUNDS:
+ * once the global backoff is fully elevated, every drive gets a full walk on each call
+ * (policy_drive_walk_due_combined), so the two backoffs do not multiply. */
 #define SCAN_BACKOFF_MAX 6
 int policy_scan_backoff(int idle_in_a_row);
 
@@ -71,6 +77,14 @@ int policy_scan_backoff(int idle_in_a_row);
  * DRIVE_IDLE_ROUNDS-th scan (every 2*DRIVE_IDLE_ROUNDS-th when speed-dropped). */
 #define DRIVE_IDLE_ROUNDS 6
 int policy_drive_walk_due(int idle_in_a_row, int speed_drop);
+
+/* policy_drive_walk_due, folded together with the global scan backoff so the two do not
+ * compound: idle_scans is the global g_idle_scans (consecutive scan_all() calls with
+ * nothing new anywhere). Once idle_scans has reached SCAN_BACKOFF_MAX, policy_scan_backoff
+ * has already saturated scan_all() itself to its slowest cadence, so every call that does
+ * happen gives every eligible drive a real walk instead of this per-drive backoff skipping
+ * some of them on top of that. */
+int policy_drive_walk_due_combined(int idle_in_a_row, int speed_drop, int idle_scans);
 
 /* State files: one "<key>\t<value>" line per key (a key alone means value "1").
  * kv_get returns 0 and fills value when the key is there; kv_set with value NULL removes

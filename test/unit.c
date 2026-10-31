@@ -1042,6 +1042,16 @@ static void test_policy(void) {
     CHECK(!policy_drive_walk_due(2, 1)); /* speed_drop backs off sooner than a healthy drive */
     CHECK(!policy_drive_walk_due(11, 1));
     CHECK(policy_drive_walk_due(12, 1)); /* 12 % 12 == 0 */
+
+    printf("policy: per-drive walk due, combined with the global backoff\n");
+    /* global backoff not yet elevated: behaves exactly like policy_drive_walk_due */
+    CHECK(policy_drive_walk_due_combined(7, 0, 0) == policy_drive_walk_due(7, 0));
+    CHECK(!policy_drive_walk_due_combined(7, 0, SCAN_BACKOFF_MAX - 1));
+    /* once idle_scans reaches SCAN_BACKOFF_MAX, the global backoff is already saturated,
+     * so every call forces a full walk, even where the per-drive backoff alone would skip it */
+    CHECK(policy_drive_walk_due_combined(7, 0, SCAN_BACKOFF_MAX));
+    CHECK(policy_drive_walk_due_combined(11, 1, SCAN_BACKOFF_MAX));
+    CHECK(policy_drive_walk_due_combined(100, 0, 1000));
 }
 
 static void test_safety(void) {

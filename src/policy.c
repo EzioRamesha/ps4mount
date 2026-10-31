@@ -80,6 +80,12 @@ int policy_drive_walk_due(int idle_in_a_row, int speed_drop) {
     return idle_in_a_row < window || idle_in_a_row % every == 0;
 }
 
+int policy_drive_walk_due_combined(int idle_in_a_row, int speed_drop, int idle_scans) {
+    if (idle_scans >= SCAN_BACKOFF_MAX)
+        return 1;
+    return policy_drive_walk_due(idle_in_a_row, speed_drop);
+}
+
 #define KV_LINE 1024
 
 /* Splits a line into key and value ("1" for a key alone). 0 for a usable line. */

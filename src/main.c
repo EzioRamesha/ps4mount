@@ -3268,7 +3268,8 @@ static int scan_all(void) {
         else if (present[i]) {
             int first_or_manual = !seen[i] || manual[i];
             int speed_drop = g_speed[i].status == SPEED_DONE && g_speed[i].verdict == SPEED_DROP;
-            int due = !game_running_on_drive(i) && policy_drive_walk_due(g_drive_idle[i], speed_drop);
+            int due =
+                !game_running_on_drive(i) && policy_drive_walk_due_combined(g_drive_idle[i], speed_drop, g_idle_scans);
             if (first_or_manual || due)
                 ready[i] = scan_prepare(root, first_or_manual, !seen[i] && !first);
             else
