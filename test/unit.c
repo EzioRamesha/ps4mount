@@ -1014,6 +1014,12 @@ static void test_policy(void) {
     CHECK(kv_each("/tmp/ps4mount-no-such-file", kv_count, &count) == -1);
     CHECK(kv_set("/tmp/ps4mount-no-dir/x/kv.txt", "a", "1") == -1);
     unlink(path);
+
+    printf("policy: at the title capacity\n");
+    CHECK(!policy_at_capacity(254, 256));
+    CHECK(!policy_at_capacity(255, 256));
+    CHECK(policy_at_capacity(256, 256));
+    CHECK(policy_at_capacity(300, 256)); /* already over: still reports full */
 }
 
 static void test_safety(void) {

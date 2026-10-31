@@ -63,6 +63,8 @@ int policy_speed_verdict(double mbps, double best) {
     return SPEED_OK;
 }
 
+int policy_at_capacity(int n_used, int max) { return n_used >= max; }
+
 #define KV_LINE 1024
 
 /* Splits a line into key and value ("1" for a key alone). 0 for a usable line. */

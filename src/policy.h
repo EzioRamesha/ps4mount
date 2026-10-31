@@ -52,6 +52,9 @@ int policy_space_low(unsigned long long free_bytes, unsigned long long total_byt
 enum { SPEED_OK, SPEED_DROP, SPEED_USB2, SPEED_CACHED };
 int policy_speed_verdict(double mbps, double best);
 
+/* 1 when n_used has already reached max: no free slot for one more managed title. */
+int policy_at_capacity(int n_used, int max);
+
 /* State files: one "<key>\t<value>" line per key (a key alone means value "1").
  * kv_get returns 0 and fills value when the key is there; kv_set with value NULL removes
  * the key. Keys and values have no tab or line break. 0 on success. */
