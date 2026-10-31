@@ -492,8 +492,11 @@ static void dlc_open(title_src_t *t, const catalog_t *c, const cat_game_t *g) {
     qsort(t->dlc, (size_t)t->ndlc_all, sizeof(*t->dlc), dlc_cmp);
     /* the add-ons turned off go after the ones in use, in the same order within each group */
     dlc_src_t *sorted = malloc(sizeof(*sorted) * (size_t)t->ndlc_all);
-    if (!sorted)
+    if (!sorted) {
+        printf("[scan] %s: out of memory sorting %d add-on(s), skipped this scan\n", t->app.title_id, t->ndlc_all);
+        t->ndlc_all = 0;
         return;
+    }
     int on = 0, k = 0;
     for (int pass = 0; pass < 2; pass++)
         for (int i = 0; i < t->ndlc_all; i++) {
@@ -833,7 +836,7 @@ int sceAppInstUtilAppUnInstallAddcont(const char *title_id, const char *addcont_
  * system together after a scan, which copies them one by one in that order. The calls run in their own
  * thread; the main loop follows each copy in ac_poll (klog copy lines, then the file size). */
 #define AC_RETURN_S 60 /* a call still running this long after the copy reached full size is not waited for */
-#define AC_MAX_JOBS MAX_DLC
+#define AC_MAX_JOBS 64 /* independent of MAX_DLC: this bounds the install queue, not the listing cap */
 
 typedef struct {
     int data, started, ended, copy_start, copy_end; /* copy_*: klog lines seen */
