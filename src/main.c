@@ -445,6 +445,7 @@ static int dlc_cmp(const void *a, const void *b) {
 }
 
 static int addon_off(const char *content_id);
+static int first_time(const char *path);
 
 /* The add-ons the catalog grouped with the game: the ones in use first, then the ones
  * turned off in the panel (/data/ps4mount/addons-off.txt, shared with app_addon and the
@@ -453,9 +454,8 @@ static int addon_off(const char *content_id);
 static void dlc_open(title_src_t *t, const catalog_t *c, const cat_game_t *g) {
     const cat_pkg_t *list[CAT_MAX_DLC];
     int nlist = catalog_dlc_of(g_cat, c, g, list, CAT_MAX_DLC);
-    if (nlist == CAT_MAX_DLC)
-        printf("[scan] %s: has %d or more add-ons, only the first %d are listed\n", t->app.title_id, CAT_MAX_DLC,
-               MAX_DLC);
+    if (nlist == CAT_MAX_DLC && first_time(t->app_path))
+        printf("[scan] %s: has %d or more add-ons; only %d are used\n", t->app.title_id, CAT_MAX_DLC, MAX_DLC);
     for (int k = 0; k < nlist && t->ndlc_all < MAX_DLC; k++) {
         const cat_pkg_t *p = list[k];
         int dup = 0;
@@ -516,8 +516,6 @@ static void dlc_open(title_src_t *t, const catalog_t *c, const cat_game_t *g) {
             snprintf(t->dlc_tids[t->ndlc_tids++], 10, "%s", t->dlc[i].pkg.title_id);
     }
 }
-
-static int first_time(const char *path);
 
 /* Opens the pkgs of game tid as the catalog of the drive at root grouped them. */
 static int src_open(title_src_t *t, const char *root, const char *tid) {
@@ -3247,6 +3245,7 @@ static int game_running_on_drive(int i) {
 static int scan_all(void) {
     static int seen[NUM_DRIVES], first = 1;
     int ready[NUM_DRIVES] = {0}, present[NUM_DRIVES] = {0}, manual[NUM_DRIVES] = {0}, fresh[NUM_DRIVES] = {0};
+    int walked[NUM_DRIVES] = {0}; /* scan_prepare() actually walked this drive's folders this round */
     int only = g_scan_only;
     g_scan_only = -1;
     release_stale();
@@ -3270,9 +3269,10 @@ static int scan_all(void) {
             int speed_drop = g_speed[i].status == SPEED_DONE && g_speed[i].verdict == SPEED_DROP;
             int due =
                 !game_running_on_drive(i) && policy_drive_walk_due_combined(g_drive_idle[i], speed_drop, g_idle_scans);
-            if (first_or_manual || due)
+            if (first_or_manual || due) {
+                walked[i] = 1;
                 ready[i] = scan_prepare(root, first_or_manual, !seen[i] && !first);
-            else
+            } else
                 ready[i] = g_cat[i].ngames > 0; /* reuse the catalog already loaded for it */
         } else if (g_cat_loaded[i]) {
             catalog_free(&g_cat[i]); /* checked again when the drive is back: it may have changed */
@@ -3298,7 +3298,7 @@ static int scan_all(void) {
         fresh[i] = present[i] && !seen[i];
         if (!present[i] || fresh[i] || g_drive_changed[i])
             g_drive_idle[i] = 0;
-        else if (ready[i])
+        else if (walked[i])
             g_drive_idle[i]++;
         seen[i] = present[i];
     }
