@@ -298,7 +298,7 @@ form.settings input.num{width:6em}
 <div class="actions" style="padding:10px 0 0"><form method="dialog"><button>Close</button></form></div></dialog>
 <div id="toast" role="status" aria-live="polite"></div>
 <script>
-var games = [], busy = {}, drives = [], selected = {}, openAddons = {}, stateFilter = '';
+var games = [], busy = {}, drives = [], gamesCapped = 0, selected = {}, openAddons = {}, stateFilter = '';
 var MAX_RUNNING_ADDONS = 29;
 var addonLabels = {on: 'installed', adding: 'being added', off: 'turned off', deleted: 'deleted on the console'};
 var kinds = {duplicate: 'Same game on more than one place (this copy is not used)', 'addon-without-game': 'Add-on without its game',
@@ -372,7 +372,7 @@ es: {
 'Never add {tid}? It leaves the library and is skipped by every scan until you click Allow. The pkgs stay on the drive.': '¿No añadir nunca {tid}? Sale de la biblioteca y todas las búsquedas lo saltan hasta que pulses Permitir. Los pkgs se quedan en la unidad.',
 'Error: {e}': 'Error: {e}', 'Add {n} game(s)?': '¿Añadir {n} juego(s)?',
 'Remove {n} game(s)? The pkgs stay on the drive.': '¿Quitar {n} juego(s)? Los pkgs se quedan en la unidad.',
-'Never add {n} game(s)?': '¿No añadir nunca {n} juego(s)?', '{ok} done': '{ok} hechos',
+'Never add {n} game(s)?': '¿No añadir nunca {n} juego(s)?', '{n} game(s) could not be added: the library is at its {max}-title limit': '{n} juego(s) no se pudieron añadir: la biblioteca alcanzó su límite de {max} títulos', '{ok} done': '{ok} hechos',
 '{failed} failed (see Log)': '{failed} con error (ver Registro)', 'Problem': 'Problema', 'Title': 'Título', 'Pkg': 'Pkg',
 'No problems found in the last scan.': 'No se encontraron problemas en la última búsqueda.', '{size} of {full}': '{size} de {full}',
 'Could not read the problems: {e}': 'No se pudieron leer los problemas: {e}',
@@ -508,7 +508,7 @@ pt: {
 'Never add {tid}? It leaves the library and is skipped by every scan until you click Allow. The pkgs stay on the drive.': 'Nunca adicionar {tid}? Ele sai da biblioteca e todas as verificações o pulam até você clicar em Permitir. Os pkgs continuam na unidade.',
 'Error: {e}': 'Erro: {e}', 'Add {n} game(s)?': 'Adicionar {n} jogo(s)?',
 'Remove {n} game(s)? The pkgs stay on the drive.': 'Remover {n} jogo(s)? Os pkgs continuam na unidade.',
-'Never add {n} game(s)?': 'Nunca adicionar {n} jogo(s)?', '{ok} done': '{ok} concluídos',
+'Never add {n} game(s)?': 'Nunca adicionar {n} jogo(s)?', '{n} game(s) could not be added: the library is at its {max}-title limit': '{n} jogo(s) não puderam ser adicionados: a biblioteca atingiu o limite de {max} títulos', '{ok} done': '{ok} concluídos',
 '{failed} failed (see Log)': '{failed} falharam (veja o Log)', 'Problem': 'Problema', 'Title': 'Título', 'Pkg': 'Pkg',
 'No problems found in the last scan.': 'Nenhum problema encontrado na última verificação.', '{size} of {full}': '{size} de {full}',
 'Could not read the problems: {e}': 'Não foi possível ler os problemas: {e}',
@@ -644,7 +644,7 @@ fr: {
 'Never add {tid}? It leaves the library and is skipped by every scan until you click Allow. The pkgs stay on the drive.': 'Ne jamais ajouter {tid} ? Il quitte la bibliothèque et chaque recherche l’ignore jusqu’à ce que vous cliquiez sur Autoriser. Les pkgs restent sur le disque.',
 'Error: {e}': 'Erreur : {e}', 'Add {n} game(s)?': 'Ajouter {n} jeu(x) ?',
 'Remove {n} game(s)? The pkgs stay on the drive.': 'Retirer {n} jeu(x) ? Les pkgs restent sur le disque.',
-'Never add {n} game(s)?': 'Ne jamais ajouter {n} jeu(x) ?', '{ok} done': '{ok} terminé(s)',
+'Never add {n} game(s)?': 'Ne jamais ajouter {n} jeu(x) ?', '{n} game(s) could not be added: the library is at its {max}-title limit': '{n} jeu(x) n\'ont pas pu être ajoutés : la bibliothèque a atteint sa limite de {max} titres', '{ok} done': '{ok} terminé(s)',
 '{failed} failed (see Log)': '{failed} en échec (voir le Journal)', 'Problem': 'Problème', 'Title': 'Titre', 'Pkg': 'Pkg',
 'No problems found in the last scan.': 'Aucun problème lors de la dernière recherche.', '{size} of {full}': '{size} sur {full}',
 'Could not read the problems: {e}': 'Impossible de lire les problèmes : {e}',
@@ -1010,6 +1010,8 @@ function render() {
   if (withDlc)
     s += '<button type="button" data-state="dlc" class="chip' + (stateFilter === 'dlc' ? ' on' : '') + '" title="' +
       t('Show only these games') + '">' + t('With add-ons: {n}', {n: withDlc}) + '</button>';
+  if (gamesCapped > 0)
+    s += '<span>' + t('{n} game(s) could not be added: the library is at its {max}-title limit', {n: gamesCapped, max: 1024}) + '</span>';
   drives.forEach(function (d) {
     if (!dv || d.name === dv)
       s += '<span' + (d.low || d.speed_state === 'slow' || d.speed_state === 'usb2' ? ' class="low"' : '') +
@@ -1051,7 +1053,7 @@ function drivelist() {
 
 function load() {
   api('/api/games').then(function (j) {
-    games = j.games; drives = j.drives || []; $('ver').textContent = j.version;
+    games = j.games; drives = j.drives || []; gamesCapped = j.games_capped || 0; $('ver').textContent = j.version;
     checkRelease(j.version);
     var live = {};
     games.forEach(function (g) { if (g.state !== 'internal' && g.state !== 'running') live[g.title_id] = 1; });

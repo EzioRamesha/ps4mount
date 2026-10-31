@@ -67,7 +67,7 @@
  * /user is bfs, which has no symlinks; /system_data is ufs. A delete from the
  * console only ever removes these links, never the pkgs. */
 #define HOLD_DIR "/system_data/ps4mount"
-#define MAX_TITLES 256
+#define MAX_TITLES 1024
 #define MAX_DLC 64
 #define DLC_LIMIT 29 /* add-ons a running game can use (see the README) */
 #define BATCH_QUIET 10 /* seconds without writes to the system databases between groups */
@@ -1388,6 +1388,7 @@ typedef struct {
 } managed_t;
 
 static managed_t g_managed[MAX_TITLES];
+static int g_managed_full; /* games manage() could not give a slot this scan cycle */
 static int g_manual_scan; /* "Scan for games" in the panel */
 static int g_scan_only = -1; /* index of the only drive to walk in the next scan, -1 for all */
 static int g_deleting; /* a delete screen is open: game folders are unmounted */
@@ -1701,8 +1702,11 @@ static void manage(const title_src_t *t) {
     for (int i = 0; !m && i < MAX_TITLES; i++)
         if (!g_managed[i].used)
             m = &g_managed[i];
-    if (!m)
+    if (!m) {
+        if (policy_at_capacity(MAX_TITLES, MAX_TITLES))
+            g_managed_full++;
         return;
+    }
     /* keep the runtime state across rescans */
     managed_t keep = *m;
     memset(m, 0, sizeof(*m));
@@ -3224,6 +3228,7 @@ static void scan_all(void) {
     int only = g_scan_only;
     g_scan_only = -1;
     release_stale();
+    g_managed_full = 0;
     /* pkgs of a drive move when it is walked: drop what points to other drives first */
     catalog_unlink(g_cat, NUM_DRIVES);
     char root[32];
@@ -3924,7 +3929,7 @@ void app_games_json(buf_t *out) {
     json_str(out, VERSION);
     buf_printf(out, ",\"paused\":");
     json_str(out, g_halt);
-    buf_printf(out, ",\"games\":[");
+    buf_printf(out, ",\"games_capped\":%d,\"games\":[", g_managed_full);
     int first = 1;
     for (int i = 0; i < NUM_DRIVES; i++) {
         char root[32];
