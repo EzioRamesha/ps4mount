@@ -58,9 +58,10 @@ int app_fm_copy(const char *srcs, const char *dst, int copy, int conflict, char 
 }
 int app_fm_cancel(char *msg, size_t cap) { return record("fm_cancel", NULL, msg, cap); }
 int app_resume(char *msg, size_t cap) { return record("resume", NULL, msg, cap); }
-void app_stop(void) {
-    char m[8];
-    record("stop", NULL, m, sizeof(m));
+int app_stop(char *msg, size_t cap) { return record("stop", NULL, msg, cap); }
+int app_stop_open(char *name, size_t cap) {
+    snprintf(name, cap, "Game \"A\"");
+    return 1;
 }
 int app_restore(const char *tids, char *msg, size_t cap) { return record("restore", tids, msg, cap); }
 int app_restored_forget(char *msg, size_t cap) { return record("forget", NULL, msg, cap); }

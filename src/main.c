@@ -58,7 +58,7 @@
 #include "web.h"
 #include "icon_data.h"
 
-#define VERSION "PS4Mount 0.7.0-test.9"
+#define VERSION "PS4Mount 0.7.2"
 #define LOCK_PORT 9032
 #define SCAN_SECONDS 10
 #define STATE_DIR "/data/ps4mount"
@@ -536,7 +536,18 @@ static int src_open(title_src_t *t, const char *root, const char *tid) {
         pkg_close(&t->app);
         return -1;
     }
-    if (t->patch_path[0]) {
+    /* a damaged param.sfo has powered the console off and damaged its storage: never registered */
+    char why[64];
+    if (sfo_check(&t->app_sfo, why, sizeof(why))) {
+        printf("[scan] %s: not added, its param.sfo is damaged (%s)\n", t->app_path, why);
+        if (first_time(t->app_path)) {
+            const sfo_item_t *title = sfo_get(&t->app_sfo, "TITLE");
+            notify("%s: not added, the game package is damaged (%s)", title ? title->sval : tid, why);
+        }
+        pkg_close(&t->app);
+        return -1;
+    }
+    if (exists(t->patch_path)) {
         const sfo_item_t *gv = sfo_get(&t->app_sfo, "VERSION");
         if (pkg_open(&t->patch, t->patch_path) || read_sfo(&t->patch, &t->patch_sfo)) {
             snprintf(t->update_issue, sizeof(t->update_issue), "Update ignored: the update pkg could not be read");
@@ -551,6 +562,10 @@ static int src_open(title_src_t *t, const char *root, const char *tid) {
                 snprintf(t->update_issue, sizeof(t->update_issue),
                          "Update ignored: it is for %s version %s, the game is %s version %s", t->patch.title_id, uver,
                          tid, gver);
+                pkg_close(&t->patch);
+            } else if (sfo_check(&t->patch_sfo, why, sizeof(why))) {
+                snprintf(t->update_issue, sizeof(t->update_issue),
+                         "Update ignored: the update package is damaged (%s)", why);
                 pkg_close(&t->patch);
             } else {
                 t->has_patch = 1;
@@ -3530,7 +3545,68 @@ int app_resume(char *msg, size_t cap) {
     snprintf(msg, cap, "Adding games resumed");
     return 0;
 }
-void app_stop(void) { g_stop = 1; }
+/* The name of the open game, or 0 when no game is open. */
+static int open_game_name(char *name, size_t cap) {
+    uint32_t ids[1];
+    char tids[1][10];
+    if (!open_games(ids, tids, 1))
+        return 0;
+    managed_t *m = managed_by(tids[0], NULL);
+    snprintf(name, cap, "%s", m && m->name[0] ? m->name : tids[0]);
+    return 1;
+}
+
+int app_stop_open(char *name, size_t cap) { return open_game_name(name, cap); }
+
+int app_stop(char *msg, size_t cap) {
+    char name[128];
+    if (open_game_name(name, sizeof(name))) {
+        snprintf(msg, cap, "Close %s before stopping PS4Mount", name);
+        printf("[panel] stop refused: %s is open\n", name);
+        return -1;
+    }
+    g_stop = 1;
+    snprintf(msg, cap, "PS4Mount unmounts the games and stops");
+    return 0;
+}
+
+static int still_mounted(const char *target) { return mounted_from(target, NULL, 0) || layers_on(target) > 0; }
+
+/* Rest mode powers the drive off: before stopping, every folder PS4Mount mounted is
+ * unmounted, without forcing (a forced unmount of a folder in use can bring the system
+ * down). 0 when none is left; otherwise -1 with the reason in msg, and the games are
+ * mounted again. */
+static int unmount_games(char *msg, size_t cap) {
+    char name[128], target[64];
+    if (open_game_name(name, sizeof(name))) {
+        snprintf(msg, cap, "Close %s before stopping PS4Mount", name);
+        return -1;
+    }
+    int busy = 0;
+    for (int i = 0; i < MAX_TITLES; i++) {
+        managed_t *m = &g_managed[i];
+        if (!m->used)
+            continue;
+        snprintf(target, sizeof(target), "/user/app/%s", m->tid);
+        unmount_all_layers(target, 0);
+        busy += still_mounted(target);
+        snprintf(target, sizeof(target), "/user/patch/%s", m->tid);
+        unmount_all_layers(target, 0);
+        busy += still_mounted(target);
+        for (int j = 0; j < m->ndlc_tids; j++) {
+            snprintf(target, sizeof(target), "/user/addcont/%s", m->dlc_tids[j]);
+            unmount_all_layers(target, 0);
+            busy += still_mounted(target);
+        }
+    }
+    if (!busy)
+        return 0;
+    for (int i = 0; i < MAX_TITLES; i++)
+        if (g_managed[i].used)
+            mount_paths(g_managed[i].tid, g_managed[i].has_patch, g_managed[i].dlc_tids, g_managed[i].ndlc_tids);
+    snprintf(msg, cap, "%d game folder(s) are still in use, try again in a moment", busy);
+    return -1;
+}
 
 static void json_str(buf_t *b, const char *s) {
     buf_put(b, "\"", 1);
@@ -5944,8 +6020,15 @@ int main(void) {
     unlink(STATE_DIR "/stop");
     for (;;) {
         if (g_stop || exists(STATE_DIR "/stop")) {
+            char msg[192];
             unlink(STATE_DIR "/stop");
-            notify(VERSION " stopped");
+            g_stop = 0;
+            if (unmount_games(msg, sizeof(msg))) {
+                printf("[main] not stopped: %s\n", msg);
+                notify(VERSION " not stopped: %s", msg);
+                continue;
+            }
+            notify(VERSION " stopped: the games are unmounted");
             return 0;
         }
         if (!still_listening(lock)) {

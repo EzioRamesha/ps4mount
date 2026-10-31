@@ -154,7 +154,7 @@ form.settings input.num{width:6em}
     <button id="settingsbtn">Settings</button>
     <button id="logbtn">Log</button>
     <button id="diagbtn">Diagnostics</button>
-    <button id="stop" class="danger">Stop</button>
+    <button id="stop" class="danger">Stop (before rest mode)</button>
     <button id="pinbtn" class="primary" hidden>Enter PIN</button>
   </div>
 </header>
@@ -317,7 +317,7 @@ es: {
 'Search game or CUSA': 'Buscar juego o CUSA', 'Sort': 'Ordenar', 'Sort by name': 'Ordenar por nombre',
 'Sort by state': 'Ordenar por estado', 'Sort by location': 'Ordenar por ubicación', 'Drive': 'Unidad',
 'All drives': 'Todas las unidades', 'Scan for games': 'Buscar juegos', 'Problems': 'Problemas', 'Settings': 'Ajustes',
-'Log': 'Registro', 'Diagnostics': 'Diagnóstico', 'Stop': 'Detener', 'Enter PIN': 'Introducir PIN',
+'Log': 'Registro', 'Diagnostics': 'Diagnóstico', 'Stop (before rest mode)': 'Detener (antes del reposo)', 'Enter PIN': 'Introducir PIN',
 'Resume adding games': 'Seguir añadiendo juegos',
 'No PS4 games found. Copy the .pkg files (game, update and add-ons) to a USB drive, in any folder.': 'No se encontraron juegos de PS4. Copia los archivos .pkg (juego, actualización y complementos) a una unidad USB, en cualquier carpeta.',
 'Add selected': 'Añadir seleccionados', 'Remove selected': 'Quitar seleccionados',
@@ -391,7 +391,8 @@ es: {
 'Could not read the settings: {e}': 'No se pudieron leer los ajustes: {e}',
 'Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.': '¿Volver a usar los pkgs devueltos? Se mueven a la carpeta ps4 y se añaden en la próxima búsqueda.',
 'The PIN must be 4 to 8 digits': 'El PIN debe tener de 4 a 8 dígitos',
-'Stop PS4Mount? The games stay unavailable until it is loaded again.': '¿Detener PS4Mount? Los juegos no estarán disponibles hasta que se vuelva a cargar.',
+'Close {name} before stopping PS4Mount.': 'Cierra {name} antes de detener PS4Mount.',
+'Stop PS4Mount? The games are unmounted and stay unavailable until it is loaded again.\n\nStop it before putting the console in rest mode.': '¿Detener PS4Mount? Los juegos se desmontan y no estarán disponibles hasta que se vuelva a cargar.\n\nDeténlo antes de poner la consola en reposo.',
 'Files': 'Archivos', 'New folder': 'Nueva carpeta', 'Folder name': 'Nombre de la carpeta', 'New name': 'Nuevo nombre',
 'Drives': 'Unidades', 'No drives connected': 'No hay unidades conectadas',
 'Empty folder': 'Carpeta vacía', 'in use': 'en uso', 'Move': 'Mover', 'Rename': 'Renombrar', 'Delete': 'Borrar',
@@ -452,7 +453,7 @@ pt: {
 'Search game or CUSA': 'Buscar jogo ou CUSA', 'Sort': 'Ordenar', 'Sort by name': 'Ordenar por nome',
 'Sort by state': 'Ordenar por estado', 'Sort by location': 'Ordenar por local', 'Drive': 'Unidade',
 'All drives': 'Todas as unidades', 'Scan for games': 'Procurar jogos', 'Problems': 'Problemas', 'Settings': 'Configurações',
-'Log': 'Log', 'Diagnostics': 'Diagnóstico', 'Stop': 'Parar', 'Enter PIN': 'Digitar PIN',
+'Log': 'Log', 'Diagnostics': 'Diagnóstico', 'Stop (before rest mode)': 'Parar (antes do repouso)', 'Enter PIN': 'Digitar PIN',
 'Resume adding games': 'Voltar a adicionar jogos',
 'No PS4 games found. Copy the .pkg files (game, update and add-ons) to a USB drive, in any folder.': 'Nenhum jogo de PS4 encontrado. Copie os arquivos .pkg (jogo, atualização e complementos) para uma unidade USB, em qualquer pasta.',
 'Add selected': 'Adicionar selecionados', 'Remove selected': 'Remover selecionados',
@@ -526,7 +527,8 @@ pt: {
 'Could not read the settings: {e}': 'Não foi possível ler as configurações: {e}',
 'Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.': 'Usar de novo os pkgs devolvidos? Eles são movidos para a pasta ps4 e adicionados na próxima verificação.',
 'The PIN must be 4 to 8 digits': 'O PIN deve ter de 4 a 8 dígitos',
-'Stop PS4Mount? The games stay unavailable until it is loaded again.': 'Parar o PS4Mount? Os jogos ficam indisponíveis até ele ser carregado de novo.',
+'Close {name} before stopping PS4Mount.': 'Feche {name} antes de parar o PS4Mount.',
+'Stop PS4Mount? The games are unmounted and stay unavailable until it is loaded again.\n\nStop it before putting the console in rest mode.': 'Parar o PS4Mount? Os jogos são desmontados e ficam indisponíveis até ele ser carregado de novo.\n\nPare-o antes de colocar o console em repouso.',
 'Files': 'Arquivos', 'New folder': 'Nova pasta', 'Folder name': 'Nome da pasta', 'New name': 'Novo nome',
 'Drives': 'Unidades', 'No drives connected': 'Nenhuma unidade conectada',
 'Empty folder': 'Pasta vazia', 'in use': 'em uso', 'Move': 'Mover', 'Rename': 'Renomear', 'Delete': 'Apagar',
@@ -587,7 +589,7 @@ fr: {
 'Search game or CUSA': 'Chercher un jeu ou CUSA', 'Sort': 'Trier', 'Sort by name': 'Trier par nom',
 'Sort by state': 'Trier par état', 'Sort by location': 'Trier par emplacement', 'Drive': 'Disque',
 'All drives': 'Tous les disques', 'Scan for games': 'Chercher des jeux', 'Problems': 'Problèmes', 'Settings': 'Réglages',
-'Log': 'Journal', 'Diagnostics': 'Diagnostic', 'Stop': 'Arrêter', 'Enter PIN': 'Saisir le PIN',
+'Log': 'Journal', 'Diagnostics': 'Diagnostic', 'Stop (before rest mode)': 'Arrêter (avant le mode repos)', 'Enter PIN': 'Saisir le PIN',
 'Resume adding games': 'Reprendre l’ajout de jeux',
 'No PS4 games found. Copy the .pkg files (game, update and add-ons) to a USB drive, in any folder.': 'Aucun jeu PS4 trouvé. Copiez les fichiers .pkg (jeu, mise à jour et extensions) sur un disque USB, dans n’importe quel dossier.',
 'Add selected': 'Ajouter la sélection', 'Remove selected': 'Retirer la sélection',
@@ -661,7 +663,8 @@ fr: {
 'Could not read the settings: {e}': 'Impossible de lire les réglages : {e}',
 'Pick up the pkgs that were moved back again? They are moved into the ps4 folder and added on the next scan.': 'Reprendre les pkgs remis en place ? Ils sont déplacés dans le dossier ps4 et ajoutés à la prochaine recherche.',
 'The PIN must be 4 to 8 digits': 'Le PIN doit comporter 4 à 8 chiffres',
-'Stop PS4Mount? The games stay unavailable until it is loaded again.': 'Arrêter PS4Mount ? Les jeux restent indisponibles jusqu’à ce qu’il soit rechargé.',
+'Close {name} before stopping PS4Mount.': 'Fermez {name} avant d’arrêter PS4Mount.',
+'Stop PS4Mount? The games are unmounted and stay unavailable until it is loaded again.\n\nStop it before putting the console in rest mode.': 'Arrêter PS4Mount ? Les jeux sont démontés et restent indisponibles jusqu’à ce qu’il soit rechargé.\n\nArrêtez-le avant de mettre la console en mode repos.',
 'Files': 'Fichiers', 'New folder': 'Nouveau dossier', 'Folder name': 'Nom du dossier', 'New name': 'Nouveau nom',
 'Drives': 'Lecteurs', 'No drives connected': 'Aucun lecteur connecté',
 'Empty folder': 'Dossier vide', 'in use': 'utilisé', 'Move': 'Déplacer', 'Rename': 'Renommer', 'Delete': 'Supprimer',
@@ -1991,8 +1994,11 @@ $('setform').onsubmit = function (e) {
 };
 $('pinbtn').onclick = function () { pinDeclined = false; load(); };
 $('stop').onclick = function () {
-  if (!confirm(t('Stop PS4Mount? The games stay unavailable until it is loaded again.'))) return;
-  api('/api/stop', 'POST').then(function (j) { toast(j.message); });
+  api('/api/stop/check').then(function (j) {
+    if (j.open) { alert(t('Close {name} before stopping PS4Mount.', {name: j.open})); return; }
+    if (!confirm(t('Stop PS4Mount? The games are unmounted and stay unavailable until it is loaded again.\n\nStop it before putting the console in rest mode.'))) return;
+    return api('/api/stop', 'POST').then(function (j) { toast(j.message); });
+  }).catch(function (err) { alert(err.message); });
 };
 load();
 setInterval(load, 5000);

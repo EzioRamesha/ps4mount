@@ -16,7 +16,9 @@ const DETAIL = { title_id: 'CUSA41712', name: 'Soulstice', dlc_limit: 2,
   dlcs: [{ content_id: 'EP0001-CUSA41712_00-AAAAAAAAAAAAAAAA', name: 'Pack A', on: true, data: true, copy: 'installed', reason: '' },
          { content_id: 'EP0001-CUSA41712_00-BBBBBBBBBBBBBBBB', name: 'Pack B', on: false, data: false, copy: 'problem', reason: 'copy stopped' },
          { content_id: 'EP0001-CUSA41712_00-CCCCCCCCCCCCCCCC', name: 'Pack C', on: false, data: true, copy: 'missing', reason: '' }] };
+let stopOpen = ''; /* the game /api/stop/check reports open */
 function reply(url) {
+  if (url === '/api/stop/check') return { ok: true, open: stopOpen };
   if (url.indexOf('/api/game?') === 0) return DETAIL;
   if (url === '/api/launch?title_id=CUSA41712') return { ok: false, confirm: true, open: 'Civ VII' };
   return url.indexOf('/api/log') === 0 ? { log: 'a\nb' } : url.indexOf('/api/config') === 0 ? CFG :
@@ -157,6 +159,16 @@ function parses(code, version) {
   reqs.length = 0; d.querySelector('.play[data-t="CUSA41712"]').click(); await tick(); await tick();
   ok(reqs.filter(r => r.url.indexOf('/api/launch') === 0).length === 1, 'refused: the open game is left alone');
   w.confirm = () => (w.__confirm !== undefined ? w.__confirm : true);
+  let alerted = '', stopAsked = '';
+  w.alert = m => { alerted = m; };
+  w.confirm = m => { stopAsked = m; return true; };
+  stopOpen = 'Titanfall 2';
+  reqs.length = 0; d.getElementById('stop').click(); await tick(); await tick();
+  ok(alerted.includes('Close Titanfall 2') && !stopAsked && !reqs.some(r => r.url === '/api/stop'), 'stop with a game open: says to close it, without asking or stopping');
+  stopOpen = ''; alerted = '';
+  reqs.length = 0; d.getElementById('stop').click(); await tick(); await tick();
+  ok(stopAsked.includes('rest mode') && !alerted && reqs.some(r => r.url === '/api/stop' && r.method === 'POST'), 'stop with no game open: asks, then stops');
+  w.confirm = () => (w.__confirm !== undefined ? w.__confirm : true);
   d.querySelector('[data-a="updates"][data-t="CUSA00791"]').click(); await tick();
   ok(d.getElementById('upddlg').hasAttribute('open') && d.querySelectorAll('#u-rows tr').length === 2, 'updates dialog lists both');
   ok(d.getElementById('u-go').disabled, 'the update in use cannot be chosen again');
@@ -237,6 +249,16 @@ function parses(code, version) {
   w.confirm = () => false;
   reqs.length = 0; d.querySelector('.play[data-t="CUSA41712"] .tri').click(); await tick(); await tick();
   ok(reqs.filter(r => r.url.indexOf('/api/launch') === 0).length === 1, 'legacy refused: the open game is left alone');
+  w.confirm = () => (w.__confirm !== undefined ? w.__confirm : true);
+  let lalerted = '', lstopAsked = '';
+  w.alert = m => { lalerted = m; };
+  w.confirm = m => { lstopAsked = m; return true; };
+  stopOpen = 'Titanfall 2';
+  reqs.length = 0; d.getElementById('stop').click(); await tick(); await tick();
+  ok(lalerted.includes('Close Titanfall 2') && !lstopAsked && !reqs.some(r => r.url === '/api/stop'), 'legacy: stop with a game open: says to close it, without asking or stopping');
+  stopOpen = ''; lalerted = '';
+  reqs.length = 0; d.getElementById('stop').click(); await tick(); await tick();
+  ok(lstopAsked.includes('rest mode') && !lalerted && reqs.some(r => r.url === '/api/stop' && r.method === 'POST'), 'legacy: stop with no game open: asks, then stops');
   w.confirm = () => (w.__confirm !== undefined ? w.__confirm : true);
   d.querySelector('[data-a="updates"][data-t="CUSA00791"]').click(); await tick();
   ok(d.getElementById('v-upd').className.includes('on') && d.querySelectorAll('#u-rows tr').length === 2, 'legacy updates page lists both');

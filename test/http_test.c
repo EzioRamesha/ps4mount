@@ -99,6 +99,11 @@ int main(void) {
     CHECK(status(r, "200") && strstr(r, "application/json") && strstr(r, "\"games\""));
     CHECK(strstr(r, "Cache-Control: no-store") != NULL);
 
+    printf("stop check\n");
+    int calls = g_stub_calls;
+    r = ask("GET /api/stop/check HTTP/1.1\r\n\r\n");
+    CHECK(status(r, "200") && strstr(r, "\"open\":\"Game \\\"A\\\"\"") && g_stub_calls == calls);
+
     printf("state changes need POST\n");
     const char *changing[] = {"/api/mount?title_id=CUSA00001", "/api/unmount?title_id=CUSA00001", "/api/rescan",
                               "/api/restore", "/api/restored/forget", "/api/stop", NULL};
