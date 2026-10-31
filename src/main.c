@@ -3228,6 +3228,16 @@ static void speed_poll(const int present[NUM_DRIVES], const int fresh[NUM_DRIVES
 /* defined near log_limit() below, with trash_purge_old */
 static void trash_reclaim(const char *root, unsigned long long *avail, unsigned long long total);
 
+/* 1 when a managed title is open and its pkg is on drive i: that drive's folders should
+ * not be re-walked while it is in active use (I/O contention, and the point of letting a
+ * drive idle is defeated by scanning it mid-game). */
+static int game_running_on_drive(int i) {
+    for (int k = 0; k < MAX_TITLES; k++)
+        if (g_managed[k].used && g_managed[k].running && fm_drive_of(g_managed[k].dir) == i)
+            return 1;
+    return 0;
+}
+
 static int scan_all(void) {
     static int seen[NUM_DRIVES], first = 1;
     int ready[NUM_DRIVES] = {0}, present[NUM_DRIVES] = {0}, manual[NUM_DRIVES] = {0}, fresh[NUM_DRIVES] = {0};
@@ -3252,7 +3262,8 @@ static int scan_all(void) {
         else if (present[i]) {
             int first_or_manual = !seen[i] || manual[i];
             int speed_drop = g_speed[i].status == SPEED_DONE && g_speed[i].verdict == SPEED_DROP;
-            if (first_or_manual || policy_drive_walk_due(g_drive_idle[i], speed_drop))
+            int due = !game_running_on_drive(i) && policy_drive_walk_due(g_drive_idle[i], speed_drop);
+            if (first_or_manual || due)
                 ready[i] = scan_prepare(root, first_or_manual, !seen[i] && !first);
             else
                 ready[i] = g_cat[i].ngames > 0; /* reuse the catalog already loaded for it */
