@@ -617,6 +617,7 @@ static void test_catalog_walk(void) {
 
     CHECK(catalog_read(&c) == 3); /* not real pkgs */
     CHECK(c.pkgs[0].state == CAT_BAD);
+    CHECK(catalog_bad_count(&c) == 3); /* none of the 3 are real pkgs: all CAT_BAD */
     CHECK(catalog_walk(&c, root, skip_named, NULL, 0) == 0); /* nothing new: nothing to read again */
 
     char p[PATH_MAX];

@@ -241,6 +241,13 @@ int catalog_read(catalog_t *c) {
     return n;
 }
 
+int catalog_bad_count(const catalog_t *c) {
+    int n = 0;
+    for (int i = 0; i < c->npkgs; i++)
+        n += c->pkgs[i].state == CAT_BAD;
+    return n;
+}
+
 static cat_game_t *game_find(catalog_t *c, const char *title_id) {
     for (int i = 0; i < c->ngames; i++)
         if (!strcmp(c->games[i].title_id, title_id))

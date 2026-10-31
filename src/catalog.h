@@ -112,4 +112,9 @@ int catalog_save(const catalog_t *c, const char *path);
 /* Replaces c with a saved catalog (pkgs only: group it again). The next walk keeps the
  * pkgs whose size and time did not change. Returns how many were loaded, -1 without a file. */
 int catalog_load(catalog_t *c, const char *path);
+/* How many pkgs of c are currently unreadable (CAT_BAD): a real open/parse failure, not
+ * one still copying (CAT_SHORT) and not simply content that was never a PS4Mount pkg.
+ * A rising count on one drive over time is worth a look, but this does not itself claim
+ * the drive is failing. */
+int catalog_bad_count(const catalog_t *c);
 void catalog_free(catalog_t *c);
