@@ -65,6 +65,15 @@ int policy_speed_verdict(double mbps, double best) {
 
 int policy_at_capacity(int n_used, int max) { return n_used >= max; }
 
+int policy_scan_backoff(int idle_in_a_row) {
+    if (idle_in_a_row <= 1)
+        return 1;
+    int b = 1;
+    for (int i = 1; i < idle_in_a_row && b < SCAN_BACKOFF_MAX; i++)
+        b *= 2;
+    return b > SCAN_BACKOFF_MAX ? SCAN_BACKOFF_MAX : b;
+}
+
 #define KV_LINE 1024
 
 /* Splits a line into key and value ("1" for a key alone). 0 for a usable line. */

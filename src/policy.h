@@ -55,6 +55,13 @@ int policy_speed_verdict(double mbps, double best);
 /* 1 when n_used has already reached max: no free slot for one more managed title. */
 int policy_at_capacity(int n_used, int max);
 
+/* How many scan rounds to let pass before the next one, once idle_in_a_row consecutive
+ * scans found nothing new anywhere: 1 (no backoff) for 0 or 1, doubling after that, capped
+ * at SCAN_BACKOFF_MAX so a newly plugged drive or added pkg is still found within
+ * SCAN_BACKOFF_MAX * the configured interval. */
+#define SCAN_BACKOFF_MAX 6
+int policy_scan_backoff(int idle_in_a_row);
+
 /* State files: one "<key>\t<value>" line per key (a key alone means value "1").
  * kv_get returns 0 and fills value when the key is there; kv_set with value NULL removes
  * the key. Keys and values have no tab or line break. 0 on success. */

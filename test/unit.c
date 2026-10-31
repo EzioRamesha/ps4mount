@@ -1020,6 +1020,14 @@ static void test_policy(void) {
     CHECK(!policy_at_capacity(255, 256));
     CHECK(policy_at_capacity(256, 256));
     CHECK(policy_at_capacity(300, 256)); /* already over: still reports full */
+
+    printf("policy: scan backoff after idle rounds\n");
+    CHECK(policy_scan_backoff(0) == 1);
+    CHECK(policy_scan_backoff(1) == 1);
+    CHECK(policy_scan_backoff(2) == 2);
+    CHECK(policy_scan_backoff(3) == 4);
+    CHECK(policy_scan_backoff(4) == SCAN_BACKOFF_MAX); /* would be 8: capped at 6 */
+    CHECK(policy_scan_backoff(50) == SCAN_BACKOFF_MAX);
 }
 
 static void test_safety(void) {
