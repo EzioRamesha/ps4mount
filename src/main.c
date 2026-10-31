@@ -1392,6 +1392,8 @@ static int g_managed_full; /* games manage() could not give a slot this scan cyc
 static int g_manual_scan; /* "Scan for games" in the panel */
 static int g_scan_changed; /* a drive had unread pkgs the most recent scan_all() call */
 static int g_idle_scans;   /* consecutive scan_all() calls with nothing new anywhere */
+static int g_drive_changed[NUM_DRIVES]; /* this drive had unread pkgs the most recent scan */
+static int g_drive_idle[NUM_DRIVES];    /* consecutive scans with nothing new on this drive */
 static int g_scan_only = -1; /* index of the only drive to walk in the next scan, -1 for all */
 static int g_deleting; /* a delete screen is open: game folders are unmounted */
 static time_t g_deleting_since;
@@ -2817,6 +2819,7 @@ static int catalog_update(catalog_t *cat, const char *root, int fresh) {
         notify("Scanning %s for PS4 games...", root + 5);
     if (unread) {
         g_scan_changed = 1;
+        g_drive_changed[idx] = 1;
         int read = catalog_read(cat);
         printf("[scan] %s: %d pkg(s), %d new or changed read\n", root, cat->npkgs, read);
     }
@@ -3233,6 +3236,8 @@ static int scan_all(void) {
     release_stale();
     g_managed_full = 0;
     g_scan_changed = 0;
+    for (int i = 0; i < NUM_DRIVES; i++)
+        g_drive_changed[i] = 0;
     /* pkgs of a drive move when it is walked: drop what points to other drives first */
     catalog_unlink(g_cat, NUM_DRIVES);
     char root[32];
@@ -3244,9 +3249,14 @@ static int scan_all(void) {
             /* scan of one drive: the others keep their catalog; their games are checked
              * again only when they may use pkgs of the scanned drive */
             ready[i] = g_cfg.cross && g_cat[i].ngames;
-        else if (present[i])
-            ready[i] = scan_prepare(root, !seen[i] || manual[i], !seen[i] && !first);
-        else if (g_cat_loaded[i]) {
+        else if (present[i]) {
+            int first_or_manual = !seen[i] || manual[i];
+            int speed_drop = g_speed[i].status == SPEED_DONE && g_speed[i].verdict == SPEED_DROP;
+            if (first_or_manual || policy_drive_walk_due(g_drive_idle[i], speed_drop))
+                ready[i] = scan_prepare(root, first_or_manual, !seen[i] && !first);
+            else
+                ready[i] = g_cat[i].ngames > 0; /* reuse the catalog already loaded for it */
+        } else if (g_cat_loaded[i]) {
             catalog_free(&g_cat[i]); /* checked again when the drive is back: it may have changed */
             g_cat_loaded[i] = 0;
         }
@@ -3268,6 +3278,10 @@ static int scan_all(void) {
         }
         low_warned[i] = low; /* warned again only after space came back */
         fresh[i] = present[i] && !seen[i];
+        if (!present[i] || fresh[i] || g_drive_changed[i])
+            g_drive_idle[i] = 0;
+        else if (ready[i])
+            g_drive_idle[i]++;
         seen[i] = present[i];
     }
     ac_submit(); /* the add-ons of every game, in one batch */
