@@ -1028,6 +1028,19 @@ static void test_policy(void) {
     CHECK(policy_scan_backoff(3) == 4);
     CHECK(policy_scan_backoff(4) == SCAN_BACKOFF_MAX); /* would be 8: capped at 6 */
     CHECK(policy_scan_backoff(50) == SCAN_BACKOFF_MAX);
+
+    printf("policy: per-drive walk due\n");
+    CHECK(policy_drive_walk_due(0, 0));  /* always walk while still inside the window */
+    CHECK(policy_drive_walk_due(5, 0));
+    CHECK(policy_drive_walk_due(6, 0));  /* window edge: a checkpoint walk */
+    CHECK(!policy_drive_walk_due(7, 0)); /* backed off: not a multiple of 6 */
+    CHECK(!policy_drive_walk_due(11, 0));
+    CHECK(policy_drive_walk_due(12, 0)); /* 12 % 6 == 0 */
+    CHECK(policy_drive_walk_due(0, 1));  /* speed_drop: still inside its shorter window */
+    CHECK(policy_drive_walk_due(1, 1));
+    CHECK(!policy_drive_walk_due(2, 1)); /* speed_drop backs off sooner than a healthy drive */
+    CHECK(!policy_drive_walk_due(11, 1));
+    CHECK(policy_drive_walk_due(12, 1)); /* 12 % 12 == 0 */
 }
 
 static void test_safety(void) {

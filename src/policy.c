@@ -74,6 +74,12 @@ int policy_scan_backoff(int idle_in_a_row) {
     return b > SCAN_BACKOFF_MAX ? SCAN_BACKOFF_MAX : b;
 }
 
+int policy_drive_walk_due(int idle_in_a_row, int speed_drop) {
+    int window = speed_drop ? 2 : DRIVE_IDLE_ROUNDS;
+    int every = speed_drop ? DRIVE_IDLE_ROUNDS * 2 : DRIVE_IDLE_ROUNDS;
+    return idle_in_a_row < window || idle_in_a_row % every == 0;
+}
+
 #define KV_LINE 1024
 
 /* Splits a line into key and value ("1" for a key alone). 0 for a usable line. */

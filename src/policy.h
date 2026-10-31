@@ -62,6 +62,16 @@ int policy_at_capacity(int n_used, int max);
 #define SCAN_BACKOFF_MAX 6
 int policy_scan_backoff(int idle_in_a_row);
 
+/* Whether to re-walk one drive's folders this scan. idle_in_a_row: consecutive scans with
+ * nothing new found on this specific drive. speed_drop: its last read-speed test verdict
+ * was SPEED_DROP (policy_speed_verdict) -- walked even less often once idle, since repeated
+ * full walks add needless wear to an already struggling drive. Stays true for the first few
+ * idle rounds either way (DRIVE_IDLE_ROUNDS, or half that for a dropped drive) so a drive
+ * that just went idle is still fully responsive, then backs off to walking only every
+ * DRIVE_IDLE_ROUNDS-th scan (every 2*DRIVE_IDLE_ROUNDS-th when speed-dropped). */
+#define DRIVE_IDLE_ROUNDS 6
+int policy_drive_walk_due(int idle_in_a_row, int speed_drop);
+
 /* State files: one "<key>\t<value>" line per key (a key alone means value "1").
  * kv_get returns 0 and fills value when the key is there; kv_set with value NULL removes
  * the key. Keys and values have no tab or line break. 0 on success. */
