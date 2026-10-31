@@ -1390,6 +1390,8 @@ typedef struct {
 static managed_t g_managed[MAX_TITLES];
 static int g_managed_full; /* games manage() could not give a slot this scan cycle */
 static int g_manual_scan; /* "Scan for games" in the panel */
+static int g_scan_changed; /* a drive had unread pkgs the most recent scan_all() call */
+static int g_idle_scans;   /* consecutive scan_all() calls with nothing new anywhere */
 static int g_scan_only = -1; /* index of the only drive to walk in the next scan, -1 for all */
 static int g_deleting; /* a delete screen is open: game folders are unmounted */
 static time_t g_deleting_since;
@@ -2814,6 +2816,7 @@ static int catalog_update(catalog_t *cat, const char *root, int fresh) {
     if (fresh && cat->npkgs)
         notify("Scanning %s for PS4 games...", root + 5);
     if (unread) {
+        g_scan_changed = 1;
         int read = catalog_read(cat);
         printf("[scan] %s: %d pkg(s), %d new or changed read\n", root, cat->npkgs, read);
     }
@@ -3222,13 +3225,14 @@ static void speed_poll(const int present[NUM_DRIVES], const int fresh[NUM_DRIVES
 /* defined near log_limit() below, with trash_purge_old */
 static void trash_reclaim(const char *root, unsigned long long *avail, unsigned long long total);
 
-static void scan_all(void) {
+static int scan_all(void) {
     static int seen[NUM_DRIVES], first = 1;
     int ready[NUM_DRIVES] = {0}, present[NUM_DRIVES] = {0}, manual[NUM_DRIVES] = {0}, fresh[NUM_DRIVES] = {0};
     int only = g_scan_only;
     g_scan_only = -1;
     release_stale();
     g_managed_full = 0;
+    g_scan_changed = 0;
     /* pkgs of a drive move when it is walked: drop what points to other drives first */
     catalog_unlink(g_cat, NUM_DRIVES);
     char root[32];
@@ -3270,6 +3274,7 @@ static void scan_all(void) {
     first = 0;
     g_manual_scan = 0;
     speed_poll(present, fresh);
+    return g_scan_changed;
 }
 
 /* --- klog events --- */
@@ -6100,16 +6105,18 @@ int main(void) {
         if (time(NULL) >= g_next_scan && !g_deleting) {
             /* not 0 during the scan: a panel request served meanwhile sets 0 and is kept */
             g_next_scan = time(NULL) + g_cfg.interval;
+            int was_manual = g_manual_scan, changed = 0;
             if (g_reg_mode != REG_NONE)
-                scan_all();
+                changed = scan_all();
             else if (g_manual_scan)
                 notify("Firmware %s is not supported yet: no games are added", g_fw_text);
             g_manual_scan = 0;
             g_scan_only = -1;
             log_limit();
             trash_purge_old();
+            g_idle_scans = was_manual || changed ? 0 : g_idle_scans + 1;
             if (g_next_scan)
-                g_next_scan = time(NULL) + (g_scan_again ? 0 : g_cfg.interval);
+                g_next_scan = time(NULL) + (g_scan_again ? 0 : g_cfg.interval * policy_scan_backoff(g_idle_scans));
             g_scan_again = 0;
         }
         ac_poll();
