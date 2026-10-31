@@ -68,7 +68,7 @@
  * console only ever removes these links, never the pkgs. */
 #define HOLD_DIR "/system_data/ps4mount"
 #define MAX_TITLES 1024
-#define MAX_DLC 64
+#define MAX_DLC 256
 #define DLC_LIMIT 29 /* add-ons a running game can use (see the README) */
 #define BATCH_QUIET 10 /* seconds without writes to the system databases between groups */
 #define MAX_DLC_TIDS 8
@@ -453,6 +453,9 @@ static int addon_off(const char *content_id);
 static void dlc_open(title_src_t *t, const catalog_t *c, const cat_game_t *g) {
     const cat_pkg_t *list[CAT_MAX_DLC];
     int nlist = catalog_dlc_of(g_cat, c, g, list, CAT_MAX_DLC);
+    if (nlist == CAT_MAX_DLC)
+        printf("[scan] %s: has %d or more add-ons, only the first %d are listed\n", t->app.title_id, CAT_MAX_DLC,
+               MAX_DLC);
     for (int k = 0; k < nlist && t->ndlc_all < MAX_DLC; k++) {
         const cat_pkg_t *p = list[k];
         int dup = 0;

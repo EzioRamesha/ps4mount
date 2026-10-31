@@ -6,7 +6,7 @@
 #include <limits.h>
 #include <stdint.h>
 
-#define CAT_MAX_DLC 64
+#define CAT_MAX_DLC 256
 #define CAT_MAX_SERVICES 7
 #define CAT_MAX_DEPTH 16
 
